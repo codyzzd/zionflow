@@ -455,7 +455,7 @@ export default function LunchCalendarPage() {
                             const companionships = getLunchCompanionships(lunch.companionshipIds);
 
                             return (
-                              <div key={lunch.id} className="rounded-md border bg-background px-2 py-1.5 text-xs shadow-sm">
+                              <div key={lunch.id} className="rounded-md border bg-background px-2 py-1.5 text-xs">
                                 <div className="flex items-center justify-between gap-2">
                                   <p className="flex min-w-0 items-center gap-1.5 font-medium">
                                     <Home className="size-3.5 shrink-0 text-muted-foreground" />

@@ -195,7 +195,7 @@ function PatrolScheduleSummary({ membersById, schedule }: { membersById: Map<str
   const classMemberIds = resolveClassMemberIds(schedule);
 
   return (
-    <div className="rounded-md border bg-background px-2 py-1.5 text-xs shadow-sm">
+    <div className="rounded-md border bg-background px-2 py-1.5 text-xs">
       <p className="font-medium">Sacramental</p>
       <p className="truncate text-muted-foreground">
         {sacramentalMemberIds.map((id) => membersById.get(id)?.name ?? "Irmão removido").join(", ") || "Sem irmãos definidos"}

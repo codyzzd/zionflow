@@ -40,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         />
       </Sidebar>
 
-      <SidebarInset>
+      <SidebarInset className="bg-background">
         <header className="sticky top-0 z-30 border-b bg-background/95 px-4 py-3 backdrop-blur md:hidden">
           <div className="flex items-center gap-3">
             <SidebarTrigger />
@@ -50,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-4 py-5">{children}</main>
+        <main className="min-w-0 flex-1 p-6 md:p-8">{children}</main>
       </SidebarInset>
     </SidebarProvider>
   );

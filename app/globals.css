@@ -6,38 +6,38 @@
 
 :root {
   --background: var(--color-stone-100);
-  --foreground: var(--color-stone-950);
+  --foreground: var(--color-stone-900);
   --card: var(--color-white);
-  --card-foreground: var(--color-stone-950);
+  --card-foreground: var(--color-stone-900);
   --popover: var(--color-white);
-  --popover-foreground: var(--color-stone-950);
+  --popover-foreground: var(--color-stone-900);
   --primary: var(--color-cyan-700);
   --primary-foreground: var(--color-cyan-50);
-  --secondary: var(--color-stone-200);
+  --secondary: var(--color-stone-100);
   --secondary-foreground: var(--color-stone-900);
-  --muted: var(--color-stone-200);
+  --muted: var(--color-stone-100);
   --muted-foreground: var(--color-stone-500);
-  --accent: var(--color-stone-200);
+  --accent: var(--color-stone-100);
   --accent-foreground: var(--color-stone-900);
   --destructive: var(--color-red-600);
   --destructive-foreground: var(--color-stone-50);
-  --border: var(--color-stone-300);
+  --border: var(--color-stone-200);
   --input: var(--color-stone-300);
-  --ring: var(--color-stone-500);
+  --ring: var(--color-stone-400);
   --chart-1: var(--color-cyan-300);
   --chart-2: var(--color-cyan-500);
   --chart-3: var(--color-cyan-600);
   --chart-4: var(--color-cyan-700);
   --chart-5: var(--color-cyan-800);
   --radius: 0.45rem;
-  --sidebar: var(--color-stone-50);
-  --sidebar-foreground: var(--color-stone-950);
+  --sidebar: var(--color-stone-100);
+  --sidebar-foreground: var(--color-stone-900);
   --sidebar-primary: var(--color-cyan-600);
   --sidebar-primary-foreground: var(--color-cyan-50);
-  --sidebar-accent: var(--color-stone-100);
+  --sidebar-accent: var(--color-stone-200);
   --sidebar-accent-foreground: var(--color-stone-900);
   --sidebar-border: var(--color-stone-200);
-  --sidebar-ring: var(--color-stone-500);
+  --sidebar-ring: var(--color-stone-400);
 }
 
 .dark {
