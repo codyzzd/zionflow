@@ -9,10 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
 
 export default function AuditPage() {
   const { auditLogsByWard } = useAppContext();
+  const { formatDateTime } = useDateFormatter();
   const [search, setSearch] = useState("");
 
   const logs = useMemo(

@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { CalendarWeekStartsOn } from "@/types/domain";
+import type { CalendarWeekStartsOn, DateFormat } from "@/types/domain";
 import type { ThemePreference } from "@/lib/theme";
 
 const themeOptions: Array<{
@@ -33,8 +33,30 @@ const themeOptions: Array<{
   },
 ];
 
+const dateOptions: Array<{
+  value: DateFormat;
+  label: string;
+  example: string;
+}> = [
+  {
+    value: "short",
+    label: "Curto",
+    example: "18/04/1983",
+  },
+  {
+    value: "medium",
+    label: "Médio",
+    example: "18 abr 1983",
+  },
+  {
+    value: "long",
+    label: "Longo",
+    example: "18 de abril de 1983",
+  },
+];
+
 export default function SettingsPage() {
-  const { appPreferences, updateCalendarWeekStartsOn } = useAppContext();
+  const { appPreferences, updateCalendarWeekStartsOn, updateDateFormat } = useAppContext();
   const { theme, resolvedTheme, setTheme } = useTheme();
 
   return (
@@ -101,10 +123,32 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Calendários</CardTitle>
-            <CardDescription>Defina como as semanas aparecem nos calendários do sistema.</CardDescription>
+            <CardTitle>Formatos e Calendários</CardTitle>
+            <CardDescription>Defina como datas e semanas aparecem no sistema.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="date-format">Formato de exibição de data</Label>
+              <Select
+                value={appPreferences.dateFormat}
+                onValueChange={(value) => value && updateDateFormat(value as DateFormat)}
+              >
+                <SelectTrigger className="h-10 w-full max-w-sm" id="date-format">
+                  <SelectValue placeholder="Selecione o formato de data" />
+                </SelectTrigger>
+                <SelectContent>
+                  {dateOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label} ({option.example})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                Essa preferência altera como as datas são exibidas em textos e listas. A edição continua em dd/mm/yyyy.
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="calendar-week-start">Início da semana</Label>
               <Select

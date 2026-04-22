@@ -15,7 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
-import { formatDate } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
 
 type MinuteCreateForm = {
@@ -23,13 +24,14 @@ type MinuteCreateForm = {
   notes: string;
 };
 
-function buildMinuteTitle(date: string) {
-  return `Ata sacramental - ${formatDate(date)}`;
-}
-
 export default function MinutesPage() {
   const { currentUser, currentWard, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
+  const { formatDate } = useDateFormatter();
   const canManageMinutes = hasPermission("minutes.manage");
+
+  function buildMinuteTitle(date: string) {
+    return `Ata sacramental - ${formatDate(date)}`;
+  }
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
 

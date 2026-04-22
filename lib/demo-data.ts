@@ -501,6 +501,7 @@ export function createSeedDatabase(): Database {
     ],
     appPreferences: {
       calendarWeekStartsOn: "sunday",
+      dateFormat: "medium",
     },
     session: {
       currentUserId: "user_admin",

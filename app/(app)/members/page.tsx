@@ -17,7 +17,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatDate } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
@@ -60,6 +60,7 @@ function memberToForm(member: Member): MemberForm {
 
 export default function MembersPage() {
   const { currentWard, deleteMembers, hasPermission, membersByWard, saveMember } = useAppContext();
+  const { formatDate } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
 
   const [search, setSearch] = useState("");

@@ -15,7 +15,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatDateTime } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
 import type { PermissionKey, User, UserStatus } from "@/types/domain";
 
 type UserForm = {
@@ -47,6 +47,7 @@ const statusLabels: Record<UserStatus, string> = {
 
 export default function UsersPage() {
   const { currentWard, membersByWard, roles, toggleUserStatus, usersByWard, saveUser } = useAppContext();
+  const { formatDateTime } = useDateFormatter();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");

@@ -13,7 +13,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDate, formatDateTime } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
 
 type MinutePrintItem = {
@@ -42,10 +43,6 @@ const defaultPrintSettings: MinutePrintSettings = {
   sectionGap: 6,
 };
 
-function buildMinuteTitle(date: string) {
-  return `Ata sacramental - ${formatDate(date)}`;
-}
-
 export function MinuteEditor({
   minute,
   mode,
@@ -55,6 +52,11 @@ export function MinuteEditor({
 }) {
   const router = useRouter();
   const { currentUser, currentWard, db, membersByWard, saveMinute } = useAppContext();
+  const { formatDate, formatDateTime } = useDateFormatter();
+
+  function buildMinuteTitle(date: string) {
+    return `Ata sacramental - ${formatDate(date)}`;
+  }
   const isPrintPortalReady = useSyncExternalStore(subscribeToPrintPortal, getClientSnapshot, getServerSnapshot);
   const [printSettings, setPrintSettings] = useState<MinutePrintSettings>(defaultPrintSettings);
   const [editorStep, setEditorStep] = useState<MinuteEditorStep>("edit");

@@ -8,11 +8,12 @@ import { use } from "react";
 import { MinuteEditor } from "@/components/features/minutes/minute-editor";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PermissionGuard } from "@/components/shared/permission-guard";
-import { formatDate } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
 
 export default function MinuteDetailPage({ params }: { params: Promise<{ minuteId: string }> }) {
   const { minuteId } = use(params);
   const { minutesByWard } = useAppContext();
+  const { formatDate } = useDateFormatter();
   const minute = minutesByWard.find((item) => item.id === minuteId);
 
   if (!minute) notFound();

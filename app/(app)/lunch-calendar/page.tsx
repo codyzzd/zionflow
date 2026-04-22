@@ -16,7 +16,8 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { cn, formatDate, todayDate } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { cn, todayDate } from "@/lib/utils";
 import type { CalendarWeekStartsOn, ConfirmationStatus, LunchSchedule, LunchStatus, MissionaryCompanionship } from "@/types/domain";
 
 type LunchForm = {
@@ -203,6 +204,7 @@ export default function LunchCalendarPage() {
     membersByWard,
     saveLunchSchedule,
   } = useAppContext();
+  const { formatDate } = useDateFormatter();
   const canManageLunches = hasPermission("missionary.manage");
   const [monthDate, setMonthDate] = useState(() => parseDate(todayDate()));
   const [selectedDate, setSelectedDate] = useState(todayDate());

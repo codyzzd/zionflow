@@ -14,7 +14,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatDate } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { cn } from "@/lib/utils";
 import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
 
 const sexLabels: Record<Member["sex"], string> = {
@@ -46,6 +47,7 @@ function memberToForm(member: Member): MemberForm {
 export default function MemberDetailPage({ params }: { params: Promise<{ memberId: string }> }) {
   const { memberId } = use(params);
   const { currentWard, hasPermission, membersByWard, saveMember, usersByWard } = useAppContext();
+  const { formatDate } = useDateFormatter();
   const canManage = hasPermission("members.manage");
 
   const memberData = membersByWard.find((item) => item.id === memberId);

@@ -21,6 +21,7 @@ export type ConfirmationStatus = "not_viewed" | "viewed" | "accepted" | "decline
 export type PatrolStatus = "scheduled" | "confirmed" | "done" | "missed";
 export type MissionaryType = "elders" | "sisters";
 export type CalendarWeekStartsOn = "sunday" | "monday";
+export type DateFormat = "short" | "medium" | "long";
 
 export const MEMBER_ORGANIZATION_OPTIONS = [
   "Quorum de Elderes",
@@ -226,6 +227,7 @@ export interface SessionState {
 
 export interface AppPreferences {
   calendarWeekStartsOn: CalendarWeekStartsOn;
+  dateFormat: DateFormat;
 }
 
 export interface Database {

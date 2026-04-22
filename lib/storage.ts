@@ -36,6 +36,12 @@ function normalizeDatabase(db: Database): Database {
         db.appPreferences?.calendarWeekStartsOn === "monday" || db.appPreferences?.calendarWeekStartsOn === "sunday"
           ? db.appPreferences.calendarWeekStartsOn
           : "sunday",
+      dateFormat:
+        db.appPreferences?.dateFormat === "short" ||
+        db.appPreferences?.dateFormat === "medium" ||
+        db.appPreferences?.dateFormat === "long"
+          ? db.appPreferences.dateFormat
+          : "medium",
     },
   };
 }

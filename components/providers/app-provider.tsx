@@ -11,6 +11,7 @@ import type {
   AuditLog,
   AppPreferences,
   CalendarWeekStartsOn,
+  DateFormat,
   Database,
   HostHouse,
   HybridField,
@@ -77,6 +78,7 @@ type AppContextValue = {
   savePatrolMember: (input: Omit<PatrolMember, "id"> & { id?: string }) => void;
   savePatrolSchedule: (input: Omit<PatrolSchedule, "id"> & { id?: string }) => void;
   updateCalendarWeekStartsOn: (value: CalendarWeekStartsOn) => void;
+  updateDateFormat: (value: DateFormat) => void;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -670,6 +672,18 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success("Preferência de calendário atualizada.");
     }
 
+    function updateDateFormat(value: DateFormat) {
+      setDb((currentDb) => ({
+        ...currentDb,
+        appPreferences: {
+          ...currentDb.appPreferences,
+          dateFormat: value,
+        },
+      }));
+
+      toast.success("Formato de data atualizado.");
+    }
+
     return {
       db,
       ready,
@@ -708,6 +722,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       savePatrolMember,
       savePatrolSchedule,
       updateCalendarWeekStartsOn,
+      updateDateFormat,
     };
   }, [currentUser, currentUserPermissions, currentWard, currentWardId, db, ready]);
 

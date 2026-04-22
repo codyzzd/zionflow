@@ -7,7 +7,8 @@ import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDate, formatRelativeDay } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { formatRelativeDay } from "@/lib/utils";
 import type { PatrolSchedule } from "@/types/domain";
 
 function resolveSacramentalMemberIds(schedule: PatrolSchedule) {
@@ -47,6 +48,7 @@ function StatCard({
 
 export default function DashboardPage() {
   const { currentWard, lunchSchedulesByWard, membersByWard, minutesByWard, patrolMembersByWard, patrolSchedulesByWard, usersByWard } = useAppContext();
+  const { formatDate } = useDateFormatter();
 
   const nextLunches = [...lunchSchedulesByWard].sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).slice(0, 3);
   const nextPatrols = [...patrolSchedulesByWard].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);

@@ -13,8 +13,8 @@ import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
-import { formatDate, todayDate } from "@/lib/utils";
+import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { cn, todayDate } from "@/lib/utils";
 import type { SacramentMinute } from "@/types/domain";
 
 function attendanceLabel(attendance: number) {
@@ -84,19 +84,21 @@ function projectedAttendances(minutes: SacramentMinute[], count: number) {
   return Array.from({ length: count }, (_, index) => Math.max(0, Math.round(intercept + slope * (points.length + index))));
 }
 
-function chartDateLabel(date: string) {
-  const [year, month, day] = date.split("-");
-  return day && month && year ? `${day}/${month}/${year}` : formatDate(date);
-}
-
-function chartDateParts(date: string) {
-  const [year, month, day] = date.split("-");
-  return day && month && year ? [`${day}/${month}`, year] : [formatDate(date), ""];
-}
-
 export default function FrequencyPage() {
   const { currentWard, hasPermission, minutesByWard, saveMinute } = useAppContext();
+  const { formatDate } = useDateFormatter();
   const canManageMinutes = hasPermission("minutes.manage");
+
+  function chartDateLabel(date: string) {
+    const [year, month, day] = date.split("-");
+    return day && month && year ? `${day}/${month}/${year}` : formatDate(date);
+  }
+
+  function chartDateParts(date: string) {
+    const [year, month, day] = date.split("-");
+    return day && month && year ? [`${day}/${month}`, year] : [formatDate(date), ""];
+  }
+
   const [search, setSearch] = useState("");
   const [selectedMinuteId, setSelectedMinuteId] = useState<string | null>(null);
   const [attendanceDraft, setAttendanceDraft] = useState("");
@@ -115,7 +117,7 @@ export default function FrequencyPage() {
           .toLowerCase()
           .includes(query);
       }),
-    [search, sortedMinutes],
+    [formatDate, search, sortedMinutes],
   );
 
   const selectedMinute = selectedMinuteId ? minutesByWard.find((minute) => minute.id === selectedMinuteId) : undefined;
@@ -220,7 +222,7 @@ export default function FrequencyPage() {
         ),
       },
     ],
-    [canManageMinutes],
+    [canManageMinutes, formatDate],
   );
 
   return (
