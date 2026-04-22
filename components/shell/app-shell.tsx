@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider>
-      <Sidebar className="border-sidebar-border" collapsible="offcanvas">
+      <Sidebar className="border-sidebar-border" collapsible="icon">
         <SidebarNav
           currentPath={pathname}
           currentUser={currentUser}
@@ -41,12 +41,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       </Sidebar>
 
       <SidebarInset className="bg-background">
-        <header className="sticky top-0 z-30 border-b bg-background/95 px-4 py-3 backdrop-blur md:hidden">
-          <div className="flex items-center gap-3">
-            <SidebarTrigger />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">{currentWard.name}</p>
-            </div>
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:hidden">
+          <SidebarTrigger />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{currentWard.name}</p>
           </div>
         </header>
 

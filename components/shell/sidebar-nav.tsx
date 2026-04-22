@@ -27,6 +27,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
@@ -96,7 +97,7 @@ function NavItems({
   onNavigate: () => void;
 }) {
   return (
-    <SidebarMenu className="gap-0.5 px-2">
+    <SidebarMenu className="gap-0.5 px-2 group-data-[collapsible=icon]:px-1">
       {items.map((item) => {
         const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
         const Icon = item.icon;
@@ -137,23 +138,32 @@ export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wa
 
   return (
     <>
-      <SidebarHeader className="p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-foreground text-sidebar">
-            <LayoutPanelLeft className="size-4" />
+      <SidebarHeader className="p-4 group-data-[collapsible=icon]:p-2">
+        <div className="flex items-center justify-between">
+          <div className="group/header-logo relative flex items-center gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-foreground text-sidebar transition-opacity group-data-[collapsible=icon]:size-7 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:group-hover/header-logo:opacity-0">
+              <LayoutPanelLeft className="size-4" />
+            </div>
+            <div className="min-w-0 group-data-[collapsible=icon]:hidden">
+              <p className="truncate text-sm font-semibold text-sidebar-foreground">Zionflow</p>
+              <p className="truncate text-xs text-sidebar-foreground/60">{wardName}</p>
+            </div>
+
+            <div className="absolute inset-0 hidden items-center justify-center group-data-[collapsible=icon]:group-hover/header-logo:flex">
+              <SidebarTrigger className="h-7 w-7" />
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-sidebar-foreground">Zionflow</p>
-            <p className="truncate text-xs text-sidebar-foreground/60">{wardName}</p>
+          <div className="group-data-[collapsible=icon]:hidden">
+            <SidebarTrigger />
           </div>
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="border-t border-sidebar-border/80 py-4">
+      <SidebarContent className="border-t border-sidebar-border/80 py-4 group-data-[collapsible=icon]:py-2">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <NavItems currentPath={currentPath} items={mainItems} onNavigate={handleNavigate} />
-            <div className="my-2 px-5">
+            <div className="my-2 px-5 group-data-[collapsible=icon]:px-2">
               <div className="h-px bg-sidebar-border/80" />
             </div>
             <NavItems currentPath={currentPath} items={secondaryItems} onNavigate={handleNavigate} />
@@ -161,20 +171,20 @@ export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wa
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border/80 p-3">
+      <SidebarFooter className="border-t border-sidebar-border/80 p-3 group-data-[collapsible=icon]:p-1.5">
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="Abrir menu do usuário"
-            className="flex w-full items-center gap-2 rounded-lg bg-sidebar-accent/45 p-2 text-left transition-[background-color,color,transform] outline-none active:scale-[0.96] hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            className="flex w-full items-center gap-2 rounded-lg bg-sidebar-accent/45 p-2 text-left transition-[background-color,color,transform] outline-none active:scale-[0.96] hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:hover:bg-transparent"
           >
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sidebar-foreground text-sm font-semibold text-sidebar">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sidebar-foreground text-sm font-semibold text-sidebar group-data-[collapsible=icon]:size-7 group-data-[collapsible=icon]:text-xs">
               {getInitials(currentUser.name)}
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
               <p className="truncate text-sm font-medium text-sidebar-foreground">{currentUser.name}</p>
               <p className="truncate text-xs text-sidebar-foreground/60">{currentUser.email}</p>
             </div>
-            <MoreHorizontal className="size-4 shrink-0 text-sidebar-foreground/55" />
+            <MoreHorizontal className="size-4 shrink-0 text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56" side="top" sideOffset={8}>
             <DropdownMenuLabel>
