@@ -1,0 +1,273 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e5]:
+      - generic [ref=e7]:
+        - img [ref=e9]
+        - generic [ref=e13]:
+          - paragraph [ref=e14]: Zionflow
+          - paragraph [ref=e15]: Ala Jardim Central
+      - generic [ref=e18]:
+        - list [ref=e19]:
+          - listitem [ref=e20]:
+            - link "Dashboard" [ref=e21] [cursor=pointer]:
+              - /url: /dashboard
+              - img [ref=e22]
+              - generic [ref=e27]: Dashboard
+          - listitem [ref=e28]:
+            - link "Membros" [ref=e29] [cursor=pointer]:
+              - /url: /members
+              - img [ref=e30]
+              - generic [ref=e35]: Membros
+          - listitem [ref=e36]:
+            - link "Atas Sacramentais" [ref=e37] [cursor=pointer]:
+              - /url: /minutes
+              - img [ref=e38]
+              - generic [ref=e41]: Atas Sacramentais
+          - listitem [ref=e42]:
+            - link "Ronda" [ref=e43] [cursor=pointer]:
+              - /url: /patrol
+              - img [ref=e44]
+              - generic [ref=e47]: Ronda
+          - listitem [ref=e48]:
+            - link "Calendário de almoços" [ref=e49] [cursor=pointer]:
+              - /url: /lunch-calendar
+              - img [ref=e50]
+              - generic [ref=e52]: Calendário de almoços
+        - list [ref=e55]:
+          - listitem [ref=e56]:
+            - link "Auditoria" [ref=e57] [cursor=pointer]:
+              - /url: /audit
+              - img [ref=e58]
+              - generic [ref=e60]: Auditoria
+          - listitem [ref=e61]:
+            - link "Usuários e acessos" [ref=e62] [cursor=pointer]:
+              - /url: /users
+              - img [ref=e63]
+              - generic [ref=e67]: Usuários e acessos
+          - listitem [ref=e68]:
+            - link "Configurações" [ref=e69] [cursor=pointer]:
+              - /url: /settings
+              - img [ref=e70]
+              - generic [ref=e73]: Configurações
+      - generic [ref=e75]:
+        - paragraph [ref=e76]: Ambiente de demonstração
+        - paragraph [ref=e77]: Dados temporários em localStorage para validar o fluxo antes do banco real.
+    - main [ref=e78]:
+      - generic [ref=e80]:
+        - generic [ref=e81]:
+          - paragraph [ref=e82]: Zionflow
+          - link "Ala Jardim Central" [ref=e83] [cursor=pointer]:
+            - /url: /dashboard
+        - combobox [ref=e85]:
+          - generic: Ala Jardim Central
+          - img [ref=e86]
+        - generic [ref=e88]: Arthur Lima
+        - button "Resetar demo" [ref=e89]:
+          - img
+          - text: Resetar demo
+        - button "Sair" [ref=e90]
+      - main [ref=e91]:
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - paragraph [ref=e94]: Calendário de almoços
+            - heading "Almoços missionários" [level=1] [ref=e95]
+            - paragraph [ref=e96]: Calendário mensal com família anfitriã, duplas e status de confirmação em cada almoço.
+          - button "Novo almoço" [ref=e98]:
+            - img
+            - text: Novo almoço
+        - generic [ref=e99]:
+          - generic [ref=e100]:
+            - generic [ref=e102]:
+              - generic [ref=e103]:
+                - generic [ref=e104]: abril de 2026
+                - generic [ref=e105]: Selecione um dia para ver todos os detalhes.
+              - generic [ref=e106]:
+                - button "Mês anterior" [ref=e107]:
+                  - img
+                - button "Próximo mês" [ref=e108]:
+                  - img
+            - generic [ref=e111]:
+              - generic [ref=e112]:
+                - generic [ref=e113]: Dom
+                - generic [ref=e114]: Seg
+                - generic [ref=e115]: Ter
+                - generic [ref=e116]: Qua
+                - generic [ref=e117]: Qui
+                - generic [ref=e118]: Sex
+                - generic [ref=e119]: Sáb
+              - generic [ref=e120]:
+                - button "29" [ref=e121]:
+                  - generic [ref=e123]: "29"
+                - button "30" [ref=e124]:
+                  - generic [ref=e126]: "30"
+                - button "31" [ref=e127]:
+                  - generic [ref=e129]: "31"
+                - button "1 Clique e cadastre no painel" [ref=e130]:
+                  - generic [ref=e132]: "1"
+                  - paragraph [ref=e134]: Clique e cadastre no painel
+                - button "2 Clique e cadastre no painel" [ref=e135]:
+                  - generic [ref=e137]: "2"
+                  - paragraph [ref=e139]: Clique e cadastre no painel
+                - button "3 Clique e cadastre no painel" [ref=e140]:
+                  - generic [ref=e142]: "3"
+                  - paragraph [ref=e144]: Clique e cadastre no painel
+                - button "4 Clique e cadastre no painel" [ref=e145]:
+                  - generic [ref=e147]: "4"
+                  - paragraph [ref=e149]: Clique e cadastre no painel
+                - button "5 Clique e cadastre no painel" [ref=e150]:
+                  - generic [ref=e152]: "5"
+                  - paragraph [ref=e154]: Clique e cadastre no painel
+                - button "6 Clique e cadastre no painel" [ref=e155]:
+                  - generic [ref=e157]: "6"
+                  - paragraph [ref=e159]: Clique e cadastre no painel
+                - button "7 Clique e cadastre no painel" [ref=e160]:
+                  - generic [ref=e162]: "7"
+                  - paragraph [ref=e164]: Clique e cadastre no painel
+                - button "8 Clique e cadastre no painel" [ref=e165]:
+                  - generic [ref=e167]: "8"
+                  - paragraph [ref=e169]: Clique e cadastre no painel
+                - button "9 Clique e cadastre no painel" [ref=e170]:
+                  - generic [ref=e172]: "9"
+                  - paragraph [ref=e174]: Clique e cadastre no painel
+                - button "10 Clique e cadastre no painel" [ref=e175]:
+                  - generic [ref=e177]: "10"
+                  - paragraph [ref=e179]: Clique e cadastre no painel
+                - button "11 Clique e cadastre no painel" [ref=e180]:
+                  - generic [ref=e182]: "11"
+                  - paragraph [ref=e184]: Clique e cadastre no painel
+                - button "12 Clique e cadastre no painel" [ref=e185]:
+                  - generic [ref=e187]: "12"
+                  - paragraph [ref=e189]: Clique e cadastre no painel
+                - button "13 Clique e cadastre no painel" [ref=e190]:
+                  - generic [ref=e192]: "13"
+                  - paragraph [ref=e194]: Clique e cadastre no painel
+                - button "14 Clique e cadastre no painel" [ref=e195]:
+                  - generic [ref=e197]: "14"
+                  - paragraph [ref=e199]: Clique e cadastre no painel
+                - button "15 Clique e cadastre no painel" [ref=e200]:
+                  - generic [ref=e202]: "15"
+                  - paragraph [ref=e204]: Clique e cadastre no painel
+                - button "16 Clique e cadastre no painel" [ref=e205]:
+                  - generic [ref=e207]: "16"
+                  - paragraph [ref=e209]: Clique e cadastre no painel
+                - button "17 Clique e cadastre no painel" [ref=e210]:
+                  - generic [ref=e212]: "17"
+                  - paragraph [ref=e214]: Clique e cadastre no painel
+                - button "18 Clique e cadastre no painel" [ref=e215]:
+                  - generic [ref=e217]: "18"
+                  - paragraph [ref=e219]: Clique e cadastre no painel
+                - button "19 Clique e cadastre no painel" [ref=e220]:
+                  - generic [ref=e222]: "19"
+                  - paragraph [ref=e224]: Clique e cadastre no painel
+                - button "20 Clique e cadastre no painel" [ref=e225]:
+                  - generic [ref=e227]: "20"
+                  - paragraph [ref=e229]: Clique e cadastre no painel
+                - button "21 1 Maria Clara 12:30 Centro Leste" [ref=e230]:
+                  - generic [ref=e231]:
+                    - generic [ref=e232]: "21"
+                    - generic [ref=e233]: "1"
+                  - generic [ref=e235]:
+                    - generic [ref=e236]:
+                      - paragraph [ref=e237]:
+                        - img [ref=e238]
+                        - generic [ref=e241]: Maria Clara
+                      - generic [ref=e242]: 12:30
+                    - generic [ref=e243]:
+                      - paragraph [ref=e244]:
+                        - img [ref=e245]
+                        - generic [ref=e249]: Centro
+                      - paragraph [ref=e250]:
+                        - img [ref=e251]
+                        - generic [ref=e253]: Leste
+                - button "22 Clique e cadastre no painel" [ref=e254]:
+                  - generic [ref=e256]: "22"
+                  - paragraph [ref=e258]: Clique e cadastre no painel
+                - button "23 Clique e cadastre no painel" [ref=e259]:
+                  - generic [ref=e261]: "23"
+                  - paragraph [ref=e263]: Clique e cadastre no painel
+                - button "24 1 Esther Almeida 12:00 Centro" [ref=e264]:
+                  - generic [ref=e265]:
+                    - generic [ref=e266]: "24"
+                    - generic [ref=e267]: "1"
+                  - generic [ref=e269]:
+                    - generic [ref=e270]:
+                      - paragraph [ref=e271]:
+                        - img [ref=e272]
+                        - generic [ref=e275]: Esther Almeida
+                      - generic [ref=e276]: 12:00
+                    - paragraph [ref=e278]:
+                      - img [ref=e279]
+                      - generic [ref=e283]: Centro
+                - button "25 Clique e cadastre no painel" [ref=e284]:
+                  - generic [ref=e286]: "25"
+                  - paragraph [ref=e288]: Clique e cadastre no painel
+                - button "26 Clique e cadastre no painel" [ref=e289]:
+                  - generic [ref=e291]: "26"
+                  - paragraph [ref=e293]: Clique e cadastre no painel
+                - button "27 Clique e cadastre no painel" [ref=e294]:
+                  - generic [ref=e296]: "27"
+                  - paragraph [ref=e298]: Clique e cadastre no painel
+                - button "28 Clique e cadastre no painel" [ref=e299]:
+                  - generic [ref=e301]: "28"
+                  - paragraph [ref=e303]: Clique e cadastre no painel
+                - button "29 Clique e cadastre no painel" [ref=e304]:
+                  - generic [ref=e306]: "29"
+                  - paragraph [ref=e308]: Clique e cadastre no painel
+                - button "30 Clique e cadastre no painel" [ref=e309]:
+                  - generic [ref=e311]: "30"
+                  - paragraph [ref=e313]: Clique e cadastre no painel
+                - button "1" [ref=e314]:
+                  - generic [ref=e316]: "1"
+                - button "2" [ref=e317]:
+                  - generic [ref=e319]: "2"
+                - button "3" [ref=e320]:
+                  - generic [ref=e322]: "3"
+                - button "4" [ref=e323]:
+                  - generic [ref=e325]: "4"
+                - button "5" [ref=e326]:
+                  - generic [ref=e328]: "5"
+                - button "6" [ref=e329]:
+                  - generic [ref=e331]: "6"
+                - button "7" [ref=e332]:
+                  - generic [ref=e334]: "7"
+                - button "8" [ref=e335]:
+                  - generic [ref=e337]: "8"
+                - button "9" [ref=e338]:
+                  - generic [ref=e340]: "9"
+          - generic [ref=e341]:
+            - generic [ref=e343]:
+              - generic [ref=e344]:
+                - generic [ref=e345]: 21 de abr. de 2026
+                - generic [ref=e346]: Almoços agendados para o dia.
+              - button "Cadastrar almoço neste dia" [ref=e347]:
+                - img
+            - generic [ref=e349]:
+              - generic [ref=e350]:
+                - paragraph [ref=e351]: 12:30
+                - combobox [ref=e352]:
+                  - generic: Confirmado
+                  - img [ref=e353]
+              - generic [ref=e355]:
+                - paragraph [ref=e356]:
+                  - img [ref=e357]
+                  - text: Maria Clara
+                - generic [ref=e360]:
+                  - paragraph [ref=e361]:
+                    - img [ref=e362]
+                    - generic [ref=e366]: Centro
+                  - paragraph [ref=e367]:
+                    - img [ref=e368]
+                    - generic [ref=e370]: Leste
+              - paragraph [ref=e371]: Almoço conjunto após entrevistas.
+              - generic [ref=e373]: Aceito
+              - generic [ref=e374]:
+                - button "Editar" [ref=e375]:
+                  - img
+                  - text: Editar
+                - button "Remover" [ref=e376]:
+                  - img
+                  - text: Remover
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e382] [cursor=pointer]:
+    - img [ref=e383]
+  - alert [ref=e386]

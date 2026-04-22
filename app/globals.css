@@ -1,0 +1,328 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: var(--color-stone-100);
+  --foreground: var(--color-stone-950);
+  --card: var(--color-white);
+  --card-foreground: var(--color-stone-950);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-stone-950);
+  --primary: var(--color-cyan-700);
+  --primary-foreground: var(--color-cyan-50);
+  --secondary: var(--color-stone-200);
+  --secondary-foreground: var(--color-stone-900);
+  --muted: var(--color-stone-200);
+  --muted-foreground: var(--color-stone-500);
+  --accent: var(--color-stone-200);
+  --accent-foreground: var(--color-stone-900);
+  --destructive: var(--color-red-600);
+  --destructive-foreground: var(--color-stone-50);
+  --border: var(--color-stone-300);
+  --input: var(--color-stone-300);
+  --ring: var(--color-stone-500);
+  --chart-1: var(--color-cyan-300);
+  --chart-2: var(--color-cyan-500);
+  --chart-3: var(--color-cyan-600);
+  --chart-4: var(--color-cyan-700);
+  --chart-5: var(--color-cyan-800);
+  --radius: 0.45rem;
+  --sidebar: var(--color-stone-50);
+  --sidebar-foreground: var(--color-stone-950);
+  --sidebar-primary: var(--color-cyan-600);
+  --sidebar-primary-foreground: var(--color-cyan-50);
+  --sidebar-accent: var(--color-stone-100);
+  --sidebar-accent-foreground: var(--color-stone-900);
+  --sidebar-border: var(--color-stone-200);
+  --sidebar-ring: var(--color-stone-500);
+}
+
+.dark {
+  --background: var(--color-stone-950);
+  --foreground: var(--color-stone-50);
+  --card: var(--color-stone-900);
+  --card-foreground: var(--color-stone-50);
+  --popover: var(--color-stone-900);
+  --popover-foreground: var(--color-stone-50);
+  --primary: var(--color-cyan-500);
+  --primary-foreground: var(--color-cyan-950);
+  --secondary: var(--color-stone-800);
+  --secondary-foreground: var(--color-stone-50);
+  --muted: var(--color-stone-800);
+  --muted-foreground: var(--color-stone-400);
+  --accent: var(--color-stone-800);
+  --accent-foreground: var(--color-stone-50);
+  --destructive: var(--color-red-400);
+  --destructive-foreground: var(--color-stone-950);
+  --border: var(--color-stone-700);
+  --input: var(--color-stone-700);
+  --ring: var(--color-stone-500);
+  --chart-1: var(--color-cyan-300);
+  --chart-2: var(--color-cyan-500);
+  --chart-3: var(--color-cyan-600);
+  --chart-4: var(--color-cyan-700);
+  --chart-5: var(--color-cyan-800);
+  --sidebar: var(--color-stone-900);
+  --sidebar-foreground: var(--color-stone-50);
+  --sidebar-primary: var(--color-cyan-500);
+  --sidebar-primary-foreground: var(--color-cyan-950);
+  --sidebar-accent: var(--color-stone-800);
+  --sidebar-accent-foreground: var(--color-stone-50);
+  --sidebar-border: var(--color-stone-800);
+  --sidebar-ring: var(--color-stone-500);
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-sans);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply min-h-screen font-sans antialiased bg-background text-foreground;
+  }
+
+  html {
+    @apply font-sans;
+  }
+
+  h1, h2, h3, h4 {
+    @apply text-balance font-semibold tracking-tight;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@layer components {
+  .section-grid {
+    @apply grid gap-4 lg:grid-cols-2;
+  }
+
+  .dense-table td,
+  .dense-table th {
+    @apply px-3 py-2 align-top;
+  }
+}
+
+.minute-print-preview-viewport {
+  max-height: 78vh;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(45deg, rgba(0, 0, 0, 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(0, 0, 0, 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(0, 0, 0, 0.035) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(0, 0, 0, 0.035) 75%);
+  background-color: var(--muted);
+  background-position:
+    0 0,
+    0 5px,
+    5px -5px,
+    -5px 0;
+  background-size: 10px 10px;
+  padding: 16px;
+}
+
+.minute-print-preview-scale {
+  width: max-content;
+  margin: 0 auto;
+}
+
+.minute-print-document {
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  overflow: hidden;
+  padding: 8mm;
+  background: white;
+  color: #111;
+  font-family: var(--font-sans), Arial, sans-serif;
+  font-size: var(--minute-print-font-size, 11.5pt);
+  line-height: 1.24;
+  outline: 1px solid rgba(0, 0, 0, 0.1);
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.minute-print-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6mm;
+  border-bottom: 1px solid #111;
+  padding-bottom: 4mm;
+}
+
+.minute-print-eyebrow {
+  margin: 0 0 1.6mm;
+  color: #555;
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.minute-print-header h1 {
+  margin: 0;
+  color: #111;
+  font-size: 1.85em;
+  line-height: 1.08;
+}
+
+.minute-print-meta {
+  display: grid;
+  gap: 1.2mm;
+  min-width: 34mm;
+  color: #333;
+  font-size: 0.82em;
+  line-height: 1.18;
+  text-align: right;
+}
+
+.minute-print-body {
+  display: grid;
+  gap: var(--minute-print-section-gap, 6mm);
+  padding-top: var(--minute-print-section-gap, 6mm);
+}
+
+.minute-print-section {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.minute-print-section h2 {
+  margin: 0 0 0.42em;
+  border-bottom: 1px solid #d4d4d4;
+  padding-bottom: 0.28em;
+  color: #111;
+  font-size: 0.94em;
+  letter-spacing: 0;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.minute-print-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: calc(var(--minute-print-section-gap, 6mm) * 0.28) 8mm;
+}
+
+.minute-print-item {
+  min-width: 0;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.minute-print-item-wide {
+  grid-column: 1 / -1;
+}
+
+.minute-print-item span {
+  display: block;
+  margin-bottom: 0.2em;
+  color: #555;
+  font-size: 0.72em;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.minute-print-item p {
+  display: -webkit-box;
+  max-height: 7.4em;
+  margin: 0;
+  overflow: hidden;
+  color: #111;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  text-wrap: pretty;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  html,
+  body {
+    width: 210mm;
+    min-height: 297mm;
+    background: white !important;
+    color: black !important;
+  }
+
+  body:has(> [data-minute-print]) {
+    margin: 0 !important;
+  }
+
+  body:has(> [data-minute-print]) > :not([data-minute-print]) {
+    display: none !important;
+  }
+
+  [data-minute-print] {
+    display: block !important;
+    width: 210mm;
+    height: 297mm;
+    overflow: hidden;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    outline: none;
+  }
+}
