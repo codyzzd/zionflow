@@ -4,9 +4,9 @@ import {
   ChartColumnIncreasing,
   FileText,
   Handshake,
+  HeartHandshake,
   KeyRound,
   LayoutDashboard,
-  LayoutPanelLeft,
   LogOut,
   MoreHorizontal,
   RotateCcw,
@@ -33,6 +33,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -142,7 +143,7 @@ export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wa
         <div className="flex items-center justify-between">
           <div className="group/header-logo relative flex items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-foreground text-sidebar transition-opacity group-data-[collapsible=icon]:size-7 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:group-hover/header-logo:opacity-0">
-              <LayoutPanelLeft className="size-4" />
+              <HeartHandshake className="size-5" />
             </div>
             <div className="min-w-0 group-data-[collapsible=icon]:hidden">
               <p className="truncate text-sm font-semibold text-sidebar-foreground">Zionflow</p>
@@ -187,18 +188,20 @@ export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wa
             <MoreHorizontal className="size-4 shrink-0 text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56" side="top" sideOffset={8}>
-            <DropdownMenuLabel>
-              <span className="block truncate">{currentUser.email}</span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onResetDemo}>
-              <RotateCcw className="size-3.5" />
-              Resetar demo
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onLogout}>
-              <LogOut className="size-3.5" />
-              Sair
-            </DropdownMenuItem>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>
+                <span className="block truncate">{currentUser.email}</span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onResetDemo}>
+                <RotateCcw className="size-3.5" />
+                Resetar demo
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onLogout}>
+                <LogOut className="size-3.5" />
+                Sair
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarFooter>
