@@ -168,6 +168,7 @@ export default function MembersPage() {
         : []),
       {
         accessorKey: "name",
+        meta: { label: "Nome" },
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
             Nome {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
@@ -188,6 +189,7 @@ export default function MembersPage() {
       },
       {
         accessorKey: "organization",
+        meta: { label: "Organização" },
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
             Organização {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
@@ -201,6 +203,7 @@ export default function MembersPage() {
       },
       {
         accessorKey: "birthDate",
+        meta: { label: "Nascimento" },
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
             Nascimento {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
@@ -214,6 +217,7 @@ export default function MembersPage() {
       },
       {
         accessorKey: "sacramentTalkDuration",
+        meta: { label: "Discurso" },
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
             Discurso {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
@@ -227,6 +231,7 @@ export default function MembersPage() {
       },
       {
         id: "sacramentPermissions",
+        meta: { label: "Ata sacramental" },
         header: "Ata sacramental",
         cell: ({ row }) => {
           const member = row.original;
@@ -245,6 +250,7 @@ export default function MembersPage() {
       },
       {
         id: "actions",
+        enableHiding: false,
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => {
           const member = row.original;
@@ -282,21 +288,21 @@ export default function MembersPage() {
         />
 
         <div className="space-y-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <Input
-              className="md:max-w-lg"
-              placeholder="Buscar por nome ou organização"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
           <DataTable
             columns={columns}
             data={filteredMembers}
             emptyMessage="Nenhum membro encontrado com os filtros atuais."
+            enableColumnVisibility
             enableRowSelection={canManageMembers}
             getRowId={(member) => member.id}
+            toolbar={
+              <Input
+                className="md:max-w-lg"
+                placeholder="Buscar por nome ou organização"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            }
             renderSelectedActions={
               canManageMembers
                 ? (selectedMembers) => (
