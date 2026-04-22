@@ -169,7 +169,7 @@ export default function MinutesPage() {
           return (
             <div className="flex justify-end gap-2">
               <Button asChild size="sm" variant="ghost">
-                <Link href={`/minutes/${minute.id}`}>Abrir</Link>
+                <Link href={`/meetings/${minute.id}`}>Abrir</Link>
               </Button>
               <Button
                 size="sm"

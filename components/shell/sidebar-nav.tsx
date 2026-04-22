@@ -51,9 +51,9 @@ type NavItem = {
 const mainItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/members", label: "Membros", icon: Users },
-  { href: "/minutes", label: "Atas Sacramentais", icon: FileText },
+  { href: "/meetings", label: "Atas Sacramentais", icon: FileText },
   { href: "/frequency", label: "Frequência", icon: ChartColumnIncreasing },
-  { href: "/missionarios", label: "Missionários", icon: Handshake },
+  { href: "/missionaries", label: "Missionários", icon: Handshake },
   { href: "/patrol", label: "Ronda", icon: ShieldCheck },
   { href: "/lunch-calendar", label: "Calendário de almoços", icon: Utensils },
 ];
@@ -146,7 +146,7 @@ export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wa
               <HeartHandshake className="size-5" />
             </div>
             <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-              <p className="truncate text-sm font-semibold text-sidebar-foreground">Zionflow</p>
+              <p className="truncate text-sm font-semibold text-sidebar-foreground">Zionwise</p>
               <p className="truncate text-xs text-sidebar-foreground/60">{wardName}</p>
             </div>
 

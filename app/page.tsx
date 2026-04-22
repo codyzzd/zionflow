@@ -14,5 +14,5 @@ export default function HomePage() {
     router.replace(currentUser ? "/dashboard" : "/login");
   }, [currentUser, ready, router]);
 
-  return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando Zionflow...</div>;
+  return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando Zionwise...</div>;
 }

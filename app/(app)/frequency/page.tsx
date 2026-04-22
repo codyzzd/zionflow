@@ -216,7 +216,7 @@ export default function FrequencyPage() {
               </Button>
             ) : null}
             <Button asChild size="sm" variant="ghost">
-              <Link href={`/minutes/${row.original.id}`}>Abrir ata</Link>
+              <Link href={`/meetings/${row.original.id}`}>Abrir ata</Link>
             </Button>
           </div>
         ),

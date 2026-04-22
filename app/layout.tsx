@@ -16,7 +16,7 @@ const geist = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "Zionflow",
+  title: "Zionwise",
   description: "Sistema administrativo de ala com dados fake em localStorage para o MVP.",
 };
 

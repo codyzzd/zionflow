@@ -68,7 +68,7 @@ function MissionaryTypeBadge({ type }: { type: MissionaryType }) {
   );
 }
 
-export default function MissionariosPage() {
+export default function MissionariesPage() {
   const { companionshipsByWard, currentWard, hasPermission, saveCompanionship } = useAppContext();
   const canManageMissionaries = hasPermission("missionary.manage");
 

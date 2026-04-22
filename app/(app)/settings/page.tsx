@@ -64,7 +64,7 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Configurações"
         title="Preferências do sistema"
-        description="Começamos com a personalização de aparência para cada usuário escolher como quer navegar no Zionflow."
+        description="Começamos com a personalização de aparência para cada usuário escolher como quer navegar no Zionwise."
       />
 
       <div className="flex flex-col gap-4">

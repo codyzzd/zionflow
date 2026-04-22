@@ -494,7 +494,7 @@ export function createSeedDatabase(): Database {
         createdAt: "2026-04-20T15:15:00.000Z",
         actorUserId: "user_aux",
         action: "UPDATE_LUNCH",
-        module: "missionarios",
+        module: "missionaries",
         itemLabel: "Família Clara / 21-04-2026",
         summary: "Confirmou almoço compartilhado para elders e sisters.",
       },

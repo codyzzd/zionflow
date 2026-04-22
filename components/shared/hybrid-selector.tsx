@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronsUpDown, Clock3 } from "lucide-react";
+import { ChevronsUpDown, Clock3 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -120,7 +120,6 @@ export function HybridSelector({
                         onSelect={() => selectLinkedOption(option)}
                       >
                         <span className="flex-1">{option.label}</span>
-                        <Check className={cn("size-4", isSelected ? "opacity-100" : "opacity-0")} />
                       </CommandItem>
                     );
                   })}
@@ -136,7 +135,6 @@ export function HybridSelector({
                       <span className="flex-1">
                         {manualOptionLabel} - {trimmedQuery}
                       </span>
-                      <Check className={cn("size-4", value.mode === "manual" ? "opacity-100" : "opacity-0")} />
                     </CommandItem>
                   </CommandGroup>
                 </>

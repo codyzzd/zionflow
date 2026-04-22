@@ -108,7 +108,7 @@ export default function LoginPage() {
                 router.push("/dashboard");
               }}
             >
-              Entrar no Zionflow
+              Entrar no Zionwise
             </Button>
           </CardContent>
         </Card>

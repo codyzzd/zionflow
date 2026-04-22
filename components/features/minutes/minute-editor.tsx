@@ -1,7 +1,7 @@
 "use client";
 
 import { Printer, Save } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
 
 type MinutePrintItem = {
@@ -59,7 +58,10 @@ export function MinuteEditor({
   }
   const isPrintPortalReady = useSyncExternalStore(subscribeToPrintPortal, getClientSnapshot, getServerSnapshot);
   const [printSettings, setPrintSettings] = useState<MinutePrintSettings>(defaultPrintSettings);
+  const [previewBounds, setPreviewBounds] = useState({ height: 0, scale: 1, width: 0 });
   const [editorStep, setEditorStep] = useState<MinuteEditorStep>("edit");
+  const previewViewportRef = useRef<HTMLDivElement>(null);
+  const previewDocumentRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState<SacramentMinute | null>(() => {
     if (minute) {
       return minute;
@@ -117,6 +119,15 @@ export function MinuteEditor({
     [membersByWard],
   );
 
+  const printMemberOptions = useMemo(
+    () =>
+      membersByWard.map((member) => ({
+        value: member.id,
+        label: member.name,
+      })),
+    [membersByWard],
+  );
+
   const presidingMemberOptions = useMemo(
     () =>
       membersByWard
@@ -159,6 +170,57 @@ export function MinuteEditor({
     [db.hymns],
   );
 
+  useEffect(() => {
+    if (editorStep !== "preview") return;
+
+    const viewport = previewViewportRef.current;
+    const documentElement = previewDocumentRef.current;
+
+    if (!viewport || !documentElement) return;
+
+    function updatePreviewScale() {
+      if (!viewport || !documentElement) return;
+
+      const viewportStyle = window.getComputedStyle(viewport);
+      const horizontalPadding = parseFloat(viewportStyle.paddingLeft) + parseFloat(viewportStyle.paddingRight);
+      const verticalPadding = parseFloat(viewportStyle.paddingTop) + parseFloat(viewportStyle.paddingBottom);
+      const availableWidth = Math.max(1, viewport.clientWidth - horizontalPadding);
+      const availableHeight = Math.max(1, viewport.clientHeight - verticalPadding);
+      const documentWidth = documentElement.offsetWidth;
+      const documentHeight = documentElement.offsetHeight;
+
+      if (!documentWidth || !documentHeight) return;
+
+      const scale = Math.min(1, availableWidth / documentWidth, availableHeight / documentHeight);
+      const nextBounds = {
+        height: Math.round(documentHeight * scale),
+        scale,
+        width: Math.round(documentWidth * scale),
+      };
+
+      setPreviewBounds((current) => {
+        const isSame =
+          Math.abs(current.height - nextBounds.height) < 1 &&
+          Math.abs(current.width - nextBounds.width) < 1 &&
+          Math.abs(current.scale - nextBounds.scale) < 0.001;
+
+        return isSame ? current : nextBounds;
+      });
+    }
+
+    const animationFrame = window.requestAnimationFrame(updatePreviewScale);
+    const resizeObserver = new ResizeObserver(updatePreviewScale);
+    resizeObserver.observe(viewport);
+    resizeObserver.observe(documentElement);
+    window.addEventListener("resize", updatePreviewScale);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updatePreviewScale);
+    };
+  }, [editorStep, printSettings.fontSize, printSettings.sectionGap]);
+
   if (!form) {
     return <div className="text-sm text-muted-foreground">Carregando formulário...</div>;
   }
@@ -178,8 +240,8 @@ export function MinuteEditor({
     {
       title: "Saudações e boas-vindas",
       items: [
-        { label: "Presidida por", value: formatHybridField(currentForm.form.presiding, presidingMemberOptions) },
-        { label: "Dirigida por", value: formatHybridField(currentForm.form.conducting, conductingMemberOptions) },
+        { label: "Presidida por", value: formatHybridField(currentForm.form.presiding, printMemberOptions) },
+        { label: "Dirigida por", value: formatHybridField(currentForm.form.conducting, printMemberOptions) },
         { label: "Frequência", value: currentForm.form.attendance || "-" },
         { label: "Reconhecimentos", value: currentForm.form.recognitions, wide: true },
         { label: "Anúncios", value: currentForm.form.announcements, wide: true },
@@ -188,10 +250,10 @@ export function MinuteEditor({
     {
       title: "Hino e oração",
       items: [
-        { label: "Regente", value: formatHybridField(currentForm.form.conductor, memberOptions) },
-        { label: "Instrumentista", value: formatHybridField(currentForm.form.accompanist, memberOptions) },
+        { label: "Regente", value: formatHybridField(currentForm.form.conductor, printMemberOptions) },
+        { label: "Instrumentista", value: formatHybridField(currentForm.form.accompanist, printMemberOptions) },
         { label: "Hino inicial", value: formatHybridField(currentForm.form.openingHymn, hymnOptions) },
-        { label: "Oração inicial", value: formatHybridField(currentForm.form.openingPrayer, memberOptions) },
+        { label: "Oração inicial", value: formatHybridField(currentForm.form.openingPrayer, printMemberOptions) },
       ],
     },
     {
@@ -209,12 +271,12 @@ export function MinuteEditor({
       title: "Sacramento e oradores",
       items: [
         { label: "Hino sacramental", value: formatHybridField(currentForm.form.sacramentHymn, hymnOptions), wide: true },
-        { label: "Primeiro orador", value: formatHybridField(currentForm.form.speaker1, speakerMemberOptions) },
-        { label: "Segundo orador", value: formatHybridField(currentForm.form.speaker2, speakerMemberOptions) },
+        { label: "Primeiro orador", value: formatHybridField(currentForm.form.speaker1, printMemberOptions) },
+        { label: "Segundo orador", value: formatHybridField(currentForm.form.speaker2, printMemberOptions) },
         { label: "Hino intermediário", value: formatHybridField(currentForm.form.intermediateHymn, hymnOptions) },
-        { label: "Terceiro orador", value: formatHybridField(currentForm.form.speaker3, speakerMemberOptions) },
+        { label: "Terceiro orador", value: formatHybridField(currentForm.form.speaker3, printMemberOptions) },
         { label: "Hino final", value: formatHybridField(currentForm.form.closingHymn, hymnOptions) },
-        { label: "Última oração", value: formatHybridField(currentForm.form.closingPrayer, memberOptions) },
+        { label: "Última oração", value: formatHybridField(currentForm.form.closingPrayer, printMemberOptions) },
         { label: "Anotações gerais", value: currentForm.form.notes, wide: true },
       ],
     },
@@ -233,7 +295,7 @@ export function MinuteEditor({
       responsibleUserId: form.responsibleUserId,
       form: form.form,
     });
-    router.push(`/minutes/${savedId}`);
+    router.push(`/meetings/${savedId}`);
   }
 
   const printStyle = {
@@ -249,6 +311,7 @@ export function MinuteEditor({
         className={kind === "print" ? "minute-print-document hidden" : "minute-print-document"}
         data-minute-preview={kind === "preview" ? true : undefined}
         data-minute-print={kind === "print" ? true : undefined}
+        ref={kind === "preview" ? previewDocumentRef : undefined}
         style={printStyle}
       >
         <header className="minute-print-header">
@@ -380,8 +443,17 @@ export function MinuteEditor({
             })}
           </div>
 
-          <div className="minute-print-preview-viewport">
-            <div className="minute-print-preview-scale">
+          <div className="minute-print-preview-viewport" ref={previewViewportRef}>
+            <div
+              className="minute-print-preview-scale"
+              style={
+                {
+                  "--minute-preview-scale": previewBounds.scale,
+                  height: previewBounds.height ? `${previewBounds.height}px` : undefined,
+                  width: previewBounds.width ? `${previewBounds.width}px` : undefined,
+                } as CSSProperties
+              }
+            >
               {renderPrintDocument("preview")}
             </div>
           </div>

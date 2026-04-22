@@ -23,7 +23,7 @@ export default function MinuteDetailPage({ params }: { params: Promise<{ minuteI
       <div className="mx-auto max-w-[800px]">
         <div className="mb-6">
           <div className="flex items-center gap-2">
-            <Link className="text-muted-foreground transition hover:text-foreground" href="/minutes">
+            <Link className="text-muted-foreground transition hover:text-foreground" href="/meetings">
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Atas Sacramentais</p>

@@ -528,7 +528,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
           wardId: companionship.wardId,
           action: exists ? "UPDATE_COMPANIONSHIP" : "CREATE_COMPANIONSHIP",
-          module: "missionarios",
+          module: "missionaries",
           itemLabel: companionship.name,
           summary: exists ? "Atualizou companheirismo missionário." : "Criou companheirismo missionário.",
         });
@@ -552,7 +552,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
           wardId: house.wardId,
           action: exists ? "UPDATE_HOST_HOUSE" : "CREATE_HOST_HOUSE",
-          module: "missionarios",
+          module: "missionaries",
           itemLabel: house.familyName,
           summary: exists ? "Atualizou casa anfitriã." : "Criou nova casa anfitriã.",
         });
@@ -576,7 +576,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
           wardId: lunch.wardId,
           action: exists ? "UPDATE_LUNCH" : "CREATE_LUNCH",
-          module: "missionarios",
+          module: "missionaries",
           itemLabel: `${lunch.date} ${lunch.time}`,
           summary: exists ? "Atualizou agendamento de almoço missionário." : "Criou agendamento de almoço missionário.",
         });
@@ -601,7 +601,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
           wardId: lunch.wardId,
           action: "DELETE_LUNCH",
-          module: "missionarios",
+          module: "missionaries",
           itemLabel: `${lunch.date} ${lunch.time}`,
           summary: "Removeu agendamento de almoço missionário.",
         });

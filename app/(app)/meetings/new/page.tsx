@@ -17,7 +17,7 @@ export default function NewMinutePage() {
           description="Registro estruturado da reunião sacramental com edição e impressão futura."
           actions={
             <Button asChild variant="outline">
-              <Link href="/minutes">Voltar</Link>
+              <Link href="/meetings">Voltar</Link>
             </Button>
           }
         />
