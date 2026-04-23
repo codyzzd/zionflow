@@ -111,7 +111,7 @@ function NavItems({
                 "h-8 rounded-md px-3 text-sm transition-colors duration-200",
                 isActive
                   ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : "text-stone-600 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
               isActive={isActive}
               tooltip={item.label}
