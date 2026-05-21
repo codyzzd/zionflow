@@ -1,18 +1,24 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
-import { createEmptyMinuteForm, createSeedDatabase } from "@/lib/demo-data";
-import { loadDatabase, resetDatabase, saveDatabase } from "@/lib/storage";
+import { normalizePermissionSet } from "@/lib/access-control";
+import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
+import { createEmptyMinuteForm } from "@/lib/demo-data";
+import { createEmptyDatabase, loadDatabase, resetDatabase, saveDatabase } from "@/lib/storage";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
 import type {
   AuditLog,
   AppPreferences,
   CalendarWeekStartsOn,
+  Caravan,
+  CaravanPerson,
+  CaravanRegistration,
   DateFormat,
   Database,
+  DocumentType,
   HostHouse,
   HybridField,
   LunchSchedule,
@@ -23,6 +29,7 @@ import type {
   PatrolMember,
   PatrolSchedule,
   PermissionKey,
+  RecordMetadata,
   Role,
   SacramentMinute,
   SessionState,
@@ -40,6 +47,10 @@ type ImportMembersInput = {
   removeMissing: boolean;
 };
 
+type SaveCaravanRegistrationInput = Omit<CaravanRegistration, "id" | "createdAt"> & {
+  id?: string;
+};
+
 type AppContextValue = {
   db: Database;
   ready: boolean;
@@ -55,6 +66,10 @@ type AppContextValue = {
   companionshipsByWard: MissionaryCompanionship[];
   hostHousesByWard: HostHouse[];
   lunchSchedulesByWard: LunchSchedule[];
+  caravansByWard: Caravan[];
+  caravanPeopleByWard: CaravanPerson[];
+  caravanRegistrationsByWard: CaravanRegistration[];
+  activeDocumentTypes: DocumentType[];
   patrolMembersByWard: PatrolMember[];
   patrolSchedulesByWard: PatrolSchedule[];
   auditLogsByWard: AuditLog[];
@@ -63,6 +78,7 @@ type AppContextValue = {
   logout: () => void;
   switchWard: (wardId: string) => void;
   resetDemoData: () => void;
+  changeCurrentUserRole: (roleId: string) => void;
   hasPermission: (permission: PermissionKey) => boolean;
   saveMember: (input: Omit<Member, "id"> & { id?: string }) => void;
   deleteMembers: (memberIds: string[]) => void;
@@ -75,6 +91,14 @@ type AppContextValue = {
   saveHostHouse: (input: Omit<HostHouse, "id"> & { id?: string }) => void;
   saveLunchSchedule: (input: Omit<LunchSchedule, "id"> & { id?: string }) => void;
   deleteLunchSchedule: (lunchId: string) => void;
+  saveCaravan: (input: Omit<Caravan, "id"> & { id?: string }) => void;
+  archiveCaravan: (caravanId: string) => void;
+  unarchiveCaravan: (caravanId: string) => void;
+  saveCaravanPerson: (input: Omit<CaravanPerson, "id"> & { id?: string }) => void;
+  archiveCaravanPerson: (personId: string) => void;
+  unarchiveCaravanPerson: (personId: string) => void;
+  saveCaravanRegistration: (input: SaveCaravanRegistrationInput) => void;
+  deleteCaravanRegistration: (registrationId: string) => void;
   savePatrolMember: (input: Omit<PatrolMember, "id"> & { id?: string }) => void;
   savePatrolSchedule: (input: Omit<PatrolSchedule, "id"> & { id?: string }) => void;
   updateCalendarWeekStartsOn: (value: CalendarWeekStartsOn) => void;
@@ -82,15 +106,58 @@ type AppContextValue = {
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
+const SYSTEM_USER_ID = "system";
+const REMOTE_SAVE_DELAY_MS = 500;
 
-function subscribeToHydration() {
-  return () => {};
+let hydrationReady = false;
+
+function subscribeToHydration(onStoreChange: () => void) {
+  if (hydrationReady) {
+    return () => {};
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    hydrationReady = true;
+    onStoreChange();
+  }, 0);
+
+  return () => window.clearTimeout(timeoutId);
+}
+
+function getHydrationSnapshot() {
+  return hydrationReady;
 }
 
 function resolvePermissions(db: Database, user?: User) {
   if (!user) return [];
-  const rolePermissions = db.roles.find((role) => role.id === user.roleId)?.permissions ?? [];
-  return Array.from(new Set([...rolePermissions, ...user.permissionOverrides]));
+  return normalizePermissionSet(user.permissionOverrides);
+}
+
+function getActorUserId(db: Database) {
+  return db.session.currentUserId ?? SYSTEM_USER_ID;
+}
+
+function withRecordMetadata<T extends RecordMetadata>(record: T, existing: RecordMetadata | undefined, actorUserId: string, timestamp = nowIso()): T {
+  return {
+    ...record,
+    createdAt: existing?.createdAt ?? record.createdAt ?? timestamp,
+    createdByUserId: existing?.createdByUserId ?? record.createdByUserId ?? actorUserId,
+    updatedAt: timestamp,
+    updatedByUserId: actorUserId,
+    archivedAt: record.archivedAt ?? existing?.archivedAt,
+    archivedByUserId: record.archivedAt ? record.archivedByUserId ?? existing?.archivedByUserId : existing?.archivedByUserId,
+  };
+}
+
+function withArchiveMetadata<T extends RecordMetadata>(record: T, archived: boolean, actorUserId: string): T {
+  const timestamp = nowIso();
+  const updated = withRecordMetadata(record, record, actorUserId, timestamp);
+
+  return {
+    ...updated,
+    archivedAt: archived ? timestamp : undefined,
+    archivedByUserId: archived ? actorUserId : undefined,
+  };
 }
 
 function withAuditLog(db: Database, actorUserId: string | undefined, entry: Omit<AuditLog, "id" | "actorUserId" | "createdAt">) {
@@ -112,7 +179,7 @@ function withAuditLog(db: Database, actorUserId: string | undefined, entry: Omit
   };
 }
 
-function clearDeletedMemberReferences(db: Database, memberIds: Set<string>) {
+function clearDeletedMemberReferences(db: Database, memberIds: Set<string>, actorUserId = SYSTEM_USER_ID) {
   if (!memberIds.size) return db;
 
   const clearHybridField = (field: HybridField): HybridField =>
@@ -138,26 +205,82 @@ function clearDeletedMemberReferences(db: Database, memberIds: Set<string>) {
   return {
     ...db,
     memberNotes: db.memberNotes.filter((note) => !memberIds.has(note.memberId)),
-    users: db.users.map((user) => (user.memberId && memberIds.has(user.memberId) ? { ...user, memberId: undefined } : user)),
-    hostHouses: db.hostHouses.map((house) => (house.hostMemberId && memberIds.has(house.hostMemberId) ? { ...house, hostMemberId: undefined } : house)),
-    lunchSchedules: db.lunchSchedules.map((lunch) => (memberIds.has(lunch.hostMemberId) ? { ...lunch, hostMemberId: "" } : lunch)),
-    patrolMembers: db.patrolMembers.map((member) => (member.memberId && memberIds.has(member.memberId) ? { ...member, memberId: undefined } : member)),
-    sacramentMinutes: db.sacramentMinutes.map((minute) => ({
-      ...minute,
-      form: clearMinuteForm(minute.form),
-      updatedAt: nowIso(),
-    })),
+    users: db.users.map((user) =>
+      user.memberId && memberIds.has(user.memberId) ? withRecordMetadata({ ...user, memberId: undefined }, user, actorUserId) : user,
+    ),
+    hostHouses: db.hostHouses.map((house) =>
+      house.hostMemberId && memberIds.has(house.hostMemberId) ? withRecordMetadata({ ...house, hostMemberId: undefined }, house, actorUserId) : house,
+    ),
+    lunchSchedules: db.lunchSchedules.map((lunch) =>
+      memberIds.has(lunch.hostMemberId) ? withRecordMetadata({ ...lunch, hostMemberId: "" }, lunch, actorUserId) : lunch,
+    ),
+    patrolMembers: db.patrolMembers.map((member) =>
+      member.memberId && memberIds.has(member.memberId) ? withRecordMetadata({ ...member, memberId: undefined }, member, actorUserId) : member,
+    ),
+    sacramentMinutes: db.sacramentMinutes.map((minute) =>
+      withRecordMetadata(
+        {
+          ...minute,
+          form: clearMinuteForm(minute.form),
+        },
+        minute,
+        actorUserId,
+      ),
+    ),
   };
 }
 
 function AppProviderContent({ children, initialDb, ready }: { children: ReactNode; initialDb: Database; ready: boolean }) {
   const [db, setDb] = useState<Database>(initialDb);
+  const [remoteReady, setRemoteReady] = useState(false);
+  const saveErrorShownRef = useRef(false);
 
   useEffect(() => {
-    if (ready) {
-      saveDatabase(db);
+    if (!ready) {
+      return;
     }
-  }, [db, ready]);
+
+    let cancelled = false;
+
+    loadDatabase()
+      .then((remoteDb) => {
+        if (cancelled) return;
+        setDb(remoteDb);
+        setRemoteReady(true);
+      })
+      .catch((error) => {
+        console.error("Failed to load Supabase data.", error);
+        if (!cancelled) {
+          toast.error("Nao foi possivel carregar os dados do Supabase. Usando dados iniciais.");
+          setRemoteReady(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready || !remoteReady) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      saveDatabase(db).catch((error) => {
+        console.error("Failed to save Supabase data.", error);
+
+        if (!saveErrorShownRef.current) {
+          toast.error("Nao foi possivel salvar os dados no Supabase.");
+          saveErrorShownRef.current = true;
+        }
+      });
+    }, REMOTE_SAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [db, ready, remoteReady]);
+
+  const appReady = ready && remoteReady;
 
   const currentUser = db.users.find((user) => user.id === db.session.currentUserId);
   const currentWardId = db.session.currentWardId ?? currentUser?.wardId;
@@ -165,16 +288,20 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
   const currentUserPermissions = resolvePermissions(db, currentUser);
 
   const value = useMemo<AppContextValue>(() => {
-    const usersByWard = db.users.filter((user) => user.wardId === currentWardId);
-    const membersByWard = db.members.filter((member) => member.wardId === currentWardId);
+    const usersByWard = db.users.filter((user) => user.wardId === currentWardId && !user.archivedAt);
+    const membersByWard = db.members.filter((member) => member.wardId === currentWardId && !member.archivedAt);
     const memberIds = new Set(membersByWard.map((member) => member.id));
     const memberNotesByWard = db.memberNotes.filter((note) => memberIds.has(note.memberId));
-    const minutesByWard = db.sacramentMinutes.filter((minute) => minute.wardId === currentWardId);
-    const companionshipsByWard = db.missionaryCompanionships.filter((companionship) => companionship.wardId === currentWardId);
-    const hostHousesByWard = db.hostHouses.filter((house) => house.wardId === currentWardId);
-    const lunchSchedulesByWard = db.lunchSchedules.filter((lunch) => lunch.wardId === currentWardId);
-    const patrolMembersByWard = db.patrolMembers.filter((member) => member.wardId === currentWardId);
-    const patrolSchedulesByWard = db.patrolSchedules.filter((schedule) => schedule.wardId === currentWardId);
+    const minutesByWard = db.sacramentMinutes.filter((minute) => minute.wardId === currentWardId && !minute.archivedAt);
+    const companionshipsByWard = db.missionaryCompanionships.filter((companionship) => companionship.wardId === currentWardId && !companionship.archivedAt);
+    const hostHousesByWard = db.hostHouses.filter((house) => house.wardId === currentWardId && !house.archivedAt);
+    const lunchSchedulesByWard = db.lunchSchedules.filter((lunch) => lunch.wardId === currentWardId && !lunch.archivedAt);
+    const caravansByWard = db.caravans.filter((caravan) => caravan.wardId === currentWardId);
+    const caravanPeopleByWard = db.caravanPeople.filter((person) => person.wardId === currentWardId && !person.archivedAt);
+    const caravanRegistrationsByWard = db.caravanRegistrations.filter((registration) => registration.wardId === currentWardId && !registration.archivedAt);
+    const activeDocumentTypes = db.documentTypes.filter((documentType) => documentType.active && !documentType.archivedAt);
+    const patrolMembersByWard = db.patrolMembers.filter((member) => member.wardId === currentWardId && !member.archivedAt);
+    const patrolSchedulesByWard = db.patrolSchedules.filter((schedule) => schedule.wardId === currentWardId && !schedule.archivedAt);
     const auditLogsByWard = db.auditLogs.filter((log) => log.wardId === currentWardId);
 
     function loginAs(userId: string) {
@@ -182,8 +309,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const user = currentDb.users.find((item) => item.id === userId);
         if (!user || user.status !== "active") return currentDb;
 
+        const actorUserId = user.id;
         const nextUsers = currentDb.users.map((item) =>
-          item.id === userId ? { ...item, lastAccessAt: nowIso() } : item,
+          item.id === userId ? withRecordMetadata({ ...item, lastAccessAt: nowIso() }, item, actorUserId) : item,
         );
 
         const updated = {
@@ -226,6 +354,33 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       setDb(resetDatabase());
     }
 
+    function changeCurrentUserRole(roleId: string) {
+      const selectedRole = db.roles.find((role) => role.id === roleId);
+      if (!selectedRole || !currentUser || currentUser.roleId === roleId) return;
+
+      setDb((currentDb) => {
+        const role = currentDb.roles.find((item) => item.id === roleId);
+        const user = currentDb.users.find((item) => item.id === currentDb.session.currentUserId);
+        if (!role || !user || user.roleId === roleId) return currentDb;
+
+        const actorUserId = user.id;
+        const nextDb = {
+          ...currentDb,
+          users: currentDb.users.map((item) => (item.id === user.id ? withRecordMetadata({ ...item, roleId }, item, actorUserId) : item)),
+        };
+
+        return withAuditLog(nextDb, actorUserId, {
+          wardId: user.wardId,
+          action: "CHANGE_CURRENT_USER_ROLE",
+          module: "auth",
+          itemLabel: user.name,
+          summary: `Trocou perfil simulado para ${role.name}.`,
+        });
+      });
+
+      toast.success(`Perfil simulado alterado para ${selectedRole.name}.`);
+    }
+
     function hasPermission(permission: PermissionKey) {
       return currentUserPermissions.includes(permission);
     }
@@ -235,8 +390,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       setDb((currentDb) => {
         const id = input.id ?? uid("member");
-        const exists = currentDb.members.some((member) => member.id === id);
-        const member = { ...input, birthDate: normalizeDateInput(input.birthDate), id };
+        const existing = currentDb.members.find((member) => member.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const member = withRecordMetadata({ ...input, birthDate: normalizeDateInput(input.birthDate), id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           members: exists
@@ -266,14 +423,16 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const membersToDelete = currentDb.members.filter((member) => ids.has(member.id));
         if (!membersToDelete.length) return currentDb;
 
+        const actorUserId = getActorUserId(currentDb);
         const wardId = membersToDelete[0].wardId;
         const itemLabel = membersToDelete.length === 1 ? membersToDelete[0].name : `${membersToDelete.length} membros`;
         const nextDb = clearDeletedMemberReferences(
           {
             ...currentDb,
-            members: currentDb.members.filter((member) => !ids.has(member.id)),
+            members: currentDb.members.map((member) => (ids.has(member.id) ? withArchiveMetadata(member, true, actorUserId) : member)),
           },
           ids,
+          actorUserId,
         );
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
@@ -296,6 +455,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       if (!importedMembers.length) return;
 
       setDb((currentDb) => {
+        const actorUserId = getActorUserId(currentDb);
         const membersByKey = new Map<string, Member>();
         currentDb.members
           .filter((member) => member.wardId === input.wardId)
@@ -325,35 +485,50 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           if (existing) {
             updatedCount += 1;
             return {
-              ...member,
-              id: existing.id,
-              wardId: input.wardId,
+              ...withRecordMetadata(
+                {
+                  ...member,
+                  id: existing.id,
+                  wardId: input.wardId,
+                },
+                existing,
+                actorUserId,
+              ),
+              archivedAt: undefined,
+              archivedByUserId: undefined,
             } satisfies Member;
           }
 
           createdCount += 1;
-          return {
-            ...member,
-            id: uid("member"),
-            wardId: input.wardId,
-          } satisfies Member;
+          return withRecordMetadata(
+            {
+              ...member,
+              id: uid("member"),
+              wardId: input.wardId,
+            },
+            undefined,
+            actorUserId,
+          ) satisfies Member;
         });
 
         const importedRecordIds = new Set(importedRecords.map((member) => member.id));
+        const archivedMissingMemberIds = input.removeMissing ? untouchedMemberIds : new Set<string>();
         let nextDb: Database = {
           ...currentDb,
           members: [
             ...importedRecords,
-            ...currentDb.members.filter((member) => {
-              if (member.wardId !== input.wardId) return true;
-              if (importedRecordIds.has(member.id)) return false;
-              return !input.removeMissing;
+            ...currentDb.members.flatMap((member) => {
+              if (member.wardId !== input.wardId) return [member];
+              if (importedRecordIds.has(member.id)) return [];
+              if (!input.removeMissing || !untouchedMemberIds.has(member.id)) return [member];
+
+              return [withArchiveMetadata(member, true, actorUserId)];
             }),
           ],
         };
 
         if (input.removeMissing) {
-          nextDb = clearDeletedMemberReferences(nextDb, untouchedMemberIds);
+          nextDb = clearDeletedMemberReferences(nextDb, archivedMissingMemberIds, actorUserId);
         }
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
@@ -410,12 +585,19 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       setDb((currentDb) => {
         const id = input.id ?? uid("user");
         const existing = currentDb.users.find((user) => user.id === id);
-        const user: User = {
-          ...input,
-          id,
-          createdAt: existing?.createdAt ?? nowIso(),
-          lastAccessAt: existing?.lastAccessAt,
-        };
+        const actorUserId = getActorUserId(currentDb);
+        const user: User = withRecordMetadata(
+          {
+            ...input,
+            id,
+            permissionOverrides: normalizePermissionSet(input.permissionOverrides),
+            permissionsConfigured: true,
+            createdAt: existing?.createdAt ?? nowIso(),
+            lastAccessAt: existing?.lastAccessAt,
+          },
+          existing,
+          actorUserId,
+        );
 
         const nextDb = {
           ...currentDb,
@@ -446,9 +628,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         if (!target) return currentDb;
 
         const nextStatus: User["status"] = target.status === "active" ? "inactive" : "active";
+        const actorUserId = getActorUserId(currentDb);
         const nextDb = {
           ...currentDb,
-          users: currentDb.users.map((user) => (user.id === userId ? { ...user, status: nextStatus } : user)),
+          users: currentDb.users.map((user) => (user.id === userId ? withRecordMetadata({ ...user, status: nextStatus }, user, actorUserId) : user)),
         };
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
@@ -469,14 +652,19 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       setDb((currentDb) => {
         const existing = currentDb.sacramentMinutes.find((minute) => minute.id === id);
+        const actorUserId = getActorUserId(currentDb);
         const nextVersionId = uid("version");
-        const minute: SacramentMinute = {
-          ...input,
-          id,
-          createdAt: existing?.createdAt ?? nowIso(),
-          updatedAt: nowIso(),
-          versionIds: [nextVersionId, ...(existing?.versionIds ?? [])],
-        };
+        const minute: SacramentMinute = withRecordMetadata(
+          {
+            ...input,
+            id,
+            createdAt: existing?.createdAt ?? nowIso(),
+            updatedAt: nowIso(),
+            versionIds: [nextVersionId, ...(existing?.versionIds ?? [])],
+          },
+          existing,
+          actorUserId,
+        );
 
         const nextDb = {
           ...currentDb,
@@ -488,7 +676,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
               id: nextVersionId,
               minuteId: id,
               createdAt: nowIso(),
-              createdBy: currentDb.session.currentUserId ?? "system",
+              createdBy: actorUserId,
               snapshot: minute.form,
               status: minute.status,
             },
@@ -516,8 +704,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       setDb((currentDb) => {
         const id = input.id ?? uid("comp");
-        const exists = currentDb.missionaryCompanionships.some((item) => item.id === id);
-        const companionship = { ...input, id };
+        const existing = currentDb.missionaryCompanionships.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const companionship = withRecordMetadata({ ...input, id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           missionaryCompanionships: exists
@@ -542,8 +732,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       setDb((currentDb) => {
         const id = input.id ?? uid("house");
-        const exists = currentDb.hostHouses.some((item) => item.id === id);
-        const house = { ...input, id };
+        const existing = currentDb.hostHouses.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const house = withRecordMetadata({ ...input, id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           hostHouses: exists ? currentDb.hostHouses.map((item) => (item.id === id ? house : item)) : [house, ...currentDb.hostHouses],
@@ -566,8 +758,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       setDb((currentDb) => {
         const id = input.id ?? uid("lunch");
-        const exists = currentDb.lunchSchedules.some((item) => item.id === id);
-        const lunch = { ...input, id };
+        const existing = currentDb.lunchSchedules.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const lunch = withRecordMetadata({ ...input, id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           lunchSchedules: exists ? currentDb.lunchSchedules.map((item) => (item.id === id ? lunch : item)) : [lunch, ...currentDb.lunchSchedules],
@@ -593,9 +787,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const lunch = currentDb.lunchSchedules.find((item) => item.id === lunchId);
         if (!lunch) return currentDb;
 
+        const actorUserId = getActorUserId(currentDb);
         const nextDb = {
           ...currentDb,
-          lunchSchedules: currentDb.lunchSchedules.filter((item) => item.id !== lunchId),
+          lunchSchedules: currentDb.lunchSchedules.map((item) => (item.id === lunchId ? withArchiveMetadata(item, true, actorUserId) : item)),
         };
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
@@ -610,13 +805,251 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success("Almoço removido.");
     }
 
+    function saveCaravan(input: Omit<Caravan, "id"> & { id?: string }) {
+      const existing = input.id ? db.caravans.find((item) => item.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("caravan");
+        const currentExisting = currentDb.caravans.find((item) => item.id === id);
+        const exists = Boolean(currentExisting);
+        const actorUserId = getActorUserId(currentDb);
+        const caravan: Caravan = withRecordMetadata(
+          {
+            ...input,
+            id,
+            seatMode: "quantity",
+            departureDate: normalizeDateInput(input.departureDate),
+            returnDate: normalizeDateInput(input.returnDate),
+            availableSeats: Math.max(0, Math.trunc(Number(input.availableSeats) || 0)),
+            archivedAt: input.archivedAt ?? currentExisting?.archivedAt,
+          },
+          currentExisting,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          caravans: exists ? currentDb.caravans.map((item) => (item.id === id ? caravan : item)) : [caravan, ...currentDb.caravans],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: caravan.wardId,
+          action: exists ? "UPDATE_CARAVAN" : "CREATE_CARAVAN",
+          module: "caravanas",
+          itemLabel: caravan.destination,
+          summary: exists ? "Atualizou cadastro de caravana." : "Criou nova caravana.",
+        });
+      });
+
+      toast.success(existing ? "Caravana atualizada." : "Caravana cadastrada.");
+    }
+
+    function setCaravanArchiveState(caravanId: string, archived: boolean) {
+      const target = db.caravans.find((item) => item.id === caravanId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const caravan = currentDb.caravans.find((item) => item.id === caravanId);
+        if (!caravan) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = {
+          ...currentDb,
+          caravans: currentDb.caravans.map((item) => (item.id === caravanId ? withArchiveMetadata(item, archived, actorUserId) : item)),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: caravan.wardId,
+          action: archived ? "ARCHIVE_CARAVAN" : "UNARCHIVE_CARAVAN",
+          module: "caravanas",
+          itemLabel: caravan.destination,
+          summary: archived ? "Arquivou caravana." : "Desarquivou caravana.",
+        });
+      });
+
+      toast.success(archived ? "Caravana arquivada." : "Caravana desarquivada.");
+    }
+
+    function archiveCaravan(caravanId: string) {
+      setCaravanArchiveState(caravanId, true);
+    }
+
+    function unarchiveCaravan(caravanId: string) {
+      setCaravanArchiveState(caravanId, false);
+    }
+
+    function saveCaravanPerson(input: Omit<CaravanPerson, "id"> & { id?: string }) {
+      const existing = input.id ? db.caravanPeople.find((item) => item.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("caravan_person");
+        const existing = currentDb.caravanPeople.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const person: CaravanPerson = withRecordMetadata(
+          {
+            ...input,
+            id,
+            birthDate: normalizeDateInput(input.birthDate),
+            documentValue: input.documentValue.trim(),
+            name: input.name.trim(),
+            phone: input.phone.trim(),
+            notes: input.notes.trim(),
+          },
+          existing,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          caravanPeople: exists
+            ? currentDb.caravanPeople.map((item) => (item.id === id ? person : item))
+            : [person, ...currentDb.caravanPeople],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: person.wardId,
+          action: exists ? "UPDATE_CARAVAN_PERSON" : "CREATE_CARAVAN_PERSON",
+          module: "caravanas",
+          itemLabel: person.name,
+          summary: exists ? "Atualizou pessoa da caravana." : "Criou pessoa da caravana.",
+        });
+      });
+
+      toast.success(existing ? "Pessoa atualizada." : "Pessoa cadastrada.");
+    }
+
+    function setCaravanPersonArchiveState(personId: string, archived: boolean) {
+      const target = db.caravanPeople.find((item) => item.id === personId);
+      if (!target) return;
+
+      if (archived) {
+        const blockingCaravan = findBlockingCaravanForPersonArchive({
+          caravans: db.caravans,
+          personId,
+          registrations: db.caravanRegistrations,
+        });
+
+        if (blockingCaravan) {
+          toast.error(`Não é possível arquivar: pessoa inscrita em ${blockingCaravan.destination}.`);
+          return;
+        }
+      }
+
+      setDb((currentDb) => {
+        const person = currentDb.caravanPeople.find((item) => item.id === personId);
+        if (!person) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = {
+          ...currentDb,
+          caravanPeople: currentDb.caravanPeople.map((item) => (item.id === personId ? withArchiveMetadata(item, archived, actorUserId) : item)),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: person.wardId,
+          action: archived ? "ARCHIVE_CARAVAN_PERSON" : "UNARCHIVE_CARAVAN_PERSON",
+          module: "caravanas",
+          itemLabel: person.name,
+          summary: archived ? "Arquivou pessoa da caravana." : "Desarquivou pessoa da caravana.",
+        });
+      });
+
+      toast.success(archived ? "Pessoa arquivada." : "Pessoa desarquivada.");
+    }
+
+    function archiveCaravanPerson(personId: string) {
+      setCaravanPersonArchiveState(personId, true);
+    }
+
+    function unarchiveCaravanPerson(personId: string) {
+      setCaravanPersonArchiveState(personId, false);
+    }
+
+    function saveCaravanRegistration(input: SaveCaravanRegistrationInput) {
+      const existing = input.id ? db.caravanRegistrations.find((item) => item.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("caravan_registration");
+        const existingForPerson = currentDb.caravanRegistrations.find(
+          (item) => item.caravanId === input.caravanId && item.personId === input.personId && item.id !== id,
+        );
+
+        if (existingForPerson) {
+          return currentDb;
+        }
+
+        const existing = currentDb.caravanRegistrations.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const registration: CaravanRegistration = withRecordMetadata(
+          {
+            ...input,
+            id,
+            consumesSeat: input.consumesSeat !== false,
+            isApproved: input.isApproved === true,
+            isPaid: input.isPaid === true,
+            createdAt: existing?.createdAt ?? nowIso(),
+          },
+          existing,
+          actorUserId,
+        );
+        const personName = currentDb.caravanPeople.find((person) => person.id === registration.personId)?.name ?? "Pessoa";
+        const nextDb = {
+          ...currentDb,
+          caravanRegistrations: exists
+            ? currentDb.caravanRegistrations.map((item) => (item.id === id ? registration : item))
+            : [registration, ...currentDb.caravanRegistrations],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: registration.wardId,
+          action: exists ? "UPDATE_CARAVAN_REGISTRATION" : "CREATE_CARAVAN_REGISTRATION",
+          module: "caravanas",
+          itemLabel: personName,
+          summary: registration.consumesSeat ? "Inscreveu pessoa ocupando banco." : "Inscreveu criança de colo sem ocupar banco.",
+        });
+      });
+
+      toast.success(existing ? "Inscrição atualizada." : "Pessoa inscrita na caravana.");
+    }
+
+    function deleteCaravanRegistration(registrationId: string) {
+      const target = db.caravanRegistrations.find((item) => item.id === registrationId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const registration = currentDb.caravanRegistrations.find((item) => item.id === registrationId);
+        if (!registration) return currentDb;
+
+        const personName = currentDb.caravanPeople.find((person) => person.id === registration.personId)?.name ?? "Pessoa";
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = {
+          ...currentDb,
+          caravanRegistrations: currentDb.caravanRegistrations.map((item) =>
+            item.id === registrationId ? withArchiveMetadata(item, true, actorUserId) : item,
+          ),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: registration.wardId,
+          action: "DELETE_CARAVAN_REGISTRATION",
+          module: "caravanas",
+          itemLabel: personName,
+          summary: "Removeu passageiro inscrito na caravana.",
+        });
+      });
+
+      toast.success("Passageiro removido da caravana.");
+    }
+
     function savePatrolMember(input: Omit<PatrolMember, "id"> & { id?: string }) {
       const exists = input.id ? db.patrolMembers.some((item) => item.id === input.id) : false;
 
       setDb((currentDb) => {
         const id = input.id ?? uid("patrol_member");
-        const exists = currentDb.patrolMembers.some((item) => item.id === id);
-        const member = { ...input, id };
+        const existing = currentDb.patrolMembers.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const member = withRecordMetadata({ ...input, id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           patrolMembers: exists ? currentDb.patrolMembers.map((item) => (item.id === id ? member : item)) : [member, ...currentDb.patrolMembers],
@@ -639,8 +1072,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       setDb((currentDb) => {
         const id = input.id ?? uid("patrol_schedule");
-        const exists = currentDb.patrolSchedules.some((item) => item.id === id);
-        const schedule = { ...input, id };
+        const existing = currentDb.patrolSchedules.find((item) => item.id === id);
+        const exists = Boolean(existing);
+        const actorUserId = getActorUserId(currentDb);
+        const schedule = withRecordMetadata({ ...input, id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           patrolSchedules: exists
@@ -686,7 +1121,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
     return {
       db,
-      ready,
+      ready: appReady,
       wards: db.wards,
       roles: db.roles,
       currentUser,
@@ -699,6 +1134,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       companionshipsByWard,
       hostHousesByWard,
       lunchSchedulesByWard,
+      caravansByWard,
+      caravanPeopleByWard,
+      caravanRegistrationsByWard,
+      activeDocumentTypes,
       patrolMembersByWard,
       patrolSchedulesByWard,
       auditLogsByWard,
@@ -707,6 +1146,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       logout,
       switchWard,
       resetDemoData,
+      changeCurrentUserRole,
       hasPermission,
       saveMember,
       deleteMembers,
@@ -719,19 +1159,27 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       saveHostHouse,
       saveLunchSchedule,
       deleteLunchSchedule,
+      saveCaravan,
+      archiveCaravan,
+      unarchiveCaravan,
+      saveCaravanPerson,
+      archiveCaravanPerson,
+      unarchiveCaravanPerson,
+      saveCaravanRegistration,
+      deleteCaravanRegistration,
       savePatrolMember,
       savePatrolSchedule,
       updateCalendarWeekStartsOn,
       updateDateFormat,
     };
-  }, [currentUser, currentUserPermissions, currentWard, currentWardId, db, ready]);
+  }, [appReady, currentUser, currentUserPermissions, currentWard, currentWardId, db]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const ready = useSyncExternalStore(subscribeToHydration, () => true, () => false);
-  const initialDb = useMemo(() => (ready ? loadDatabase() : createSeedDatabase()), [ready]);
+  const ready = useSyncExternalStore(subscribeToHydration, getHydrationSnapshot, () => false);
+  const initialDb = useMemo(() => createEmptyDatabase(), []);
 
   return (
     <AppProviderContent key={ready ? "hydrated" : "ssr"} initialDb={initialDb} ready={ready}>

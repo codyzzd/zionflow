@@ -205,7 +205,7 @@ export default function LunchCalendarPage() {
     saveLunchSchedule,
   } = useAppContext();
   const { formatDate } = useDateFormatter();
-  const canManageLunches = hasPermission("missionary.manage");
+  const canManageLunches = hasPermission("lunch.manage");
   const [monthDate, setMonthDate] = useState(() => parseDate(todayDate()));
   const [selectedDate, setSelectedDate] = useState(todayDate());
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -347,7 +347,7 @@ export default function LunchCalendarPage() {
   }
 
   return (
-    <PermissionGuard permission="missionary.view">
+    <PermissionGuard permission="lunch.view">
       <PageHeader
         eyebrow="Calendário de almoços"
         title="Almoços missionários"

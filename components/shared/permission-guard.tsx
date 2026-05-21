@@ -27,7 +27,7 @@ export function PermissionGuard({
           <CardTitle>Acesso restrito</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          Seu perfil não tem permissão para acessar ou editar esta área.
+          Seu usuário não tem permissão para acessar ou editar esta área.
         </CardContent>
       </Card>
     )

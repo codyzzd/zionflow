@@ -87,7 +87,7 @@ function projectedAttendances(minutes: SacramentMinute[], count: number) {
 export default function FrequencyPage() {
   const { currentWard, hasPermission, minutesByWard, saveMinute } = useAppContext();
   const { formatDate } = useDateFormatter();
-  const canManageMinutes = hasPermission("minutes.manage");
+  const canManageFrequency = hasPermission("frequency.manage");
 
   function chartDateLabel(date: string) {
     const [year, month, day] = date.split("-");
@@ -210,7 +210,7 @@ export default function FrequencyPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
           <div className="flex justify-end gap-2">
-            {canManageMinutes ? (
+            {canManageFrequency ? (
               <Button onClick={() => openAttendanceDrawer(row.original)} size="sm" variant="ghost">
                 Editar
               </Button>
@@ -222,11 +222,11 @@ export default function FrequencyPage() {
         ),
       },
     ],
-    [canManageMinutes, formatDate],
+    [canManageFrequency, formatDate],
   );
 
   return (
-    <PermissionGuard permission="minutes.view">
+    <PermissionGuard permission="frequency.view">
       <div className="min-w-0">
         <PageHeader
           eyebrow="Atas Sacramentais"
@@ -283,7 +283,7 @@ export default function FrequencyPage() {
                     const height = Math.max(8, (point.attendance / chartMaxAttendance) * 100);
                     const [dateLine, yearLine] = chartDateParts(point.date);
                     const minute = point.type === "real" ? minutesByWard.find((item) => item.id === point.id) : undefined;
-                    const isEditable = canManageMinutes && Boolean(minute);
+                    const isEditable = canManageFrequency && Boolean(minute);
                     const chartColumn = (
                       <>
                         <p className="text-xs font-medium tabular-nums md:text-sm">{point.attendance}</p>
@@ -352,7 +352,7 @@ export default function FrequencyPage() {
           </div>
         </div>
 
-        {canManageMinutes ? (
+        {canManageFrequency ? (
           <Drawer direction="right" open={Boolean(selectedMinute)} onOpenChange={(open) => !open && closeAttendanceDrawer()}>
             <DrawerContent className="sm:max-w-md" direction="right">
               <DrawerHeader className="border-b">

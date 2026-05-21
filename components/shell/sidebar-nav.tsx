@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BusFront,
   ChartColumnIncreasing,
   FileText,
   Handshake,
@@ -27,6 +28,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -40,32 +44,52 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { User } from "@/types/domain";
+import type { PermissionKey, User } from "@/types/domain";
 
 type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
+  viewPermission?: PermissionKey;
+  alwaysVisible?: boolean;
+  children?: Array<{
+    href: string;
+    label: string;
+    viewPermission?: PermissionKey;
+    alwaysVisible?: boolean;
+  }>;
 };
 
 const mainItems: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/members", label: "Membros", icon: Users },
-  { href: "/meetings", label: "Atas Sacramentais", icon: FileText },
-  { href: "/frequency", label: "Frequência", icon: ChartColumnIncreasing },
-  { href: "/missionaries", label: "Missionários", icon: Handshake },
-  { href: "/patrol", label: "Ronda", icon: ShieldCheck },
-  { href: "/lunch-calendar", label: "Calendário de almoços", icon: Utensils },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, viewPermission: "dashboard.view" },
+  { href: "/members", label: "Membros", icon: Users, viewPermission: "members.view" },
+  { href: "/meetings", label: "Atas Sacramentais", icon: FileText, viewPermission: "minutes.view" },
+  { href: "/frequency", label: "Frequência", icon: ChartColumnIncreasing, viewPermission: "frequency.view" },
+  { href: "/missionaries", label: "Missionários", icon: Handshake, viewPermission: "missionary.view" },
+  {
+    href: "/caravans",
+    label: "Caravanas",
+    icon: BusFront,
+    children: [
+      { href: "/caravans", label: "Reservar", alwaysVisible: true },
+      { href: "/caravans/approve", label: "Aprovar", viewPermission: "caravan.approve.view" },
+      { href: "/caravans/manage", label: "Gerenciar", viewPermission: "caravan.manage.view" },
+      { href: "/caravans/people", label: "Pessoas", alwaysVisible: true },
+    ],
+  },
+  { href: "/patrol", label: "Ronda", icon: ShieldCheck, viewPermission: "patrol.view" },
+  { href: "/lunch-calendar", label: "Calendário de almoços", icon: Utensils, viewPermission: "lunch.view" },
 ];
 
 const secondaryItems: NavItem[] = [
-  { href: "/users", label: "Usuários e acessos", icon: KeyRound },
-  { href: "/settings", label: "Configurações", icon: Settings },
+  { href: "/users", label: "Usuários e acessos", icon: KeyRound, viewPermission: "users.view" },
+  { href: "/settings", label: "Configurações", icon: Settings, alwaysVisible: true },
 ];
 
 type SidebarNavProps = {
   currentPath: string;
   currentUser: User;
+  hasPermission: (permission: PermissionKey) => boolean;
   onLogout: () => void;
   onResetDemo: () => void;
   wardName: string;
@@ -92,14 +116,21 @@ function NavItems({
   currentPath,
   items,
   onNavigate,
+  hasPermission,
 }: {
   currentPath: string;
   items: NavItem[];
   onNavigate: () => void;
+  hasPermission: (permission: PermissionKey) => boolean;
 }) {
   return (
     <SidebarMenu className="gap-0.5 px-2 group-data-[collapsible=icon]:px-1">
       {items.map((item) => {
+        const visibleChildren = item.children?.filter((child) => child.alwaysVisible || !child.viewPermission || hasPermission(child.viewPermission)) ?? [];
+        const itemIsVisible = item.alwaysVisible || (item.viewPermission ? hasPermission(item.viewPermission) : visibleChildren.length > 0);
+        if (!itemIsVisible) return null;
+
+        const href = item.viewPermission && !hasPermission(item.viewPermission) && visibleChildren.length ? visibleChildren[0].href : item.href;
         const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
         const Icon = item.icon;
 
@@ -116,11 +147,28 @@ function NavItems({
               isActive={isActive}
               tooltip={item.label}
             >
-              <Link href={item.href} onClick={onNavigate}>
+              <Link href={href} onClick={onNavigate}>
                 <Icon className="size-4" />
                 <span className="font-medium">{item.label}</span>
               </Link>
             </SidebarMenuButton>
+            {visibleChildren.length ? (
+              <SidebarMenuSub>
+                {visibleChildren.map((child) => {
+                  const isChildActive = child.href === item.href ? currentPath === child.href : currentPath === child.href || currentPath.startsWith(`${child.href}/`);
+
+                  return (
+                    <SidebarMenuSubItem key={child.href}>
+                      <SidebarMenuSubButton asChild className="text-sidebar-foreground/70" isActive={isChildActive}>
+                        <Link href={child.href} onClick={onNavigate}>
+                          <span>{child.label}</span>
+                        </Link>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  );
+                })}
+              </SidebarMenuSub>
+            ) : null}
           </SidebarMenuItem>
         );
       })}
@@ -128,7 +176,14 @@ function NavItems({
   );
 }
 
-export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wardName }: SidebarNavProps) {
+export function SidebarNav({
+  currentPath,
+  currentUser,
+  hasPermission,
+  onLogout,
+  onResetDemo,
+  wardName,
+}: SidebarNavProps) {
   const { isMobile, setOpenMobile } = useSidebar();
 
   function handleNavigate() {
@@ -163,11 +218,11 @@ export function SidebarNav({ currentPath, currentUser, onLogout, onResetDemo, wa
       <SidebarContent className="border-t border-sidebar-border/80 py-4 group-data-[collapsible=icon]:py-2">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
-            <NavItems currentPath={currentPath} items={mainItems} onNavigate={handleNavigate} />
+            <NavItems currentPath={currentPath} items={mainItems} onNavigate={handleNavigate} hasPermission={hasPermission} />
             <div className="my-2 px-5 group-data-[collapsible=icon]:px-2">
               <div className="h-px bg-sidebar-border/80" />
             </div>
-            <NavItems currentPath={currentPath} items={secondaryItems} onNavigate={handleNavigate} />
+            <NavItems currentPath={currentPath} items={secondaryItems} onNavigate={handleNavigate} hasPermission={hasPermission} />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

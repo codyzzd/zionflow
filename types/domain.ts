@@ -1,13 +1,26 @@
 export type PermissionKey =
   | "dashboard.view"
+  | "users.view"
   | "users.manage"
   | "roles.manage"
   | "members.view"
   | "members.manage"
   | "minutes.view"
   | "minutes.manage"
+  | "frequency.view"
+  | "frequency.manage"
   | "missionary.view"
   | "missionary.manage"
+  | "lunch.view"
+  | "lunch.manage"
+  | "caravan.view"
+  | "caravan.manage"
+  | "caravan.register.view"
+  | "caravan.register.manage"
+  | "caravan.approve.view"
+  | "caravan.approve.manage"
+  | "caravan.manage.view"
+  | "caravan.manage.manage"
   | "patrol.view"
   | "patrol.manage"
   | "reports.view"
@@ -20,6 +33,8 @@ export type LunchStatus = "pending" | "confirmed" | "cancelled";
 export type ConfirmationStatus = "not_viewed" | "viewed" | "accepted" | "declined";
 export type PatrolStatus = "scheduled" | "confirmed" | "done" | "missed";
 export type MissionaryType = "elders" | "sisters";
+export type CaravanPersonType = "family" | "friends";
+export type CaravanSeatMode = "quantity" | "vehicle";
 export type CalendarWeekStartsOn = "sunday" | "monday";
 export type DateFormat = "short" | "medium" | "long";
 
@@ -53,7 +68,18 @@ export interface Role {
   permissions: PermissionKey[];
 }
 
-export interface User {
+export interface RecordMetadata {
+  createdAt?: string;
+  createdByUserId?: string;
+  updatedAt?: string;
+  updatedByUserId?: string;
+  archivedAt?: string;
+  archivedByUserId?: string;
+}
+
+export type RecordMetadataKey = keyof RecordMetadata;
+
+export interface User extends RecordMetadata {
   id: string;
   wardId: string;
   memberId?: string;
@@ -63,6 +89,7 @@ export interface User {
   status: UserStatus;
   roleId: string;
   permissionOverrides: PermissionKey[];
+  permissionsConfigured?: boolean;
   createdAt: string;
   lastAccessAt?: string;
 }
@@ -75,7 +102,7 @@ export interface MemberNote {
   text: string;
 }
 
-export interface Member {
+export interface Member extends RecordMetadata {
   id: string;
   wardId: string;
   name: string;
@@ -129,7 +156,7 @@ export interface SacramentMinuteVersion {
   status: MinuteStatus;
 }
 
-export interface SacramentMinute {
+export interface SacramentMinute extends RecordMetadata {
   id: string;
   wardId: string;
   title: string;
@@ -149,7 +176,7 @@ export interface Hymn {
   title: string;
 }
 
-export interface MissionaryCompanionship {
+export interface MissionaryCompanionship extends RecordMetadata {
   id: string;
   wardId: string;
   name: string;
@@ -159,7 +186,7 @@ export interface MissionaryCompanionship {
   status: "active" | "inactive";
 }
 
-export interface HostHouse {
+export interface HostHouse extends RecordMetadata {
   id: string;
   wardId: string;
   hostMemberId?: string;
@@ -171,7 +198,7 @@ export interface HostHouse {
   preferredAvailability: string;
 }
 
-export interface LunchSchedule {
+export interface LunchSchedule extends RecordMetadata {
   id: string;
   wardId: string;
   date: string;
@@ -183,7 +210,50 @@ export interface LunchSchedule {
   confirmationStatus: ConfirmationStatus;
 }
 
-export interface PatrolMember {
+export interface Caravan extends RecordMetadata {
+  id: string;
+  wardId: string;
+  destination: string;
+  departureDate: string;
+  departureTime: string;
+  returnDate: string;
+  returnTime: string;
+  seatMode: CaravanSeatMode;
+  availableSeats: number;
+}
+
+export interface DocumentType extends RecordMetadata {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+export interface CaravanPerson extends RecordMetadata {
+  id: string;
+  wardId: string;
+  homeWardId: string;
+  type: CaravanPersonType;
+  name: string;
+  birthDate: string;
+  sex: "M" | "F";
+  documentTypeId: string;
+  documentValue: string;
+  phone: string;
+  notes: string;
+}
+
+export interface CaravanRegistration extends RecordMetadata {
+  id: string;
+  wardId: string;
+  caravanId: string;
+  personId: string;
+  consumesSeat: boolean;
+  isApproved: boolean;
+  isPaid: boolean;
+  createdAt: string;
+}
+
+export interface PatrolMember extends RecordMetadata {
   id: string;
   wardId: string;
   memberId?: string;
@@ -193,7 +263,7 @@ export interface PatrolMember {
   active: boolean;
 }
 
-export interface PatrolSchedule {
+export interface PatrolSchedule extends RecordMetadata {
   id: string;
   wardId: string;
   date: string;
@@ -243,6 +313,10 @@ export interface Database {
   missionaryCompanionships: MissionaryCompanionship[];
   hostHouses: HostHouse[];
   lunchSchedules: LunchSchedule[];
+  caravans: Caravan[];
+  caravanPeople: CaravanPerson[];
+  caravanRegistrations: CaravanRegistration[];
+  documentTypes: DocumentType[];
   patrolMembers: PatrolMember[];
   patrolSchedules: PatrolSchedule[];
   auditLogs: AuditLog[];

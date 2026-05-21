@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
+import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
@@ -64,7 +65,8 @@ export default function DashboardPage() {
   ].slice(0, 4);
 
   return (
-    <div>
+    <PermissionGuard permission="dashboard.view">
+      <div>
       <PageHeader
         eyebrow="Dashboard"
         title={currentWard ? `${currentWard.name}` : "Dashboard da Ala"}
@@ -73,7 +75,7 @@ export default function DashboardPage() {
 
       <div className="grid gap-4 xl:grid-cols-4 md:grid-cols-2">
         <StatCard title="Membros ativos" value={`${membersByWard.length}`} helper="Base pesquisável da ala" icon={<Users className="size-5" />} />
-        <StatCard title="Usuários com acesso" value={`${usersByWard.filter((user) => user.status === "active").length}`} helper="Perfis ativos no sistema" icon={<ShieldCheck className="size-5" />} />
+        <StatCard title="Usuários com acesso" value={`${usersByWard.filter((user) => user.status === "active").length}`} helper="Acessos ativos no sistema" icon={<ShieldCheck className="size-5" />} />
         <StatCard title="Atas registradas" value={`${minutesByWard.length}`} helper="Registros salvos da reunião sacramental" icon={<FileText className="size-5" />} />
         <StatCard title="Próximas escalas" value={`${patrolSchedulesByWard.length}`} helper="Escala de segurança organizada por data" icon={<CalendarRange className="size-5" />} />
       </div>
@@ -165,6 +167,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
+      </div>
+    </PermissionGuard>
   );
 }

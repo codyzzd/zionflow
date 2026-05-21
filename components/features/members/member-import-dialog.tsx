@@ -12,10 +12,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { normalizeDateInput, slugify } from "@/lib/utils";
-import type { Member } from "@/types/domain";
+import type { Member, RecordMetadataKey } from "@/types/domain";
 
-type ImportFieldKey = keyof Omit<Member, "id" | "wardId">;
-type ImportMember = Omit<Member, "id" | "wardId">;
+type ImportFieldKey = keyof Omit<Member, "id" | "wardId" | RecordMetadataKey>;
+type ImportMember = Omit<Member, "id" | "wardId" | RecordMetadataKey>;
 type CsvData = {
   headers: string[];
   rows: string[][];

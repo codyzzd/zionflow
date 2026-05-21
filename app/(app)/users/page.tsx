@@ -1,21 +1,31 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { Eye, EyeOff, Pencil } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import {
+  ACCESS_LEVEL_LABELS,
+  ACCESS_MATRIX_AREAS,
+  accessLevelFromPermissions,
+  permissionsForAccessLevel,
+  type AccessArea,
+  type AccessLevel,
+} from "@/lib/access-control";
+import { cn } from "@/lib/utils";
 import type { PermissionKey, User, UserStatus } from "@/types/domain";
 
 type UserForm = {
@@ -28,13 +38,15 @@ type UserForm = {
   permissionOverrides: PermissionKey[];
 };
 
-const overridePermissions: PermissionKey[] = ["missionary.manage", "patrol.manage", "exports.run"];
+const DEFAULT_LEGACY_ROLE_ID = "role_viewer";
+const readOnlyAccessLevels: AccessLevel[] = ["hidden", "view"];
+const editableAccessLevels: AccessLevel[] = ["hidden", "view", "edit"];
 
 const emptyUserForm: UserForm = {
   name: "",
   email: "",
   phone: "",
-  roleId: "",
+  roleId: DEFAULT_LEGACY_ROLE_ID,
   memberId: "",
   status: "active",
   permissionOverrides: [],
@@ -45,23 +57,83 @@ const statusLabels: Record<UserStatus, string> = {
   inactive: "Inativo",
 };
 
+const accessLevelIcons = {
+  hidden: EyeOff,
+  view: Eye,
+  edit: Pencil,
+};
+
+function updateAreaAccess(permissions: PermissionKey[], area: AccessArea, level: AccessLevel) {
+  const areaPermissions = [area.viewPermission, area.managePermission].filter(Boolean) as PermissionKey[];
+  const nextPermissions = permissions.filter((permission) => !areaPermissions.includes(permission));
+
+  return Array.from(new Set([...nextPermissions, ...permissionsForAccessLevel(area, level)]));
+}
+
+function getAccessSummary(permissions: PermissionKey[]) {
+  const editable = ACCESS_MATRIX_AREAS.filter((area) => accessLevelFromPermissions(area, permissions) === "edit").length;
+  const visibleOnly = ACCESS_MATRIX_AREAS.filter((area) => accessLevelFromPermissions(area, permissions) === "view").length;
+  const hidden = ACCESS_MATRIX_AREAS.length - editable - visibleOnly;
+
+  return { editable, visibleOnly, hidden };
+}
+
+function AccessLevelButtonGroup({
+  level,
+  levels,
+  onChange,
+}: {
+  level: AccessLevel;
+  levels: AccessLevel[];
+  onChange: (level: AccessLevel) => void;
+}) {
+  return (
+    <div aria-label="Nível de acesso" className="inline-flex w-fit rounded-md border bg-card p-0.5" role="group">
+      {levels.map((accessLevel) => {
+        const Icon = accessLevelIcons[accessLevel];
+        const isActive = level === accessLevel;
+
+        return (
+          <Tooltip key={accessLevel}>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={ACCESS_LEVEL_LABELS[accessLevel]}
+                aria-pressed={isActive}
+                className={cn(
+                  "size-8 rounded-sm",
+                  isActive
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+                onClick={() => onChange(accessLevel)}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Icon className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{ACCESS_LEVEL_LABELS[accessLevel]}</TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function UsersPage() {
-  const { currentWard, membersByWard, roles, toggleUserStatus, usersByWard, saveUser } = useAppContext();
+  const { currentWard, hasPermission, membersByWard, toggleUserStatus, usersByWard, saveUser } = useAppContext();
   const { formatDateTime } = useDateFormatter();
+  const canManageUsers = hasPermission("users.manage");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [roleFilter, setRoleFilter] = useState("all");
   const [editingId, setEditingId] = useState<string>();
-  const [form, setForm] = useState<UserForm>(() => ({
-    ...emptyUserForm,
-    roleId: roles[0]?.id ?? "",
-  }));
+  const [form, setForm] = useState<UserForm>(emptyUserForm);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const filteredUsers = useMemo(
     () =>
       usersByWard.filter((user) => {
-        const role = roles.find((item) => item.id === user.roleId);
         const linkedMember = membersByWard.find((member) => member.id === user.memberId);
         const normalizedSearch = search.trim().toLowerCase();
         const matchesSearch =
@@ -69,22 +141,17 @@ export default function UsersPage() {
           user.name.toLowerCase().includes(normalizedSearch) ||
           user.email.toLowerCase().includes(normalizedSearch) ||
           user.phone.toLowerCase().includes(normalizedSearch) ||
-          role?.name.toLowerCase().includes(normalizedSearch) ||
           linkedMember?.name.toLowerCase().includes(normalizedSearch);
         const matchesStatus = statusFilter === "all" || user.status === statusFilter;
-        const matchesRole = roleFilter === "all" || user.roleId === roleFilter;
 
-        return matchesSearch && matchesStatus && matchesRole;
+        return matchesSearch && matchesStatus;
       }),
-    [membersByWard, roleFilter, roles, search, statusFilter, usersByWard],
+    [membersByWard, search, statusFilter, usersByWard],
   );
 
   function resetForm() {
     setEditingId(undefined);
-    setForm({
-      ...emptyUserForm,
-      roleId: roles[0]?.id ?? "",
-    });
+    setForm(emptyUserForm);
   }
 
   function handleDrawerOpenChange(open: boolean) {
@@ -96,11 +163,13 @@ export default function UsersPage() {
   }
 
   function openCreateDrawer() {
+    if (!canManageUsers) return;
     resetForm();
     setDrawerOpen(true);
   }
 
-  function openEditDrawer(user: User) {
+  const openEditDrawer = useCallback((user: User) => {
+    if (!canManageUsers) return;
     setEditingId(user.id);
     setForm({
       name: user.name,
@@ -112,14 +181,14 @@ export default function UsersPage() {
       permissionOverrides: user.permissionOverrides,
     });
     setDrawerOpen(true);
-  }
+  }, [canManageUsers]);
 
   function closeDrawer() {
     handleDrawerOpenChange(false);
   }
 
   function saveCurrentUser() {
-    if (!currentWard || !form.name.trim() || !form.email.trim() || !form.roleId) return;
+    if (!currentWard || !form.name.trim() || !form.email.trim() || !canManageUsers) return;
 
     saveUser({
       id: editingId,
@@ -127,10 +196,11 @@ export default function UsersPage() {
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
-      roleId: form.roleId,
+      roleId: form.roleId || DEFAULT_LEGACY_ROLE_ID,
       memberId: form.memberId || undefined,
       status: form.status,
       permissionOverrides: form.permissionOverrides,
+      permissionsConfigured: true,
     });
 
     closeDrawer();
@@ -185,22 +255,24 @@ export default function UsersPage() {
         },
       },
       {
-        accessorKey: "roleId",
+        id: "access",
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
-            Perfil {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
+            Acessos {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
         cell: ({ row }) => {
-          const role = roles.find((item) => item.id === row.original.roleId);
+          const summary = getAccessSummary(row.original.permissionOverrides);
 
           return (
-            <div className="space-y-1">
-              <p>{role?.name ?? "Perfil não encontrado"}</p>
-              <p className="text-xs text-muted-foreground">{role?.description ?? "Sem descrição"}</p>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="default">{summary.editable} editar</Badge>
+              <Badge variant="secondary">{summary.visibleOnly} visível</Badge>
+              {summary.hidden ? <Badge variant="outline">{summary.hidden} invisível</Badge> : null}
             </div>
           );
         },
+        sortingFn: (rowA, rowB) => getAccessSummary(rowA.original.permissionOverrides).editable - getAccessSummary(rowB.original.permissionOverrides).editable,
       },
       {
         accessorKey: "status",
@@ -225,27 +297,6 @@ export default function UsersPage() {
         cell: ({ row }) => (row.original.lastAccessAt ? formatDateTime(row.original.lastAccessAt) : "Nunca"),
       },
       {
-        id: "permissions",
-        header: "Permissões adicionais",
-        cell: ({ row }) => {
-          const visiblePermissions = row.original.permissionOverrides.filter((permission) => overridePermissions.includes(permission));
-
-          return (
-            <div className="flex flex-wrap gap-2">
-              {visiblePermissions.length ? (
-                visiblePermissions.map((permission) => (
-                  <Badge key={permission} variant="outline">
-                    {permission}
-                  </Badge>
-                ))
-              ) : (
-                <span className="text-xs text-muted-foreground">Sem permissões extras</span>
-              )}
-            </div>
-          );
-        },
-      },
-      {
         id: "actions",
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => {
@@ -253,31 +304,37 @@ export default function UsersPage() {
 
           return (
             <div className="flex justify-end gap-2">
-              <Button onClick={() => openEditDrawer(user)} size="sm" variant="outline">
-                Editar
-              </Button>
-              <Button onClick={() => toggleUserStatus(user.id)} size="sm" variant="ghost">
-                {user.status === "active" ? "Desativar" : "Ativar"}
-              </Button>
+              {canManageUsers ? (
+                <>
+                  <Button onClick={() => openEditDrawer(user)} size="sm" variant="outline">
+                    Editar
+                  </Button>
+                  <Button onClick={() => toggleUserStatus(user.id)} size="sm" variant="ghost">
+                    {user.status === "active" ? "Desativar" : "Ativar"}
+                  </Button>
+                </>
+              ) : null}
             </div>
           );
         },
       },
     ],
-    [membersByWard, roles, toggleUserStatus],
+    [canManageUsers, formatDateTime, membersByWard, openEditDrawer, toggleUserStatus],
   );
 
   return (
-    <PermissionGuard permission="users.manage">
+    <PermissionGuard permission="users.view">
       <div>
         <PageHeader
           eyebrow="Usuários e acessos"
-          title="RBAC e perfis"
-          description="Gestão de contas, perfis e permissões adicionais."
+          title="Acessos por área"
+          description="Gestão de contas e matriz de acesso por área do sistema."
           actions={
+            canManageUsers ? (
             <Button onClick={openCreateDrawer} size="lg">
               Novo usuário
             </Button>
+            ) : null
           }
         />
 
@@ -286,11 +343,11 @@ export default function UsersPage() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <Input
                 className="lg:max-w-lg"
-                placeholder="Buscar por nome, e-mail, telefone, membro ou perfil"
+                placeholder="Buscar por nome, e-mail, telefone ou membro"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
-              <div className="grid gap-3 sm:grid-cols-2 lg:w-[452px]">
+              <div className="lg:w-[220px]">
                 <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value ?? "all")}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Filtrar status" />
@@ -301,48 +358,18 @@ export default function UsersPage() {
                     <SelectItem value="inactive">Inativos</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value ?? "all")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Filtrar perfil" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos os perfis</SelectItem>
-                    {roles.map((role) => (
-                      <SelectItem key={role.id} value={role.id}>
-                        {role.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
             </div>
 
             <DataTable columns={columns} data={filteredUsers} emptyMessage="Nenhum usuário encontrado com os filtros atuais." enableRowSelection />
           </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Perfis e permissões</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {roles.map((role) => (
-                <div key={role.id} className="rounded-lg border p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">{role.name}</p>
-                    <Badge variant="outline">{role.permissions.length} permissões</Badge>
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">{role.description}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
         </div>
 
         <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerOpenChange}>
           <DrawerContent className="sm:max-w-2xl" direction="right">
             <DrawerHeader className="border-b">
               <DrawerTitle>{editingId ? "Editar usuário" : "Novo usuário"}</DrawerTitle>
-              <DrawerDescription>Cadastro e edição de acesso pelo drawer lateral à direita, no mesmo padrão da tela de membros.</DrawerDescription>
+              <DrawerDescription>Configure o acesso por área usando ocultar, visualizar ou editar.</DrawerDescription>
             </DrawerHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-4">
@@ -358,21 +385,6 @@ export default function UsersPage() {
                 <div>
                   <Label>Telefone</Label>
                   <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
-                </div>
-                <div>
-                  <Label>Perfil</Label>
-                  <Select value={form.roleId} onValueChange={(value) => value && setForm((current) => ({ ...current, roleId: value }))}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o perfil" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {roles.map((role) => (
-                        <SelectItem key={role.id} value={role.id}>
-                          {role.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
                 <div>
                   <Label>Membro vinculado</Label>
@@ -405,26 +417,34 @@ export default function UsersPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label>Permissões adicionais</Label>
-                  <div className="grid gap-2 rounded-lg border bg-secondary/35 p-4 text-sm">
-                    {overridePermissions.map((permission) => (
-                      <label key={permission} className="flex items-center gap-2">
-                        <Checkbox
-                          checked={form.permissionOverrides.includes(permission)}
-                          onCheckedChange={(checked) =>
-                            setForm((current) => ({
-                              ...current,
-                              permissionOverrides:
-                                checked === true
-                                  ? [...current.permissionOverrides, permission]
-                                  : current.permissionOverrides.filter((item) => item !== permission),
-                            }))
-                          }
-                        />
-                        {permission}
-                      </label>
-                    ))}
+                <div className="space-y-3">
+                  <Label>Matriz de acessos</Label>
+                  <div className="divide-y rounded-lg border">
+                    {ACCESS_MATRIX_AREAS.map((area) => {
+                      const level = accessLevelFromPermissions(area, form.permissionOverrides);
+                      const availableAccessLevels = area.managePermission ? editableAccessLevels : readOnlyAccessLevels;
+
+                      return (
+	                        <div className="grid gap-3 p-3 sm:grid-cols-[1fr_auto] sm:items-center" key={area.id}>
+	                          <div>
+	                            <p className="font-medium">{area.label}</p>
+	                            <p className="text-xs text-muted-foreground">
+	                              {area.managePermission ? "Visualizar permite consultar; editar libera ações." : "Sem edição separada por enquanto."}
+	                            </p>
+	                          </div>
+	                          <AccessLevelButtonGroup
+	                            level={level}
+	                            levels={availableAccessLevels}
+	                            onChange={(accessLevel) =>
+	                              setForm((current) => ({
+	                                ...current,
+	                                permissionOverrides: updateAreaAccess(current.permissionOverrides, area, accessLevel),
+	                              }))
+	                            }
+	                          />
+	                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -435,7 +455,7 @@ export default function UsersPage() {
                 <Button onClick={closeDrawer} variant="ghost">
                   Cancelar
                 </Button>
-                <Button disabled={!currentWard || !form.name.trim() || !form.email.trim() || !form.roleId} onClick={saveCurrentUser}>
+                <Button disabled={!currentWard || !form.name.trim() || !form.email.trim() || !canManageUsers} onClick={saveCurrentUser}>
                   {editingId ? "Salvar alterações" : "Criar usuário"}
                 </Button>
               </div>

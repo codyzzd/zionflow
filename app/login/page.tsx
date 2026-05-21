@@ -12,9 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 export default function LoginPage() {
   const router = useRouter();
-  const { currentUser, loginAs, ready, usersByWard, wards } = useAppContext();
+  const { currentUser, db, loginAs, ready, wards } = useAppContext();
   const [selectedUserId, setSelectedUserId] = useState("");
-  const effectiveSelectedUserId = useMemo(() => selectedUserId || usersByWard[0]?.id || "", [selectedUserId, usersByWard]);
+  const activeUsers = useMemo(() => db.users.filter((user) => user.status === "active"), [db.users]);
+  const effectiveSelectedUserId = useMemo(() => selectedUserId || activeUsers[0]?.id || "", [activeUsers, selectedUserId]);
 
   useEffect(() => {
     if (ready && currentUser) {
@@ -28,13 +29,13 @@ export default function LoginPage() {
         <section className="rounded-xl border bg-card">
           <div className="border-b p-4">
             <Badge className="mb-4 w-fit" variant="outline">
-              MVP fake com `localStorage`
+              MVP conectado ao Supabase
             </Badge>
             <h1 className="max-w-xl text-3xl font-semibold leading-tight">
               Gestão de ala com foco em liderança, organização e operação semanal.
             </h1>
             <p className="mt-4 max-w-2xl text-sm text-muted-foreground">
-              Navegação administrativa, módulos principais do PRD e persistência local para validar fluxo sem depender do banco.
+              Navegação administrativa, módulos principais do PRD e persistência remota para validar fluxos com banco.
             </p>
           </div>
 
@@ -42,16 +43,16 @@ export default function LoginPage() {
             <Card className="shadow-none">
               <CardHeader className="pb-3">
                 <ShieldCheck className="size-5" />
-                <CardTitle className="text-base">RBAC pronto para crescer</CardTitle>
+                <CardTitle className="text-base">Acessos por área</CardTitle>
               </CardHeader>
               <CardContent className="text-sm text-muted-foreground">
-                Perfis, permissões e overrides por usuário já modelados.
+                Matriz de permissões por módulo para validar usuários com acessos diferentes.
               </CardContent>
             </Card>
             <Card className="shadow-none">
               <CardHeader className="pb-3">
                 <LockKeyhole className="size-5" />
-                <CardTitle className="text-base">Login local simples</CardTitle>
+                <CardTitle className="text-base">Login demo simples</CardTitle>
               </CardHeader>
               <CardContent className="text-sm text-muted-foreground">
                 Selecione um usuário demo e entre direto no contexto da ala.
@@ -72,7 +73,7 @@ export default function LoginPage() {
         <Card className="self-start">
           <CardHeader>
             <CardTitle>Entrar no sistema</CardTitle>
-            <CardDescription>Sem backend por enquanto: o acesso é simulado com perfis locais persistidos no navegador.</CardDescription>
+            <CardDescription>O acesso ainda é simulado com usuários demo, mas os dados do sistema ficam no Supabase.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -82,21 +83,22 @@ export default function LoginPage() {
                   <SelectValue placeholder="Selecione um usuário demo" />
                 </SelectTrigger>
                 <SelectContent>
-                  {usersByWard.map((user) => (
+                  {activeUsers.map((user) => (
                     <SelectItem key={user.id} value={user.id}>
                       {user.name} • {user.email}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {!activeUsers.length ? (
+                <p className="text-sm text-muted-foreground">Nenhum usuário cadastrado no Supabase ainda.</p>
+              ) : null}
             </div>
 
             <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">Alas disponíveis no seed</p>
+              <p className="font-medium text-foreground">Alas cadastradas</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {wards.map((ward) => (
-                  <Badge key={ward.id}>{ward.name}</Badge>
-                ))}
+                {wards.length ? wards.map((ward) => <Badge key={ward.id}>{ward.name}</Badge>) : "Nenhuma ala cadastrada."}
               </div>
             </div>
 
@@ -107,6 +109,7 @@ export default function LoginPage() {
                 loginAs(effectiveSelectedUserId);
                 router.push("/dashboard");
               }}
+              disabled={!effectiveSelectedUserId}
             >
               Entrar no Zionwise
             </Button>

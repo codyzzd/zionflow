@@ -17,7 +17,7 @@ const geist = Geist({
 
 export const metadata: Metadata = {
   title: "Zionwise",
-  description: "Sistema administrativo de ala com dados fake em localStorage para o MVP.",
+  description: "Sistema administrativo de ala com persistencia em Supabase para o MVP.",
 };
 
 const themeBootScript = `

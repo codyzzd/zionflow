@@ -11,7 +11,7 @@ import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/compon
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { currentUser, currentWard, logout, ready, resetDemoData } = useAppContext();
+  const { currentUser, currentWard, hasPermission, logout, ready, resetDemoData } = useAppContext();
 
   useEffect(() => {
     if (ready && !currentUser) {
@@ -34,6 +34,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <SidebarNav
           currentPath={pathname}
           currentUser={currentUser}
+          hasPermission={hasPermission}
           onLogout={handleLogout}
           onResetDemo={resetDemoData}
           wardName={currentWard.name}
