@@ -75,6 +75,7 @@ type AppContextValue = {
   auditLogsByWard: AuditLog[];
   appPreferences: AppPreferences;
   loginAs: (userId: string) => void;
+  createAccountForEmail: (email: string, options?: { login?: boolean }) => boolean;
   logout: () => void;
   switchWard: (wardId: string) => void;
   resetDemoData: () => void;
@@ -135,6 +136,25 @@ function resolvePermissions(db: Database, user?: User) {
 
 function getActorUserId(db: Database) {
   return db.session.currentUserId ?? SYSTEM_USER_ID;
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLocaleLowerCase("pt-BR");
+}
+
+function formatNameFromEmail(email: string) {
+  const name = email
+    .split("@")[0]
+    .replace(/[._-]+/g, " ")
+    .trim();
+
+  if (!name) return "Novo usuário";
+
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toLocaleUpperCase("pt-BR") + part.slice(1))
+    .join(" ");
 }
 
 function withRecordMetadata<T extends RecordMetadata>(record: T, existing: RecordMetadata | undefined, actorUserId: string, timestamp = nowIso()): T {
@@ -251,7 +271,6 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       .catch((error) => {
         console.error("Failed to load Supabase data.", error);
         if (!cancelled) {
-          toast.error("Nao foi possivel carregar os dados do Supabase. Usando dados iniciais.");
           setRemoteReady(true);
         }
       });
@@ -270,7 +289,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       saveDatabase(db).catch((error) => {
         console.error("Failed to save Supabase data.", error);
 
-        if (!saveErrorShownRef.current) {
+        if (db.session.currentUserId && !saveErrorShownRef.current) {
           toast.error("Nao foi possivel salvar os dados no Supabase.");
           saveErrorShownRef.current = true;
         }
@@ -328,9 +347,105 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           action: "LOGIN",
           module: "auth",
           itemLabel: user.name,
-          summary: "Entrou no sistema pelo login fake local.",
+          summary: "Entrou no sistema com email e senha.",
         });
       });
+    }
+
+    function createAccountForEmail(email: string, options: { login?: boolean } = {}) {
+      const normalizedEmail = normalizeEmail(email);
+      const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+      const fallbackWard = db.wards[0];
+      const viewerRole = db.roles.find((role) => role.id === "role_viewer") ?? db.roles[0];
+
+      if (!normalizedEmail || existingUser?.status === "inactive" || (!existingUser && (!fallbackWard || !viewerRole))) {
+        return false;
+      }
+
+      setDb((currentDb) => {
+        const currentExistingUser = currentDb.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+
+        if (currentExistingUser) {
+          if (!options.login || currentExistingUser.status !== "active") {
+            return currentDb;
+          }
+
+          const updated = {
+            ...currentDb,
+            users: currentDb.users.map((user) =>
+              user.id === currentExistingUser.id ? withRecordMetadata({ ...user, lastAccessAt: nowIso() }, user, currentExistingUser.id) : user,
+            ),
+            session: {
+              currentUserId: currentExistingUser.id,
+              currentWardId: currentExistingUser.wardId,
+            } satisfies SessionState,
+          };
+
+          return withAuditLog(updated, currentExistingUser.id, {
+            wardId: currentExistingUser.wardId,
+            action: "LOGIN",
+            module: "auth",
+            itemLabel: currentExistingUser.name,
+            summary: "Entrou no sistema com email e senha.",
+          });
+        }
+
+        const currentFallbackWard = currentDb.wards[0];
+        const currentViewerRole = currentDb.roles.find((role) => role.id === "role_viewer") ?? currentDb.roles[0];
+
+        if (!currentFallbackWard || !currentViewerRole) {
+          return currentDb;
+        }
+
+        const timestamp = nowIso();
+        const user: User = {
+          id: uid("user"),
+          wardId: currentFallbackWard.id,
+          name: formatNameFromEmail(normalizedEmail),
+          email: normalizedEmail,
+          phone: "",
+          status: "active",
+          roleId: currentViewerRole.id,
+          permissionOverrides: normalizePermissionSet(currentViewerRole.permissions),
+          permissionsConfigured: true,
+          createdAt: timestamp,
+          createdByUserId: SYSTEM_USER_ID,
+          updatedAt: timestamp,
+          updatedByUserId: SYSTEM_USER_ID,
+          lastAccessAt: options.login ? timestamp : undefined,
+        };
+
+        const nextDb = {
+          ...currentDb,
+          users: [user, ...currentDb.users],
+          session: options.login
+            ? ({
+                currentUserId: user.id,
+                currentWardId: user.wardId,
+              } satisfies SessionState)
+            : currentDb.session,
+        };
+
+        const createdDb = withAuditLog(nextDb, options.login ? user.id : undefined, {
+          wardId: user.wardId,
+          action: "CREATE_USER",
+          module: "usuarios",
+          itemLabel: user.name,
+          summary: "Criou conta pelo cadastro público.",
+        });
+
+        return options.login
+          ? withAuditLog(createdDb, user.id, {
+              wardId: user.wardId,
+              action: "LOGIN",
+              module: "auth",
+              itemLabel: user.name,
+              summary: "Entrou no sistema com email e senha.",
+            })
+          : createdDb;
+      });
+
+      return true;
     }
 
     function logout() {
@@ -1143,6 +1258,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       auditLogsByWard,
       appPreferences: db.appPreferences,
       loginAs,
+      createAccountForEmail,
       logout,
       switchWard,
       resetDemoData,
