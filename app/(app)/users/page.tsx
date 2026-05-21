@@ -38,7 +38,6 @@ type UserForm = {
   permissionOverrides: PermissionKey[];
 };
 
-const DEFAULT_LEGACY_ROLE_ID = "role_viewer";
 const readOnlyAccessLevels: AccessLevel[] = ["hidden", "view"];
 const editableAccessLevels: AccessLevel[] = ["hidden", "view", "edit"];
 
@@ -46,7 +45,7 @@ const emptyUserForm: UserForm = {
   name: "",
   email: "",
   phone: "",
-  roleId: DEFAULT_LEGACY_ROLE_ID,
+  roleId: "",
   memberId: "",
   status: "active",
   permissionOverrides: [],
@@ -196,7 +195,7 @@ export default function UsersPage() {
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
-      roleId: form.roleId || DEFAULT_LEGACY_ROLE_ID,
+      roleId: form.roleId,
       memberId: form.memberId || undefined,
       status: form.status,
       permissionOverrides: form.permissionOverrides,

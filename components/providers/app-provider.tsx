@@ -8,6 +8,7 @@ import { normalizePermissionSet } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { createEmptyDatabase, loadDatabase, resetDatabase, saveDatabase } from "@/lib/storage";
+import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
 import type {
   AuditLog,
@@ -126,7 +127,6 @@ type AppContextValue = {
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
-const SYSTEM_USER_ID = "system";
 const REMOTE_SAVE_DELAY_MS = 500;
 const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "dashboard.view",
@@ -184,7 +184,7 @@ function resolvePermissions(db: Database, user?: User) {
 }
 
 function getActorUserId(db: Database) {
-  return db.session.currentUserId ?? SYSTEM_USER_ID;
+  return db.session.currentUserId;
 }
 
 function normalizeEmail(email: string) {
@@ -209,7 +209,7 @@ function formatNameFromEmail(email: string) {
 function createOnboardingRole(kind: "stake-admin" | "ward-admin" | "viewer"): Role {
   if (kind === "stake-admin") {
     return {
-      id: "role_stake_admin",
+      id: SYSTEM_ROLE_IDS.stakeAdmin,
       name: "Administrador da estaca",
       description: "Administra a estaca e os cadastros do sistema.",
       permissions: normalizePermissionSet(FULL_ADMIN_PERMISSIONS),
@@ -218,7 +218,7 @@ function createOnboardingRole(kind: "stake-admin" | "ward-admin" | "viewer"): Ro
 
   if (kind === "ward-admin") {
     return {
-      id: "role_ward_admin",
+      id: SYSTEM_ROLE_IDS.wardAdmin,
       name: "Administrador da ala",
       description: "Administra a ala e seus cadastros.",
       permissions: normalizePermissionSet(FULL_ADMIN_PERMISSIONS),
@@ -226,7 +226,7 @@ function createOnboardingRole(kind: "stake-admin" | "ward-admin" | "viewer"): Ro
   }
 
   return {
-    id: "role_viewer",
+    id: SYSTEM_ROLE_IDS.viewer,
     name: "Consultivo",
     description: "Consulta areas liberadas sem editar.",
     permissions: normalizePermissionSet(VIEWER_PERMISSIONS),
@@ -254,14 +254,14 @@ function buildOnboardingUser(email: string, wardId: string, role: Role, timestam
     permissionOverrides: normalizePermissionSet(role.permissions),
     permissionsConfigured: true,
     createdAt: timestamp,
-    createdByUserId: SYSTEM_USER_ID,
+    createdByUserId: undefined,
     updatedAt: timestamp,
-    updatedByUserId: SYSTEM_USER_ID,
+    updatedByUserId: undefined,
     lastAccessAt: timestamp,
   };
 }
 
-function withRecordMetadata<T extends RecordMetadata>(record: T, existing: RecordMetadata | undefined, actorUserId: string, timestamp = nowIso()): T {
+function withRecordMetadata<T extends RecordMetadata>(record: T, existing: RecordMetadata | undefined, actorUserId?: string, timestamp = nowIso()): T {
   return {
     ...record,
     createdAt: existing?.createdAt ?? record.createdAt ?? timestamp,
@@ -273,7 +273,7 @@ function withRecordMetadata<T extends RecordMetadata>(record: T, existing: Recor
   };
 }
 
-function withArchiveMetadata<T extends RecordMetadata>(record: T, archived: boolean, actorUserId: string): T {
+function withArchiveMetadata<T extends RecordMetadata>(record: T, archived: boolean, actorUserId?: string): T {
   const timestamp = nowIso();
   const updated = withRecordMetadata(record, record, actorUserId, timestamp);
 
@@ -303,7 +303,7 @@ function withAuditLog(db: Database, actorUserId: string | undefined, entry: Omit
   };
 }
 
-function clearDeletedMemberReferences(db: Database, memberIds: Set<string>, actorUserId = SYSTEM_USER_ID) {
+function clearDeletedMemberReferences(db: Database, memberIds: Set<string>, actorUserId?: string) {
   if (!memberIds.size) return db;
 
   const clearHybridField = (field: HybridField): HybridField =>
@@ -496,6 +496,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
         const timestamp = nowIso();
         const role = createOnboardingRole("stake-admin");
+        const viewerRole = createOnboardingRole("viewer");
         const stake: Stake = {
           id: uid("stake"),
           name: stakeName,
@@ -516,7 +517,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           ...currentDb,
           stakes: [stake, ...currentDb.stakes],
           wards: [ward, ...currentDb.wards],
-          roles: upsertRole(currentDb.roles, role),
+          roles: upsertRole(upsertRole(currentDb.roles, role), viewerRole),
           users: [user, ...currentDb.users],
           session: {
             currentUserId: user.id,
@@ -591,6 +592,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
         const timestamp = nowIso();
         const role = createOnboardingRole("ward-admin");
+        const viewerRole = createOnboardingRole("viewer");
         const stake: Stake = {
           id: uid("stake"),
           name: stakeName,
@@ -611,7 +613,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           ...currentDb,
           stakes: [stake, ...currentDb.stakes],
           wards: [ward, ...currentDb.wards],
-          roles: upsertRole(currentDb.roles, role),
+          roles: upsertRole(upsertRole(currentDb.roles, role), viewerRole),
           users: [user, ...currentDb.users],
           session: {
             currentUserId: user.id,
@@ -1065,7 +1067,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
               id: nextVersionId,
               minuteId: id,
               createdAt: nowIso(),
-              createdBy: actorUserId,
+              createdBy: actorUserId ?? "",
               snapshot: minute.form,
               status: minute.status,
             },

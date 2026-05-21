@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { normalizePermissionSet, permissionsFromLegacyRole } from "@/lib/access-control";
+import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
 import type {
   AppPreferences,
@@ -20,7 +21,6 @@ import type {
 } from "@/types/domain";
 
 const APP_PREFERENCES_STORAGE_KEY = "superala-preferences-v1";
-const SYSTEM_USER_ID = "system";
 const UNKNOWN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const DEFAULT_APP_PREFERENCES: AppPreferences = {
   calendarWeekStartsOn: "sunday",
@@ -114,7 +114,7 @@ function rowBoolean(row: RemoteRecord, columnName: string, dataKey: string, fall
 
 function normalizeRecordMetadata(record: LegacyMetadata): RecordMetadata {
   const createdAt = asString(record.createdAt) ?? asString(record.updatedAt) ?? UNKNOWN_TIMESTAMP;
-  const createdByUserId = asString(record.createdByUserId) ?? asString(record.createdBy) ?? SYSTEM_USER_ID;
+  const createdByUserId = asString(record.createdByUserId) ?? asString(record.createdBy);
   const updatedAt = asString(record.updatedAt) ?? createdAt;
   const updatedByUserId = asString(record.updatedByUserId) ?? asString(record.updatedBy) ?? createdByUserId;
   const archivedAt = asString(record.archivedAt);
@@ -145,7 +145,7 @@ function normalizeUser(user: User, roles: Role[]): User {
 
   return {
     ...normalizedUser,
-    roleId: normalizedUser.roleId || "role_viewer",
+    roleId: normalizedUser.roleId || SYSTEM_ROLE_IDS.viewer,
     permissionOverrides: permissionsConfigured
       ? normalizePermissionSet(directPermissions)
       : permissionsFromLegacyRole(normalizedUser.roleId, [...rolePermissions, ...directPermissions]),
@@ -368,8 +368,18 @@ function withLocalPreferences(db: Database): Database {
   };
 }
 
-function optionalId(value: unknown): string | null {
+function optionalText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function optionalUuid(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed) ? trimmed : null;
 }
 
 function relationColumns(key: RemoteCollectionKey, record: { id: string } & Record<string, unknown>): RemoteColumns {
@@ -378,7 +388,7 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
       return { name: asOptionalString(record.name) };
     case "wards":
       return {
-        stake_id: optionalId(record.stakeId),
+        stake_id: optionalUuid(record.stakeId),
         name: asOptionalString(record.name),
         city: asOptionalString(record.city),
         state: asOptionalString(record.state),
@@ -394,83 +404,83 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
       };
     case "users":
       return {
-        auth_user_id: optionalId(record.authUserId),
-        ward_id: optionalId(record.wardId),
-        member_id: optionalId(record.memberId),
-        role_id: optionalId(record.roleId),
+        auth_user_id: optionalUuid(record.authUserId),
+        ward_id: optionalUuid(record.wardId),
+        member_id: optionalUuid(record.memberId),
+        role_id: optionalUuid(record.roleId),
         name: asOptionalString(record.name),
         email: asOptionalString(record.email),
         phone: asOptionalString(record.phone),
         status: record.status === "inactive" ? "inactive" : "active",
         permission_overrides: Array.isArray(record.permissionOverrides) ? record.permissionOverrides : [],
         permissions_configured: record.permissionsConfigured !== false,
-        last_access_at: optionalId(record.lastAccessAt),
-        created_by_user_id: optionalId(record.createdByUserId),
-        updated_by_user_id: optionalId(record.updatedByUserId),
-        archived_at: optionalId(record.archivedAt),
-        archived_by_user_id: optionalId(record.archivedByUserId),
-        created_at: optionalId(record.createdAt),
-        updated_at: optionalId(record.updatedAt),
+        last_access_at: optionalText(record.lastAccessAt),
+        created_by_user_id: optionalUuid(record.createdByUserId),
+        updated_by_user_id: optionalUuid(record.updatedByUserId),
+        archived_at: optionalText(record.archivedAt),
+        archived_by_user_id: optionalUuid(record.archivedByUserId),
+        created_at: optionalText(record.createdAt),
+        updated_at: optionalText(record.updatedAt),
       };
     case "members":
-      return { ward_id: optionalId(record.wardId) };
+      return { ward_id: optionalUuid(record.wardId) };
     case "memberNotes":
-      return { member_id: optionalId(record.memberId) };
+      return { member_id: optionalUuid(record.memberId) };
     case "sacramentMinutes":
       return {
-        ward_id: optionalId(record.wardId),
-        responsible_user_id: optionalId(record.responsibleUserId),
+        ward_id: optionalUuid(record.wardId),
+        responsible_user_id: optionalUuid(record.responsibleUserId),
       };
     case "minuteVersions":
-      return { minute_id: optionalId(record.minuteId) };
+      return { minute_id: optionalUuid(record.minuteId) };
     case "hymns":
       return {
-        number: optionalId(record.number),
-        title: optionalId(record.title),
+        number: optionalText(record.number),
+        title: optionalText(record.title),
         active: typeof record.active === "boolean" ? record.active : true,
       };
     case "missionaryCompanionships":
-      return { ward_id: optionalId(record.wardId) };
+      return { ward_id: optionalUuid(record.wardId) };
     case "hostHouses":
       return {
-        ward_id: optionalId(record.wardId),
-        host_member_id: optionalId(record.hostMemberId),
+        ward_id: optionalUuid(record.wardId),
+        host_member_id: optionalUuid(record.hostMemberId),
       };
     case "lunchSchedules":
       return {
-        ward_id: optionalId(record.wardId),
-        host_member_id: optionalId(record.hostMemberId),
+        ward_id: optionalUuid(record.wardId),
+        host_member_id: optionalUuid(record.hostMemberId),
       };
     case "caravans":
-      return { ward_id: optionalId(record.wardId) };
+      return { ward_id: optionalUuid(record.wardId) };
     case "caravanPeople":
       return {
-        ward_id: optionalId(record.wardId),
-        home_ward_id: optionalId(record.homeWardId),
-        document_type_id: optionalId(record.documentTypeId),
+        ward_id: optionalUuid(record.wardId),
+        home_ward_id: optionalUuid(record.homeWardId),
+        document_type_id: optionalUuid(record.documentTypeId),
       };
     case "caravanRegistrations":
       return {
-        ward_id: optionalId(record.wardId),
-        caravan_id: optionalId(record.caravanId),
-        person_id: optionalId(record.personId),
+        ward_id: optionalUuid(record.wardId),
+        caravan_id: optionalUuid(record.caravanId),
+        person_id: optionalUuid(record.personId),
       };
     case "patrolMembers":
       return {
-        ward_id: optionalId(record.wardId),
-        member_id: optionalId(record.memberId),
+        ward_id: optionalUuid(record.wardId),
+        member_id: optionalUuid(record.memberId),
       };
     case "patrolSchedules":
       return {
-        ward_id: optionalId(record.wardId),
-        primary_patrol_member_id: optionalId(record.primaryPatrolMemberId),
-        secondary_patrol_member_id: optionalId(record.secondaryPatrolMemberId),
-        original_primary_patrol_member_id: optionalId(record.originalPrimaryPatrolMemberId),
+        ward_id: optionalUuid(record.wardId),
+        primary_patrol_member_id: optionalUuid(record.primaryPatrolMemberId),
+        secondary_patrol_member_id: optionalUuid(record.secondaryPatrolMemberId),
+        original_primary_patrol_member_id: optionalUuid(record.originalPrimaryPatrolMemberId),
       };
     case "auditLogs":
       return {
-        ward_id: optionalId(record.wardId),
-        actor_user_id: optionalId(record.actorUserId),
+        ward_id: optionalUuid(record.wardId),
+        actor_user_id: optionalUuid(record.actorUserId),
       };
     default:
       return {};

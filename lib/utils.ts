@@ -116,8 +116,16 @@ export function slugify(value: string) {
     .replace(/^-+|-+$/g, "")
 }
 
-export function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
+export function uid(_prefix?: string) {
+  void _prefix
+
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (character) =>
+    (Number(character) ^ (Math.random() * 16) >> (Number(character) / 4)).toString(16),
+  )
 }
 
 export function todayDate() {
