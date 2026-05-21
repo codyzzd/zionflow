@@ -81,6 +81,7 @@ export type RecordMetadataKey = keyof RecordMetadata;
 
 export interface User extends RecordMetadata {
   id: string;
+  authUserId?: string;
   wardId: string;
   memberId?: string;
   name: string;

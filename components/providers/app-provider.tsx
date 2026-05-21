@@ -33,6 +33,7 @@ import type {
   Role,
   SacramentMinute,
   SessionState,
+  Stake,
   User,
   Ward,
 } from "@/types/domain";
@@ -45,6 +46,22 @@ type ImportMembersInput = {
   wardId: string;
   members: Array<Omit<Member, "id" | "wardId">>;
   removeMissing: boolean;
+};
+
+type CreateStakeOnboardingInput = {
+  authUserId?: string;
+  stakeName: string;
+  wardName: string;
+  city?: string;
+  state?: string;
+};
+
+type CreateWardOnboardingInput = {
+  authUserId?: string;
+  stakeName: string;
+  wardName: string;
+  city?: string;
+  state?: string;
 };
 
 type SaveCaravanRegistrationInput = Omit<CaravanRegistration, "id" | "createdAt"> & {
@@ -75,7 +92,9 @@ type AppContextValue = {
   auditLogsByWard: AuditLog[];
   appPreferences: AppPreferences;
   loginAs: (userId: string) => void;
-  createAccountForEmail: (email: string, options?: { login?: boolean }) => boolean;
+  completeStakeOnboarding: (email: string, input: CreateStakeOnboardingInput) => boolean;
+  completeWardOnboarding: (email: string, input: CreateWardOnboardingInput) => boolean;
+  joinExistingWard: (email: string, wardId: string, authUserId?: string) => boolean;
   logout: () => void;
   switchWard: (wardId: string) => void;
   resetDemoData: () => void;
@@ -109,6 +128,36 @@ type AppContextValue = {
 const AppContext = createContext<AppContextValue | null>(null);
 const SYSTEM_USER_ID = "system";
 const REMOTE_SAVE_DELAY_MS = 500;
+const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
+  "dashboard.view",
+  "users.view",
+  "users.manage",
+  "roles.manage",
+  "members.view",
+  "members.manage",
+  "minutes.view",
+  "minutes.manage",
+  "frequency.view",
+  "frequency.manage",
+  "missionary.view",
+  "missionary.manage",
+  "lunch.view",
+  "lunch.manage",
+  "caravan.view",
+  "caravan.manage",
+  "caravan.register.view",
+  "caravan.register.manage",
+  "caravan.approve.view",
+  "caravan.approve.manage",
+  "caravan.manage.view",
+  "caravan.manage.manage",
+  "patrol.view",
+  "patrol.manage",
+  "reports.view",
+  "exports.run",
+  "audit.view",
+];
+const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "members.view", "minutes.view", "missionary.view", "caravan.view", "patrol.view"];
 
 let hydrationReady = false;
 
@@ -155,6 +204,61 @@ function formatNameFromEmail(email: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toLocaleUpperCase("pt-BR") + part.slice(1))
     .join(" ");
+}
+
+function createOnboardingRole(kind: "stake-admin" | "ward-admin" | "viewer"): Role {
+  if (kind === "stake-admin") {
+    return {
+      id: "role_stake_admin",
+      name: "Administrador da estaca",
+      description: "Administra a estaca e os cadastros do sistema.",
+      permissions: normalizePermissionSet(FULL_ADMIN_PERMISSIONS),
+    };
+  }
+
+  if (kind === "ward-admin") {
+    return {
+      id: "role_ward_admin",
+      name: "Administrador da ala",
+      description: "Administra a ala e seus cadastros.",
+      permissions: normalizePermissionSet(FULL_ADMIN_PERMISSIONS),
+    };
+  }
+
+  return {
+    id: "role_viewer",
+    name: "Consultivo",
+    description: "Consulta areas liberadas sem editar.",
+    permissions: normalizePermissionSet(VIEWER_PERMISSIONS),
+  };
+}
+
+function upsertRole(roles: Role[], role: Role) {
+  if (roles.some((item) => item.id === role.id)) {
+    return roles.map((item) => (item.id === role.id ? { ...item, permissions: normalizePermissionSet(item.permissions) } : item));
+  }
+
+  return [role, ...roles];
+}
+
+function buildOnboardingUser(email: string, wardId: string, role: Role, timestamp: string, authUserId?: string): User {
+  return {
+    id: uid("user"),
+    authUserId,
+    wardId,
+    name: formatNameFromEmail(email),
+    email,
+    phone: "",
+    status: "active",
+    roleId: role.id,
+    permissionOverrides: normalizePermissionSet(role.permissions),
+    permissionsConfigured: true,
+    createdAt: timestamp,
+    createdByUserId: SYSTEM_USER_ID,
+    updatedAt: timestamp,
+    updatedByUserId: SYSTEM_USER_ID,
+    lastAccessAt: timestamp,
+  };
 }
 
 function withRecordMetadata<T extends RecordMetadata>(record: T, existing: RecordMetadata | undefined, actorUserId: string, timestamp = nowIso()): T {
@@ -352,13 +456,13 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
     }
 
-    function createAccountForEmail(email: string, options: { login?: boolean } = {}) {
+    function completeStakeOnboarding(email: string, input: CreateStakeOnboardingInput) {
       const normalizedEmail = normalizeEmail(email);
       const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
-      const fallbackWard = db.wards[0];
-      const viewerRole = db.roles.find((role) => role.id === "role_viewer") ?? db.roles[0];
+      const stakeName = input.stakeName.trim();
+      const wardName = input.wardName.trim();
 
-      if (!normalizedEmail || existingUser?.status === "inactive" || (!existingUser && (!fallbackWard || !viewerRole))) {
+      if (!normalizedEmail || !stakeName || !wardName || existingUser?.status === "inactive") {
         return false;
       }
 
@@ -366,7 +470,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const currentExistingUser = currentDb.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
 
         if (currentExistingUser) {
-          if (!options.login || currentExistingUser.status !== "active") {
+          if (currentExistingUser.status !== "active") {
             return currentDb;
           }
 
@@ -390,59 +494,229 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           });
         }
 
-        const currentFallbackWard = currentDb.wards[0];
-        const currentViewerRole = currentDb.roles.find((role) => role.id === "role_viewer") ?? currentDb.roles[0];
-
-        if (!currentFallbackWard || !currentViewerRole) {
-          return currentDb;
-        }
-
         const timestamp = nowIso();
-        const user: User = {
-          id: uid("user"),
-          wardId: currentFallbackWard.id,
-          name: formatNameFromEmail(normalizedEmail),
-          email: normalizedEmail,
-          phone: "",
-          status: "active",
-          roleId: currentViewerRole.id,
-          permissionOverrides: normalizePermissionSet(currentViewerRole.permissions),
-          permissionsConfigured: true,
-          createdAt: timestamp,
-          createdByUserId: SYSTEM_USER_ID,
-          updatedAt: timestamp,
-          updatedByUserId: SYSTEM_USER_ID,
-          lastAccessAt: options.login ? timestamp : undefined,
+        const role = createOnboardingRole("stake-admin");
+        const stake: Stake = {
+          id: uid("stake"),
+          name: stakeName,
         };
+        const ward: Ward = {
+          id: uid("ward"),
+          stakeId: stake.id,
+          name: wardName,
+          city: input.city?.trim() ?? "",
+          state: input.state?.trim() ?? "",
+          meetingTime: "",
+          bishopric: [],
+          summary: "Ala administrativa criada junto com a estaca.",
+        };
+        const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, input.authUserId);
 
         const nextDb = {
           ...currentDb,
+          stakes: [stake, ...currentDb.stakes],
+          wards: [ward, ...currentDb.wards],
+          roles: upsertRole(currentDb.roles, role),
           users: [user, ...currentDb.users],
-          session: options.login
-            ? ({
-                currentUserId: user.id,
-                currentWardId: user.wardId,
-              } satisfies SessionState)
-            : currentDb.session,
+          session: {
+            currentUserId: user.id,
+            currentWardId: user.wardId,
+          } satisfies SessionState,
         };
 
-        const createdDb = withAuditLog(nextDb, options.login ? user.id : undefined, {
+        const createdStakeDb = withAuditLog(nextDb, user.id, {
+          wardId: ward.id,
+          action: "CREATE_STAKE",
+          module: "onboarding",
+          itemLabel: stake.name,
+          summary: "Criou estaca pelo onboarding inicial.",
+        });
+        const createdUserDb = withAuditLog(createdStakeDb, user.id, {
           wardId: user.wardId,
           action: "CREATE_USER",
           module: "usuarios",
           itemLabel: user.name,
-          summary: "Criou conta pelo cadastro público.",
+          summary: "Criou usuário administrador da estaca pelo onboarding.",
         });
 
-        return options.login
-          ? withAuditLog(createdDb, user.id, {
-              wardId: user.wardId,
-              action: "LOGIN",
-              module: "auth",
-              itemLabel: user.name,
-              summary: "Entrou no sistema com email e senha.",
-            })
-          : createdDb;
+        return withAuditLog(createdUserDb, user.id, {
+          wardId: user.wardId,
+          action: "LOGIN",
+          module: "auth",
+          itemLabel: user.name,
+          summary: "Entrou no sistema com email e senha.",
+        });
+      });
+
+      return true;
+    }
+
+    function completeWardOnboarding(email: string, input: CreateWardOnboardingInput) {
+      const normalizedEmail = normalizeEmail(email);
+      const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+      const stakeName = input.stakeName.trim();
+      const wardName = input.wardName.trim();
+
+      if (!normalizedEmail || !stakeName || !wardName || existingUser?.status === "inactive") {
+        return false;
+      }
+
+      setDb((currentDb) => {
+        const currentExistingUser = currentDb.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+
+        if (currentExistingUser) {
+          if (currentExistingUser.status !== "active") {
+            return currentDb;
+          }
+
+          const updated = {
+            ...currentDb,
+            users: currentDb.users.map((user) =>
+              user.id === currentExistingUser.id ? withRecordMetadata({ ...user, lastAccessAt: nowIso() }, user, currentExistingUser.id) : user,
+            ),
+            session: {
+              currentUserId: currentExistingUser.id,
+              currentWardId: currentExistingUser.wardId,
+            } satisfies SessionState,
+          };
+
+          return withAuditLog(updated, currentExistingUser.id, {
+            wardId: currentExistingUser.wardId,
+            action: "LOGIN",
+            module: "auth",
+            itemLabel: currentExistingUser.name,
+            summary: "Entrou no sistema com email e senha.",
+          });
+        }
+
+        const timestamp = nowIso();
+        const role = createOnboardingRole("ward-admin");
+        const stake: Stake = {
+          id: uid("stake"),
+          name: stakeName,
+        };
+        const ward: Ward = {
+          id: uid("ward"),
+          stakeId: stake.id,
+          name: wardName,
+          city: input.city?.trim() ?? "",
+          state: input.state?.trim() ?? "",
+          meetingTime: "",
+          bishopric: [],
+          summary: "Ala criada pelo onboarding inicial.",
+        };
+        const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, input.authUserId);
+
+        const nextDb = {
+          ...currentDb,
+          stakes: [stake, ...currentDb.stakes],
+          wards: [ward, ...currentDb.wards],
+          roles: upsertRole(currentDb.roles, role),
+          users: [user, ...currentDb.users],
+          session: {
+            currentUserId: user.id,
+            currentWardId: user.wardId,
+          } satisfies SessionState,
+        };
+
+        const createdWardDb = withAuditLog(nextDb, user.id, {
+          wardId: ward.id,
+          action: "CREATE_WARD",
+          module: "onboarding",
+          itemLabel: ward.name,
+          summary: "Criou ala pelo onboarding inicial.",
+        });
+        const createdUserDb = withAuditLog(createdWardDb, user.id, {
+          wardId: user.wardId,
+          action: "CREATE_USER",
+          module: "usuarios",
+          itemLabel: user.name,
+          summary: "Criou usuário administrador da ala pelo onboarding.",
+        });
+
+        return withAuditLog(createdUserDb, user.id, {
+          wardId: user.wardId,
+          action: "LOGIN",
+          module: "auth",
+          itemLabel: user.name,
+          summary: "Entrou no sistema com email e senha.",
+        });
+      });
+
+      return true;
+    }
+
+    function joinExistingWard(email: string, wardId: string, authUserId?: string) {
+      const normalizedEmail = normalizeEmail(email);
+      const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+      const wardExists = db.wards.some((ward) => ward.id === wardId);
+
+      if (!normalizedEmail || !wardExists || existingUser?.status === "inactive") {
+        return false;
+      }
+
+      setDb((currentDb) => {
+        const currentExistingUser = currentDb.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+        const ward = currentDb.wards.find((item) => item.id === wardId);
+
+        if (!ward) {
+          return currentDb;
+        }
+
+        if (currentExistingUser) {
+          if (currentExistingUser.status !== "active") {
+            return currentDb;
+          }
+
+          const updated = {
+            ...currentDb,
+            users: currentDb.users.map((user) =>
+              user.id === currentExistingUser.id ? withRecordMetadata({ ...user, lastAccessAt: nowIso() }, user, currentExistingUser.id) : user,
+            ),
+            session: {
+              currentUserId: currentExistingUser.id,
+              currentWardId: currentExistingUser.wardId,
+            } satisfies SessionState,
+          };
+
+          return withAuditLog(updated, currentExistingUser.id, {
+            wardId: currentExistingUser.wardId,
+            action: "LOGIN",
+            module: "auth",
+            itemLabel: currentExistingUser.name,
+            summary: "Entrou no sistema com email e senha.",
+          });
+        }
+
+        const timestamp = nowIso();
+        const role = createOnboardingRole("viewer");
+        const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, authUserId);
+
+        const nextDb = {
+          ...currentDb,
+          roles: upsertRole(currentDb.roles, role),
+          users: [user, ...currentDb.users],
+          session: {
+            currentUserId: user.id,
+            currentWardId: user.wardId,
+          } satisfies SessionState,
+        };
+
+        const joinedDb = withAuditLog(nextDb, user.id, {
+          wardId: user.wardId,
+          action: "JOIN_WARD",
+          module: "onboarding",
+          itemLabel: ward.name,
+          summary: "Entrou em uma ala existente pelo onboarding.",
+        });
+
+        return withAuditLog(joinedDb, user.id, {
+          wardId: user.wardId,
+          action: "LOGIN",
+          module: "auth",
+          itemLabel: user.name,
+          summary: "Entrou no sistema com email e senha.",
+        });
       });
 
       return true;
@@ -1258,7 +1532,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       auditLogsByWard,
       appPreferences: db.appPreferences,
       loginAs,
-      createAccountForEmail,
+      completeStakeOnboarding,
+      completeWardOnboarding,
+      joinExistingWard,
       logout,
       switchWard,
       resetDemoData,

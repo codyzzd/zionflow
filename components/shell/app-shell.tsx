@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { SidebarNav } from "@/components/shell/sidebar-nav";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { createClient } from "@/lib/supabase/client";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -23,7 +24,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando contexto da ala...</div>;
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    await createClient().auth.signOut();
     logout();
     router.push("/login");
   }

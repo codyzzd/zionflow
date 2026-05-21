@@ -51,13 +51,14 @@ const REMOTE_TABLES = [
 
 type RemoteRecord = {
   id: string;
-  data: Record<string, unknown> | null;
+  data?: Record<string, unknown> | null;
   number?: string | null;
   title?: string | null;
   active?: boolean | null;
+  [key: string]: unknown;
 };
 type RemoteCollectionKey = (typeof REMOTE_TABLES)[number]["key"];
-type RemoteColumnValue = boolean | string | null;
+type RemoteColumnValue = boolean | string | string[] | unknown[] | Record<string, unknown> | null;
 type RemoteColumns = Record<string, RemoteColumnValue>;
 
 type LegacyMetadata = Partial<RecordMetadata> & {
@@ -68,6 +69,47 @@ type LegacyMetadata = Partial<RecordMetadata> & {
 
 function asString(value: unknown) {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function asOptionalString(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function asBoolean(value: unknown, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function asStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function asDataObject(row: RemoteRecord) {
+  return row.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : {};
+}
+
+function rowString(row: RemoteRecord, columnName: string, dataKey: string, fallback = "") {
+  return asString(row[columnName]) ?? asString(asDataObject(row)[dataKey]) ?? fallback;
+}
+
+function rowOptionalString(row: RemoteRecord, columnName: string, dataKey: string) {
+  return asString(row[columnName]) ?? asString(asDataObject(row)[dataKey]);
+}
+
+function rowStringArray(row: RemoteRecord, columnName: string, dataKey: string) {
+  const columnValue = row[columnName];
+
+  if (Array.isArray(columnValue)) {
+    return asStringArray(columnValue);
+  }
+
+  return asStringArray(asDataObject(row)[dataKey]);
+}
+
+function rowBoolean(row: RemoteRecord, columnName: string, dataKey: string, fallback = false) {
+  const columnValue = row[columnName];
+  const dataValue = asDataObject(row)[dataKey];
+
+  return typeof columnValue === "boolean" ? columnValue : asBoolean(dataValue, fallback);
 }
 
 function normalizeRecordMetadata(record: LegacyMetadata): RecordMetadata {
@@ -332,13 +374,43 @@ function optionalId(value: unknown): string | null {
 
 function relationColumns(key: RemoteCollectionKey, record: { id: string } & Record<string, unknown>): RemoteColumns {
   switch (key) {
+    case "stakes":
+      return { name: asOptionalString(record.name) };
     case "wards":
-      return { stake_id: optionalId(record.stakeId) };
+      return {
+        stake_id: optionalId(record.stakeId),
+        name: asOptionalString(record.name),
+        city: asOptionalString(record.city),
+        state: asOptionalString(record.state),
+        meeting_time: asOptionalString(record.meetingTime),
+        bishopric: Array.isArray(record.bishopric) ? record.bishopric : [],
+        summary: asOptionalString(record.summary),
+      };
+    case "roles":
+      return {
+        name: asOptionalString(record.name),
+        description: asOptionalString(record.description),
+        permissions: Array.isArray(record.permissions) ? record.permissions : [],
+      };
     case "users":
       return {
+        auth_user_id: optionalId(record.authUserId),
         ward_id: optionalId(record.wardId),
         member_id: optionalId(record.memberId),
         role_id: optionalId(record.roleId),
+        name: asOptionalString(record.name),
+        email: asOptionalString(record.email),
+        phone: asOptionalString(record.phone),
+        status: record.status === "inactive" ? "inactive" : "active",
+        permission_overrides: Array.isArray(record.permissionOverrides) ? record.permissionOverrides : [],
+        permissions_configured: record.permissionsConfigured !== false,
+        last_access_at: optionalId(record.lastAccessAt),
+        created_by_user_id: optionalId(record.createdByUserId),
+        updated_by_user_id: optionalId(record.updatedByUserId),
+        archived_at: optionalId(record.archivedAt),
+        archived_by_user_id: optionalId(record.archivedByUserId),
+        created_at: optionalId(record.createdAt),
+        updated_at: optionalId(record.updatedAt),
       };
     case "members":
       return { ward_id: optionalId(record.wardId) };
@@ -405,6 +477,110 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
   }
 }
 
+function remoteSelectColumns(key: RemoteCollectionKey) {
+  switch (key) {
+    case "stakes":
+      return "id,name,created_at,updated_at";
+    case "wards":
+      return "id,stake_id,name,city,state,meeting_time,bishopric,summary,created_at,updated_at";
+    case "roles":
+      return "id,name,description,permissions,created_at,updated_at";
+    case "users":
+      return [
+        "id",
+        "auth_user_id",
+        "ward_id",
+        "member_id",
+        "role_id",
+        "name",
+        "email",
+        "phone",
+        "status",
+        "permission_overrides",
+        "permissions_configured",
+        "last_access_at",
+        "created_by_user_id",
+        "updated_by_user_id",
+        "archived_at",
+        "archived_by_user_id",
+        "created_at",
+        "updated_at",
+      ].join(",");
+    case "hymns":
+      return "id,data,number,title,active";
+    default:
+      return "id,data";
+  }
+}
+
+function usesStructuredColumns(key: RemoteCollectionKey) {
+  return key === "stakes" || key === "wards" || key === "roles" || key === "users";
+}
+
+function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
+  switch (key) {
+    case "stakes":
+      return {
+        id: row.id,
+        name: rowString(row, "name", "name"),
+      };
+    case "wards":
+      return {
+        id: row.id,
+        stakeId: rowString(row, "stake_id", "stakeId"),
+        name: rowString(row, "name", "name"),
+        city: rowString(row, "city", "city"),
+        state: rowString(row, "state", "state"),
+        meetingTime: rowString(row, "meeting_time", "meetingTime"),
+        bishopric: rowStringArray(row, "bishopric", "bishopric"),
+        summary: rowString(row, "summary", "summary"),
+      };
+    case "roles":
+      return {
+        id: row.id,
+        name: rowString(row, "name", "name"),
+        description: rowString(row, "description", "description"),
+        permissions: rowStringArray(row, "permissions", "permissions"),
+      };
+    case "users": {
+      const data = asDataObject(row);
+
+      return {
+        id: row.id,
+        authUserId: rowOptionalString(row, "auth_user_id", "authUserId"),
+        wardId: rowString(row, "ward_id", "wardId"),
+        memberId: rowOptionalString(row, "member_id", "memberId"),
+        roleId: rowString(row, "role_id", "roleId"),
+        name: rowString(row, "name", "name"),
+        email: rowString(row, "email", "email"),
+        phone: rowString(row, "phone", "phone"),
+        status: rowString(row, "status", "status", "active") === "inactive" ? "inactive" : "active",
+        permissionOverrides: rowStringArray(row, "permission_overrides", "permissionOverrides"),
+        permissionsConfigured: rowBoolean(row, "permissions_configured", "permissionsConfigured", true),
+        createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
+        createdByUserId: rowOptionalString(row, "created_by_user_id", "createdByUserId"),
+        updatedAt: asString(row.updated_at) ?? asString(data.updatedAt) ?? UNKNOWN_TIMESTAMP,
+        updatedByUserId: rowOptionalString(row, "updated_by_user_id", "updatedByUserId"),
+        archivedAt: rowOptionalString(row, "archived_at", "archivedAt"),
+        archivedByUserId: rowOptionalString(row, "archived_by_user_id", "archivedByUserId"),
+        lastAccessAt: rowOptionalString(row, "last_access_at", "lastAccessAt"),
+      };
+    }
+    case "hymns":
+      if (!row.data || !Object.keys(row.data).length) {
+        return {
+          id: row.id,
+          number: row.number ?? "",
+          title: row.title ?? "",
+        };
+      }
+
+      return row.data;
+    default:
+      return row.data;
+  }
+}
+
 export async function loadDatabase(): Promise<Database> {
   if (typeof window === "undefined") {
     return createEmptyDatabase();
@@ -413,8 +589,7 @@ export async function loadDatabase(): Promise<Database> {
   const supabase = createClient();
   const entries = await Promise.all(
     REMOTE_TABLES.map(async ({ key, table }) => {
-      const { data, error } =
-        key === "hymns" ? await supabase.from(table).select("id, data, number, title, active") : await supabase.from(table).select("id,data");
+      const { data, error } = await supabase.from(table).select(remoteSelectColumns(key));
 
       if (error) {
         throw error;
@@ -422,17 +597,7 @@ export async function loadDatabase(): Promise<Database> {
 
       return [
         key,
-        ((data ?? []) as unknown as RemoteRecord[]).map((row) => {
-          if (key === "hymns" && (!row.data || !Object.keys(row.data).length)) {
-            return {
-              id: row.id,
-              number: row.number ?? "",
-              title: row.title ?? "",
-            };
-          }
-
-          return row.data;
-        }),
+        ((data ?? []) as unknown as RemoteRecord[]).map((row) => remoteRowToRecord(key, row)),
       ] as const;
     }),
   );
@@ -454,43 +619,52 @@ export async function saveDatabase(db: Database): Promise<void> {
 
   const supabase = createClient();
   const remoteDb = normalizeDatabase(db);
+  const existingIdsByTable = new Map<RemoteCollectionKey, Set<string>>();
 
-  await Promise.all(
-    REMOTE_TABLES.map(async ({ key, table }) => {
-      const records = remoteDb[key] as Array<{ id: string }>;
-      const nextIds = new Set(records.map((record) => record.id));
-      const { data: existingRows, error: selectError } = await supabase.from(table).select("id");
+  for (const { key, table } of REMOTE_TABLES) {
+    const { data: existingRows, error: selectError } = await supabase.from(table).select("id");
 
-      if (selectError) {
-        throw selectError;
+    if (selectError) {
+      throw selectError;
+    }
+
+    existingIdsByTable.set(key, new Set(((existingRows ?? []) as Array<{ id: string }>).map((row) => row.id)));
+  }
+
+  for (const { key, table } of [...REMOTE_TABLES].reverse()) {
+    const records = remoteDb[key] as Array<{ id: string }>;
+    const nextIds = new Set(records.map((record) => record.id));
+    const staleIds = [...(existingIdsByTable.get(key) ?? new Set<string>())].filter((id) => !nextIds.has(id));
+
+    if (staleIds.length) {
+      const { error: deleteError } = await supabase.from(table).delete().in("id", staleIds);
+
+      if (deleteError) {
+        throw deleteError;
       }
+    }
+  }
 
-      const staleIds = ((existingRows ?? []) as Array<{ id: string }>).map((row) => row.id).filter((id) => !nextIds.has(id));
+  for (const { key, table } of REMOTE_TABLES) {
+    const records = remoteDb[key] as Array<{ id: string }>;
 
-      if (staleIds.length) {
-        const { error: deleteError } = await supabase.from(table).delete().in("id", staleIds);
+    if (!records.length) {
+      continue;
+    }
 
-        if (deleteError) {
-          throw deleteError;
-        }
-      }
+    const { error: upsertError } = await supabase.from(table).upsert(
+      records.map((record) => ({
+        id: record.id,
+        ...(usesStructuredColumns(key) ? {} : { data: record }),
+        ...relationColumns(key, record),
+      })),
+      { onConflict: "id" },
+    );
 
-      if (records.length) {
-        const { error: upsertError } = await supabase.from(table).upsert(
-          records.map((record) => ({
-            id: record.id,
-            data: record,
-            ...relationColumns(key, record),
-          })),
-          { onConflict: "id" },
-        );
-
-        if (upsertError) {
-          throw upsertError;
-        }
-      }
-    }),
-  );
+    if (upsertError) {
+      throw upsertError;
+    }
+  }
 }
 
 export function resetDatabase() {

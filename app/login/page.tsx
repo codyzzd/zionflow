@@ -29,12 +29,20 @@ function getAuthErrorMessage(message: string) {
     return "Este email já tem uma conta. Use Entrar.";
   }
 
+  if (normalizedMessage.includes("email address") && normalizedMessage.includes("invalid")) {
+    return "Este email não foi aceito pelo Supabase. Use um email real.";
+  }
+
+  if (normalizedMessage.includes("rate limit") || normalizedMessage.includes("too many")) {
+    return "O Supabase bloqueou novas tentativas por limite temporário. Aguarde alguns minutos e tente de novo.";
+  }
+
   return message || "Não foi possível concluir a autenticação.";
 }
 
 export default function LoginPage() {
   const router = useRouter();
-  const { currentUser, db, loginAs, createAccountForEmail, ready } = useAppContext();
+  const { currentUser, db, loginAs, ready } = useAppContext();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,6 +57,47 @@ export default function LoginPage() {
       router.replace("/dashboard");
     }
   }, [currentUser, ready, router]);
+
+  useEffect(() => {
+    if (!ready || currentUser) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function routeAuthenticatedUser() {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.getUser();
+
+      if (cancelled || error || !data.user?.email) {
+        return;
+      }
+
+      const authEmail = normalizeEmail(data.user.email);
+      const existingUser = db.users.find((user) => user.authUserId === data.user.id || normalizeEmail(user.email) === authEmail);
+
+      if (existingUser?.status === "inactive") {
+        await supabase.auth.signOut();
+        return;
+      }
+
+      if (existingUser) {
+        loginAs(existingUser.id);
+        router.replace("/dashboard");
+        return;
+      }
+
+      router.replace("/onboarding");
+    }
+
+    routeAuthenticatedUser().catch((error) => {
+      console.error("Failed to resolve authenticated user.", error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, db.users, loginAs, ready, router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,15 +124,8 @@ export default function LoginPage() {
         }
 
         if (data.session) {
-          const created = createAccountForEmail(normalizedEmail, { login: true });
-
-          if (!created) {
-            toast.error("Conta criada, mas não foi possível vincular um usuário do sistema.");
-            return;
-          }
-
           toast.success("Conta criada.");
-          router.push("/dashboard");
+          router.push("/onboarding");
           return;
         }
 
@@ -92,7 +134,7 @@ export default function LoginPage() {
         return;
       }
 
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: normalizedEmail,
         password,
       });
@@ -102,24 +144,25 @@ export default function LoginPage() {
         return;
       }
 
-      const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
+      const existingUser = db.users.find((user) => user.authUserId === data.user?.id || normalizeEmail(user.email) === normalizedEmail);
 
       if (existingUser?.status === "inactive") {
+        await supabase.auth.signOut();
         toast.error("Este usuário está inativo no sistema.");
         return;
       }
 
       if (existingUser) {
         loginAs(existingUser.id);
-      } else if (!createAccountForEmail(normalizedEmail, { login: true })) {
-        toast.error("Login feito, mas não foi possível criar o usuário no sistema.");
+        router.push("/dashboard");
         return;
       }
 
-      router.push("/dashboard");
+      router.push("/onboarding");
     } catch (error) {
       console.error("Authentication failed.", error);
-      toast.error("Não foi possível conectar ao Supabase.");
+      const message = error instanceof Error ? error.message : "";
+      toast.error(message ? `Não foi possível conectar ao Supabase: ${message}` : "Não foi possível conectar ao Supabase.");
     } finally {
       setLoading(false);
     }
