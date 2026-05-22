@@ -17,6 +17,7 @@ export const ACCESS_LEVEL_LABELS: Record<AccessLevel, string> = {
 
 export const ACCESS_MATRIX_AREAS: AccessArea[] = [
   { id: "dashboard", label: "Dashboard", viewPermission: "dashboard.view" },
+  { id: "ward", label: "Ala", viewPermission: "ward.view", managePermission: "ward.manage" },
   { id: "members", label: "Membros", viewPermission: "members.view", managePermission: "members.manage" },
   { id: "minutes", label: "Atas Sacramentais", viewPermission: "minutes.view", managePermission: "minutes.manage" },
   { id: "frequency", label: "Frequência", viewPermission: "frequency.view", managePermission: "frequency.manage" },
@@ -92,7 +93,7 @@ export function permissionsFromLegacyRole(roleId: string, permissions: Permissio
   }
 
   if (roleId === "role_admin" || roleId === "role_bishopric") {
-    permissions.push("users.view", "users.manage", "roles.manage");
+    permissions.push("ward.view", "ward.manage", "users.view", "users.manage", "roles.manage");
   }
 
   return normalizePermissionSet(permissions);

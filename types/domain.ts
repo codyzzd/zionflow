@@ -1,5 +1,7 @@
 export type PermissionKey =
   | "dashboard.view"
+  | "ward.view"
+  | "ward.manage"
   | "users.view"
   | "users.manage"
   | "roles.manage"
@@ -48,17 +50,18 @@ export const MEMBER_ORGANIZATION_OPTIONS = [
 export interface Stake {
   id: string;
   name: string;
+  city: string;
+  state: string;
+  country: string;
 }
 
-export interface Ward {
+export interface Ward extends RecordMetadata {
   id: string;
   stakeId: string;
   name: string;
   city: string;
   state: string;
-  meetingTime: string;
-  bishopric: string[];
-  summary: string;
+  country: string;
 }
 
 export interface Role {

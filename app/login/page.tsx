@@ -42,7 +42,7 @@ function getAuthErrorMessage(message: string) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { currentUser, db, loginAs, ready } = useAppContext();
+  const { currentUser, currentWard, db, loginAs, ready } = useAppContext();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,10 +53,13 @@ export default function LoginPage() {
   const canSubmit = normalizedEmail.includes("@") && password.length >= 6 && ready && !loading;
 
   useEffect(() => {
-    if (ready && currentUser) {
+    if (ready && currentUser && currentWard) {
       router.replace("/dashboard");
     }
-  }, [currentUser, ready, router]);
+    if (ready && currentUser && !currentWard) {
+      router.replace("/onboarding");
+    }
+  }, [currentUser, currentWard, ready, router]);
 
   useEffect(() => {
     if (!ready || currentUser) {
@@ -83,7 +86,7 @@ export default function LoginPage() {
 
       if (existingUser) {
         loginAs(existingUser.id);
-        router.replace("/dashboard");
+        router.replace(existingUser.wardId ? "/dashboard" : "/onboarding");
         return;
       }
 
@@ -154,7 +157,7 @@ export default function LoginPage() {
 
       if (existingUser) {
         loginAs(existingUser.id);
-        router.push("/dashboard");
+        router.push(existingUser.wardId ? "/dashboard" : "/onboarding");
         return;
       }
 

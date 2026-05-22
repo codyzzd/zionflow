@@ -18,7 +18,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (ready && !currentUser) {
       router.replace("/login");
     }
-  }, [currentUser, ready, router]);
+    if (ready && currentUser && !currentWard) {
+      router.replace("/onboarding");
+    }
+  }, [currentUser, currentWard, ready, router]);
 
   if (!ready || !currentUser || !currentWard) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando contexto da ala...</div>;

@@ -64,3 +64,7 @@ export function createSeedDatabase(): Database {
     session: {},
   };
 }
+
+export function withDemoWard(db: Database): Database {
+  return db;
+}

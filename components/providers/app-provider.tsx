@@ -52,17 +52,20 @@ type ImportMembersInput = {
 type CreateStakeOnboardingInput = {
   authUserId?: string;
   stakeName: string;
-  wardName: string;
   city?: string;
   state?: string;
+  country?: string;
+  referenceWardName?: string;
 };
 
 type CreateWardOnboardingInput = {
   authUserId?: string;
-  stakeName: string;
+  stakeId?: string;
   wardName: string;
   city?: string;
   state?: string;
+  country?: string;
+  stakeName?: string;
 };
 
 type SaveCaravanRegistrationInput = Omit<CaravanRegistration, "id" | "createdAt"> & {
@@ -101,6 +104,7 @@ type AppContextValue = {
   resetDemoData: () => void;
   changeCurrentUserRole: (roleId: string) => void;
   hasPermission: (permission: PermissionKey) => boolean;
+  saveWard: (input: Ward) => void;
   saveMember: (input: Omit<Member, "id"> & { id?: string }) => void;
   deleteMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
@@ -130,6 +134,8 @@ const AppContext = createContext<AppContextValue | null>(null);
 const REMOTE_SAVE_DELAY_MS = 500;
 const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "dashboard.view",
+  "ward.view",
+  "ward.manage",
   "users.view",
   "users.manage",
   "roles.manage",
@@ -157,7 +163,7 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "exports.run",
   "audit.view",
 ];
-const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "members.view", "minutes.view", "missionary.view", "caravan.view", "patrol.view"];
+const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "ward.view", "members.view", "minutes.view", "missionary.view", "caravan.view", "patrol.view"];
 
 let hydrationReady = false;
 
@@ -189,6 +195,17 @@ function getActorUserId(db: Database) {
 
 function normalizeEmail(email: string) {
   return email.trim().toLocaleLowerCase("pt-BR");
+}
+
+function normalizeOrganizationName(name: string) {
+  return name
+    .trim()
+    .toLocaleLowerCase("pt-BR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(ala|estaca|da|de|do|das|dos)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function formatNameFromEmail(email: string) {
@@ -460,9 +477,12 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const normalizedEmail = normalizeEmail(email);
       const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
       const stakeName = input.stakeName.trim();
-      const wardName = input.wardName.trim();
+      const city = input.city?.trim() ?? "";
+      const state = input.state?.trim() ?? "";
+      const country = input.country?.trim() || "Brasil";
+      const referenceWardName = input.referenceWardName?.trim() ?? "";
 
-      if (!normalizedEmail || !stakeName || !wardName || existingUser?.status === "inactive") {
+      if (!normalizedEmail || !stakeName || existingUser?.status === "inactive") {
         return false;
       }
 
@@ -472,6 +492,69 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         if (currentExistingUser) {
           if (currentExistingUser.status !== "active") {
             return currentDb;
+          }
+
+          if (!currentExistingUser.wardId) {
+            const timestamp = nowIso();
+            const role = createOnboardingRole("stake-admin");
+            const viewerRole = createOnboardingRole("viewer");
+            const stake: Stake = {
+              id: uid("stake"),
+              name: stakeName,
+              city,
+              state,
+              country,
+            };
+            const referenceWard: Ward | undefined = referenceWardName
+              ? {
+                  id: uid("ward"),
+                  stakeId: stake.id,
+                  name: referenceWardName,
+                  city,
+                  state,
+                  country,
+                }
+              : undefined;
+            const updatedUser = withRecordMetadata(
+              {
+                ...currentExistingUser,
+                wardId: referenceWard?.id ?? "",
+                roleId: role.id,
+                permissionOverrides: normalizePermissionSet(role.permissions),
+                permissionsConfigured: true,
+                lastAccessAt: timestamp,
+              },
+              currentExistingUser,
+              currentExistingUser.id,
+              timestamp,
+            );
+            const nextDb = {
+              ...currentDb,
+              stakes: [stake, ...currentDb.stakes],
+              wards: referenceWard ? [referenceWard, ...currentDb.wards] : currentDb.wards,
+              roles: upsertRole(upsertRole(currentDb.roles, role), viewerRole),
+              users: currentDb.users.map((user) => (user.id === currentExistingUser.id ? updatedUser : user)),
+              session: {
+                currentUserId: updatedUser.id,
+                currentWardId: referenceWard?.id,
+              } satisfies SessionState,
+            };
+
+            const createdStakeDb = withAuditLog(nextDb, updatedUser.id, {
+              wardId: "",
+              action: "CREATE_STAKE",
+              module: "onboarding",
+              itemLabel: stake.name,
+              summary: "Criou estaca pelo onboarding inicial.",
+            });
+
+            return withAuditLog(createdStakeDb, updatedUser.id, {
+              wardId: updatedUser.wardId,
+              action: "LOGIN",
+              module: "auth",
+              itemLabel: updatedUser.name,
+              summary: "Entrou no sistema com email e senha.",
+            });
           }
 
           const updated = {
@@ -500,33 +583,36 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const stake: Stake = {
           id: uid("stake"),
           name: stakeName,
+          city,
+          state,
+          country,
         };
-        const ward: Ward = {
-          id: uid("ward"),
-          stakeId: stake.id,
-          name: wardName,
-          city: input.city?.trim() ?? "",
-          state: input.state?.trim() ?? "",
-          meetingTime: "",
-          bishopric: [],
-          summary: "Ala administrativa criada junto com a estaca.",
-        };
-        const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, input.authUserId);
+        const referenceWard: Ward | undefined = referenceWardName
+          ? {
+              id: uid("ward"),
+              stakeId: stake.id,
+              name: referenceWardName,
+              city,
+              state,
+              country,
+            }
+          : undefined;
+        const user = buildOnboardingUser(normalizedEmail, referenceWard?.id ?? "", role, timestamp, input.authUserId);
 
         const nextDb = {
           ...currentDb,
           stakes: [stake, ...currentDb.stakes],
-          wards: [ward, ...currentDb.wards],
+          wards: referenceWard ? [referenceWard, ...currentDb.wards] : currentDb.wards,
           roles: upsertRole(upsertRole(currentDb.roles, role), viewerRole),
           users: [user, ...currentDb.users],
           session: {
             currentUserId: user.id,
-            currentWardId: user.wardId,
+            currentWardId: referenceWard?.id,
           } satisfies SessionState,
         };
 
         const createdStakeDb = withAuditLog(nextDb, user.id, {
-          wardId: ward.id,
+          wardId: "",
           action: "CREATE_STAKE",
           module: "onboarding",
           itemLabel: stake.name,
@@ -555,10 +641,13 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function completeWardOnboarding(email: string, input: CreateWardOnboardingInput) {
       const normalizedEmail = normalizeEmail(email);
       const existingUser = db.users.find((user) => normalizeEmail(user.email) === normalizedEmail);
-      const stakeName = input.stakeName.trim();
       const wardName = input.wardName.trim();
+      const city = input.city?.trim() ?? "";
+      const country = input.country?.trim() ?? "";
+      const stakeName = input.stakeName?.trim() ?? "";
+      const stakeId = input.stakeId?.trim() ?? "";
 
-      if (!normalizedEmail || !stakeName || !wardName || existingUser?.status === "inactive") {
+      if (!normalizedEmail || !wardName || !city || !country || existingUser?.status === "inactive") {
         return false;
       }
 
@@ -568,6 +657,73 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         if (currentExistingUser) {
           if (currentExistingUser.status !== "active") {
             return currentDb;
+          }
+
+          if (!currentExistingUser.wardId) {
+            const timestamp = nowIso();
+            const role = createOnboardingRole("ward-admin");
+            const viewerRole = createOnboardingRole("viewer");
+            const existingStake =
+              currentDb.stakes.find((stake) => stake.id === stakeId) ??
+              (stakeName ? currentDb.stakes.find((stake) => normalizeOrganizationName(stake.name) === normalizeOrganizationName(stakeName)) : undefined);
+            const stake: Stake | undefined =
+              stakeName && !existingStake
+                ? {
+                    id: uid("stake"),
+                    name: stakeName,
+                    city,
+                    state: input.state?.trim() ?? "",
+                    country,
+                  }
+                : undefined;
+            const ward: Ward = {
+              id: uid("ward"),
+              stakeId: existingStake?.id ?? stake?.id ?? "",
+              name: wardName,
+              city,
+              state: input.state?.trim() ?? "",
+              country,
+            };
+            const updatedUser = withRecordMetadata(
+              {
+                ...currentExistingUser,
+                wardId: ward.id,
+                roleId: role.id,
+                permissionOverrides: normalizePermissionSet(role.permissions),
+                permissionsConfigured: true,
+                lastAccessAt: timestamp,
+              },
+              currentExistingUser,
+              currentExistingUser.id,
+              timestamp,
+            );
+            const nextDb = {
+              ...currentDb,
+              stakes: stake ? [stake, ...currentDb.stakes] : currentDb.stakes,
+              wards: [ward, ...currentDb.wards],
+              roles: upsertRole(upsertRole(currentDb.roles, role), viewerRole),
+              users: currentDb.users.map((user) => (user.id === currentExistingUser.id ? updatedUser : user)),
+              session: {
+                currentUserId: updatedUser.id,
+                currentWardId: updatedUser.wardId,
+              } satisfies SessionState,
+            };
+
+            const createdWardDb = withAuditLog(nextDb, updatedUser.id, {
+              wardId: ward.id,
+              action: "CREATE_WARD",
+              module: "onboarding",
+              itemLabel: ward.name,
+              summary: "Criou ala pelo onboarding inicial.",
+            });
+
+            return withAuditLog(createdWardDb, updatedUser.id, {
+              wardId: updatedUser.wardId,
+              action: "LOGIN",
+              module: "auth",
+              itemLabel: updatedUser.name,
+              summary: "Entrou no sistema com email e senha.",
+            });
           }
 
           const updated = {
@@ -593,25 +749,32 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const timestamp = nowIso();
         const role = createOnboardingRole("ward-admin");
         const viewerRole = createOnboardingRole("viewer");
-        const stake: Stake = {
-          id: uid("stake"),
-          name: stakeName,
-        };
+        const existingStake =
+          currentDb.stakes.find((stake) => stake.id === stakeId) ??
+          (stakeName ? currentDb.stakes.find((stake) => normalizeOrganizationName(stake.name) === normalizeOrganizationName(stakeName)) : undefined);
+        const stake: Stake | undefined =
+          stakeName && !existingStake
+            ? {
+                id: uid("stake"),
+                name: stakeName,
+                city,
+                state: input.state?.trim() ?? "",
+                country,
+              }
+            : undefined;
         const ward: Ward = {
           id: uid("ward"),
-          stakeId: stake.id,
+          stakeId: existingStake?.id ?? stake?.id ?? "",
           name: wardName,
-          city: input.city?.trim() ?? "",
+          city,
           state: input.state?.trim() ?? "",
-          meetingTime: "",
-          bishopric: [],
-          summary: "Ala criada pelo onboarding inicial.",
+          country,
         };
         const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, input.authUserId);
 
         const nextDb = {
           ...currentDb,
-          stakes: [stake, ...currentDb.stakes],
+          stakes: stake ? [stake, ...currentDb.stakes] : currentDb.stakes,
           wards: [ward, ...currentDb.wards],
           roles: upsertRole(upsertRole(currentDb.roles, role), viewerRole),
           users: [user, ...currentDb.users],
@@ -668,6 +831,48 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         if (currentExistingUser) {
           if (currentExistingUser.status !== "active") {
             return currentDb;
+          }
+
+          if (!currentExistingUser.wardId) {
+            const timestamp = nowIso();
+            const role = createOnboardingRole("viewer");
+            const updatedUser = withRecordMetadata(
+              {
+                ...currentExistingUser,
+                wardId: ward.id,
+                roleId: role.id,
+                permissionOverrides: normalizePermissionSet(role.permissions),
+                permissionsConfigured: true,
+                lastAccessAt: timestamp,
+              },
+              currentExistingUser,
+              currentExistingUser.id,
+              timestamp,
+            );
+            const nextDb = {
+              ...currentDb,
+              roles: upsertRole(currentDb.roles, role),
+              users: currentDb.users.map((user) => (user.id === currentExistingUser.id ? updatedUser : user)),
+              session: {
+                currentUserId: updatedUser.id,
+                currentWardId: updatedUser.wardId,
+              } satisfies SessionState,
+            };
+            const joinedDb = withAuditLog(nextDb, updatedUser.id, {
+              wardId: updatedUser.wardId,
+              action: "JOIN_WARD",
+              module: "onboarding",
+              itemLabel: ward.name,
+              summary: "Entrou em uma ala existente pelo onboarding.",
+            });
+
+            return withAuditLog(joinedDb, updatedUser.id, {
+              wardId: updatedUser.wardId,
+              action: "LOGIN",
+              module: "auth",
+              itemLabel: updatedUser.name,
+              summary: "Entrou no sistema com email e senha.",
+            });
           }
 
           const updated = {
@@ -774,6 +979,44 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
     function hasPermission(permission: PermissionKey) {
       return currentUserPermissions.includes(permission);
+    }
+
+    function saveWard(input: Ward) {
+      const exists = db.wards.some((ward) => ward.id === input.id);
+      if (!exists) return;
+
+      setDb((currentDb) => {
+        const existing = currentDb.wards.find((ward) => ward.id === input.id);
+        if (!existing) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const ward = withRecordMetadata(
+          {
+            ...existing,
+            ...input,
+            name: input.name.trim(),
+            city: input.city.trim(),
+            state: input.state.trim(),
+            country: input.country.trim(),
+          },
+          existing,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          wards: currentDb.wards.map((current) => (current.id === ward.id ? ward : current)),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: ward.id,
+          action: "UPDATE_WARD",
+          module: "ala",
+          itemLabel: ward.name,
+          summary: "Atualizou dados da ala.",
+        });
+      });
+
+      toast.success("Dados da ala atualizados.");
     }
 
     function saveMember(input: Omit<Member, "id"> & { id?: string }) {
@@ -1542,6 +1785,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       resetDemoData,
       changeCurrentUserRole,
       hasPermission,
+      saveWard,
       saveMember,
       deleteMembers,
       importMembers,

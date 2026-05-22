@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { createSeedDatabase } from "@/lib/demo-data";
 import { normalizePermissionSet, permissionsFromLegacyRole } from "@/lib/access-control";
 import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
@@ -284,11 +285,21 @@ export function normalizeDatabase(db: Database): Database {
   const roles = (legacyDb.roles ?? []).map((role) => normalizeRole(role));
 
   return {
-    ...createEmptyDatabase(),
-    ...legacyDb,
-    roles,
-    stakes: legacyDb.stakes ?? [],
-    wards: legacyDb.wards ?? [],
+    ...{
+      ...createEmptyDatabase(),
+      ...legacyDb,
+      roles,
+      stakes: (legacyDb.stakes ?? []).map((stake) => ({
+        ...stake,
+        city: String(stake.city ?? ""),
+        state: String(stake.state ?? ""),
+        country: String(stake.country ?? "Brasil"),
+      })),
+      wards: (legacyDb.wards ?? []).map((ward) => ({
+        ...ward,
+        country: String(ward.country ?? "Brasil"),
+      })),
+    },
     users: (legacyDb.users ?? []).map((user) => normalizeUser(user, roles)),
     members: (legacyDb.members ?? []).map((member) => normalizeMember(member)),
     memberNotes: legacyDb.memberNotes ?? [],
@@ -385,16 +396,19 @@ function optionalUuid(value: unknown): string | null {
 function relationColumns(key: RemoteCollectionKey, record: { id: string } & Record<string, unknown>): RemoteColumns {
   switch (key) {
     case "stakes":
-      return { name: asOptionalString(record.name) };
+      return {
+        name: asOptionalString(record.name),
+        city: asOptionalString(record.city),
+        state: asOptionalString(record.state),
+        country: asOptionalString(record.country),
+      };
     case "wards":
       return {
         stake_id: optionalUuid(record.stakeId),
         name: asOptionalString(record.name),
         city: asOptionalString(record.city),
         state: asOptionalString(record.state),
-        meeting_time: asOptionalString(record.meetingTime),
-        bishopric: Array.isArray(record.bishopric) ? record.bishopric : [],
-        summary: asOptionalString(record.summary),
+        country: asOptionalString(record.country),
       };
     case "roles":
       return {
@@ -490,9 +504,9 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
 function remoteSelectColumns(key: RemoteCollectionKey) {
   switch (key) {
     case "stakes":
-      return "id,name,created_at,updated_at";
+      return "id,name,city,state,country,created_at,updated_at";
     case "wards":
-      return "id,stake_id,name,city,state,meeting_time,bishopric,summary,created_at,updated_at";
+      return "id,stake_id,name,city,state,country,created_at,updated_at";
     case "roles":
       return "id,name,description,permissions,created_at,updated_at";
     case "users":
@@ -533,6 +547,9 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
       return {
         id: row.id,
         name: rowString(row, "name", "name"),
+        city: rowString(row, "city", "city"),
+        state: rowString(row, "state", "state"),
+        country: rowString(row, "country", "country", "Brasil"),
       };
     case "wards":
       return {
@@ -541,9 +558,7 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         name: rowString(row, "name", "name"),
         city: rowString(row, "city", "city"),
         state: rowString(row, "state", "state"),
-        meetingTime: rowString(row, "meeting_time", "meetingTime"),
-        bishopric: rowStringArray(row, "bishopric", "bishopric"),
-        summary: rowString(row, "summary", "summary"),
+        country: rowString(row, "country", "country", "Brasil"),
       };
     case "roles":
       return {
@@ -682,27 +697,5 @@ export function resetDatabase() {
 }
 
 export function createEmptyDatabase(): Database {
-  return {
-    stakes: [],
-    wards: [],
-    roles: [],
-    users: [],
-    members: [],
-    memberNotes: [],
-    sacramentMinutes: [],
-    minuteVersions: [],
-    hymns: [],
-    missionaryCompanionships: [],
-    hostHouses: [],
-    lunchSchedules: [],
-    caravans: [],
-    caravanPeople: [],
-    caravanRegistrations: [],
-    documentTypes: [],
-    patrolMembers: [],
-    patrolSchedules: [],
-    auditLogs: [],
-    appPreferences: DEFAULT_APP_PREFERENCES,
-    session: {},
-  };
+  return createSeedDatabase();
 }

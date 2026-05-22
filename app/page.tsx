@@ -8,12 +8,16 @@ import { createClient } from "@/lib/supabase/client";
 
 export default function HomePage() {
   const router = useRouter();
-  const { ready, currentUser } = useAppContext();
+  const { ready, currentUser, currentWard } = useAppContext();
 
   useEffect(() => {
     if (!ready) return;
-    if (currentUser) {
+    if (currentUser && currentWard) {
       router.replace("/dashboard");
+      return;
+    }
+    if (currentUser && !currentWard) {
+      router.replace("/onboarding");
       return;
     }
 
@@ -34,7 +38,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, ready, router]);
+  }, [currentUser, currentWard, ready, router]);
 
   return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando Zionwise...</div>;
 }

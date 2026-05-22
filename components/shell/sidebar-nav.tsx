@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Building2,
   BusFront,
   ChartColumnIncreasing,
   FileText,
@@ -82,6 +83,7 @@ const mainItems: NavItem[] = [
 ];
 
 const secondaryItems: NavItem[] = [
+  { href: "/ward", label: "Ala", icon: Building2, viewPermission: "ward.view" },
   { href: "/users", label: "Usuários e acessos", icon: KeyRound, viewPermission: "users.view" },
   { href: "/settings", label: "Configurações", icon: Settings, alwaysVisible: true },
 ];

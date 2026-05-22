@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, Landmark, LoaderCircle, LogOut, Search, Users } from "lucide-react";
+import { Building2, LoaderCircle, LogOut, Search } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -8,65 +8,80 @@ import { toast } from "sonner";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
+import type { Ward } from "@/types/domain";
 
-type OnboardingMode = "stake" | "ward" | "join";
+type WardStep = "search" | "create" | "similar";
 
-const ONBOARDING_OPTIONS: Array<{
-  mode: OnboardingMode;
-  title: string;
-  description: string;
-  icon: typeof Landmark;
-}> = [
-  {
-    mode: "stake",
-    title: "Criar estaca",
-    description: "Administrador da estaca",
-    icon: Landmark,
-  },
-  {
-    mode: "ward",
-    title: "Criar ala",
-    description: "Administrador da ala",
-    icon: Building2,
-  },
-  {
-    mode: "join",
-    title: "Entrar em ala",
-    description: "Vincular a uma ala existente",
-    icon: Users,
-  },
-];
+type SimilarWard = {
+  ward: Ward;
+  stakeName: string;
+};
+
+const DEFAULT_COUNTRY = "Brasil";
 
 function normalizeSearch(value: string) {
-  return value.trim().toLocaleLowerCase("pt-BR");
+  return value
+    .trim()
+    .toLocaleLowerCase("pt-BR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(ala|estaca|da|de|do|das|dos)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function organizationLocation(parts: Array<string | undefined>) {
+  return parts.filter(Boolean).join(" - ") || "Localidade não informada";
+}
+
+function isSimilarWard(searchName: string, candidateName: string, searchCity?: string, candidateCity?: string, searchState?: string, candidateState?: string) {
+  const search = normalizeSearch(searchName);
+  const candidate = normalizeSearch(candidateName);
+  const sameCity = searchCity && candidateCity ? normalizeSearch(searchCity) === normalizeSearch(candidateCity) : true;
+  const sameState = searchState && candidateState ? normalizeSearch(searchState) === normalizeSearch(candidateState) : true;
+
+  if (!search || !candidate || !sameCity || !sameState) return false;
+  if (search === candidate || search.includes(candidate) || candidate.includes(search)) return true;
+
+  const searchWords = new Set(search.split(" ").filter((word) => word.length > 2));
+  const candidateWords = candidate.split(" ").filter((word) => word.length > 2);
+
+  return candidateWords.some((word) => searchWords.has(word));
 }
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { completeStakeOnboarding, completeWardOnboarding, currentUser, db, joinExistingWard, ready } = useAppContext();
+  const { completeWardOnboarding, currentUser, currentWard, db, joinExistingWard, ready } = useAppContext();
   const [authEmail, setAuthEmail] = useState("");
   const [authUserId, setAuthUserId] = useState("");
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [mode, setMode] = useState<OnboardingMode>("stake");
-  const [stakeName, setStakeName] = useState("");
-  const [wardName, setWardName] = useState("");
-  const [city, setCity] = useState("");
-  const [state, setState] = useState("");
+  const [wardStep, setWardStep] = useState<WardStep>("search");
   const [wardSearch, setWardSearch] = useState("");
-  const [selectedWardId, setSelectedWardId] = useState("");
+  const [wardName, setWardName] = useState("");
+  const [wardCity, setWardCity] = useState("");
+  const [wardState, setWardState] = useState("");
+  const [wardCountry, setWardCountry] = useState(DEFAULT_COUNTRY);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const effectiveAuthEmail = currentUser?.email ?? authEmail;
+  const effectiveAuthUserId = currentUser?.authUserId ?? authUserId;
 
   useEffect(() => {
     if (!ready) {
       return;
     }
 
-    if (currentUser) {
+    if (currentUser && currentWard) {
       router.replace("/dashboard");
+      return;
+    }
+
+    if (currentUser && !currentWard) {
       return;
     }
 
@@ -95,53 +110,68 @@ export default function OnboardingPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, ready, router]);
+  }, [currentUser, currentWard, ready, router]);
+
+  const wardsWithStake = useMemo<SimilarWard[]>(() => {
+    return db.wards.map((ward) => ({
+      ward,
+      stakeName: db.stakes.find((stake) => stake.id === ward.stakeId)?.name ?? "",
+    }));
+  }, [db.stakes, db.wards]);
 
   const filteredWards = useMemo(() => {
     const search = normalizeSearch(wardSearch);
 
-    return db.wards
-      .map((ward) => ({
-        ward,
-        stakeName: db.stakes.find((stake) => stake.id === ward.stakeId)?.name ?? "",
-      }))
-      .filter(({ ward, stakeName }) => {
-        if (!search) return true;
+    if (!search) return [];
 
-        return normalizeSearch(`${ward.name} ${stakeName} ${ward.city} ${ward.state}`).includes(search);
-      })
+    return wardsWithStake
+      .filter(({ ward, stakeName }) =>
+        normalizeSearch(`${ward.name} ${stakeName} ${ward.city} ${ward.state} ${ward.country}`).includes(search),
+      )
       .slice(0, 8);
-  }, [db.stakes, db.wards, wardSearch]);
+  }, [wardSearch, wardsWithStake]);
 
-  const canSubmit =
-    ready &&
-    Boolean(authEmail) &&
-    !submitting &&
-    ((mode === "stake" && stakeName.trim() && wardName.trim()) ||
-      (mode === "ward" && stakeName.trim() && wardName.trim()) ||
-      (mode === "join" && selectedWardId));
+  const similarWards = useMemo(() => {
+    return wardsWithStake
+      .filter(({ ward }) => isSimilarWard(wardName, ward.name, wardCity, ward.city, wardState, ward.state))
+      .slice(0, 5);
+  }, [wardCity, wardName, wardState, wardsWithStake]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const canCreateWard = Boolean(
+    ready && effectiveAuthEmail && wardName.trim() && wardCity.trim() && wardState.trim() && wardCountry.trim() && !submitting,
+  );
 
-    if (!canSubmit) return;
+  async function handleSignOut() {
+    await createClient().auth.signOut();
+    router.push("/login");
+  }
+
+  function handlePrepareCreateWard(event?: FormEvent<HTMLFormElement>, forceCreate = false) {
+    event?.preventDefault();
+
+    if (!canCreateWard) return;
+
+    if (!forceCreate && similarWards.length) {
+      setWardStep("similar");
+      return;
+    }
+
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirmCreateWard() {
+    if (!canCreateWard) return;
 
     setSubmitting(true);
 
     try {
-      const commonInput = {
-        authUserId,
-        stakeName,
+      const completed = completeWardOnboarding(effectiveAuthEmail, {
+        authUserId: effectiveAuthUserId,
         wardName,
-        city,
-        state,
-      };
-      const completed =
-        mode === "stake"
-          ? completeStakeOnboarding(authEmail, commonInput)
-          : mode === "ward"
-            ? completeWardOnboarding(authEmail, commonInput)
-            : joinExistingWard(authEmail, selectedWardId, authUserId);
+        city: wardCity,
+        state: wardState,
+        country: wardCountry,
+      });
 
       if (!completed) {
         toast.error("Não foi possível finalizar a configuração inicial.");
@@ -149,28 +179,183 @@ export default function OnboardingPage() {
       }
 
       toast.success("Acesso configurado.");
+      setConfirmOpen(false);
       router.push("/dashboard");
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function handleSignOut() {
-    await createClient().auth.signOut();
-    router.push("/login");
+  function handleRequestWardAccess(wardId: string) {
+    if (!effectiveAuthEmail || submitting) return;
+
+    setSubmitting(true);
+
+    try {
+      const completed = joinExistingWard(effectiveAuthEmail, wardId, effectiveAuthUserId);
+
+      if (!completed) {
+        toast.error("Não foi possível solicitar acesso à ala.");
+        return;
+      }
+
+      toast.success("Solicitação de acesso registrada.");
+      router.push("/dashboard");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  if (!ready || checkingAuth) {
+  function renderWardCard({ ward, stakeName }: SimilarWard) {
+    return (
+      <div key={ward.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-medium">{ward.name}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{organizationLocation([stakeName, ward.city, ward.state, ward.country])}</p>
+        </div>
+        <Button type="button" variant="secondary" onClick={() => handleRequestWardAccess(ward.id)}>
+          Solicitar acesso
+        </Button>
+      </div>
+    );
+  }
+
+  function renderSimilarWards() {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Encontramos alas parecidas</CardTitle>
+          <CardDescription>Revise os registros encontrados antes de criar outro cadastro.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3">{similarWards.map((item) => renderWardCard(item))}</div>
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="ghost" onClick={() => setWardStep("create")}>
+              Voltar
+            </Button>
+            <Button type="button" onClick={() => handlePrepareCreateWard(undefined, true)}>
+              Criar mesmo assim
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  function renderCreateWard() {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Nova ala</CardTitle>
+          <CardDescription>Informe os dados da ala.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-5" onSubmit={handlePrepareCreateWard}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="wardName">Nome da ala</Label>
+                <Input id="wardName" value={wardName} onChange={(event) => setWardName(event.target.value)} placeholder="Ala Torre" required />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="wardCity">Cidade</Label>
+                <Input id="wardCity" value={wardCity} onChange={(event) => setWardCity(event.target.value)} placeholder="Fortaleza" required />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="wardState">Estado</Label>
+                <Input id="wardState" value={wardState} onChange={(event) => setWardState(event.target.value)} placeholder="CE" required />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="wardCountry">País</Label>
+                <Input id="wardCountry" value={wardCountry} onChange={(event) => setWardCountry(event.target.value)} placeholder="Brasil" required />
+              </div>
+
+              <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground md:col-span-2">
+                Se você precisa de acesso em nível de estaca, entre primeiro por uma ala. Depois disso, solicite esse nível dentro do sistema.
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="ghost" onClick={() => setWardStep("search")}>
+                Voltar
+              </Button>
+              <Button type="submit" disabled={!canCreateWard}>
+                {submitting ? <LoaderCircle className="size-4 animate-spin" /> : "Continuar"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  function renderSearchWard() {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Encontrar sua ala</CardTitle>
+          <CardDescription>Busque sua ala para solicitar acesso ou criar uma nova.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <Label htmlFor="wardSearch">Buscar por nome da ala</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="wardSearch"
+                className="pl-9"
+                value={wardSearch}
+                onChange={(event) => setWardSearch(event.target.value)}
+                placeholder="Ala Torre"
+              />
+            </div>
+          </div>
+
+          {wardSearch.trim() && filteredWards.length ? (
+            <div className="grid gap-3">{filteredWards.map((item) => renderWardCard(item))}</div>
+          ) : wardSearch.trim() ? (
+            <div className="rounded-lg border border-dashed p-6 text-center">
+              <p className="text-sm text-muted-foreground">Nenhuma ala encontrada para essa busca.</p>
+              <Button
+                className="mt-4"
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setWardName(wardSearch);
+                  setWardStep("create");
+                }}
+              >
+                Criar nova ala
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed p-6 text-center">
+              <p className="text-sm text-muted-foreground">Digite o nome da ala para buscar registros existentes.</p>
+              <Button className="mt-4" type="button" variant="secondary" onClick={() => setWardStep("create")}>
+                Criar nova ala
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!ready || (!currentUser && checkingAuth)) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando configuração...</div>;
   }
 
   return (
     <main className="min-h-screen bg-muted/30 px-4 py-8">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-sm text-muted-foreground">{authEmail}</p>
+            <p className="text-sm text-muted-foreground">{effectiveAuthEmail}</p>
             <h1 className="text-2xl font-semibold tracking-normal">Configurar acesso</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Escolha uma ala existente ou crie uma nova.</p>
           </div>
           <Button type="button" variant="ghost" onClick={handleSignOut}>
             <LogOut className="size-4" />
@@ -178,131 +363,49 @@ export default function OnboardingPage() {
           </Button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
-          {ONBOARDING_OPTIONS.map((option) => {
-            const Icon = option.icon;
-            const selected = mode === option.mode;
-
-            return (
-              <button
-                key={option.mode}
-                className={cn(
-                  "flex min-h-24 items-start gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:border-primary/40",
-                  selected && "border-primary bg-primary/5",
-                )}
-                type="button"
-                onClick={() => setMode(option.mode)}
-              >
-                <span className={cn("rounded-md border bg-background p-2 text-muted-foreground", selected && "text-primary")}>
-                  <Icon className="size-5" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block font-medium">{option.title}</span>
-                  <span className="mt-1 block text-sm text-muted-foreground">{option.description}</span>
-                </span>
-              </button>
-            );
-          })}
+        <div className="flex items-start gap-3 rounded-lg border bg-card p-4">
+          <span className="rounded-md border bg-background p-2 text-primary">
+            <Building2 className="size-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-medium">Ala</span>
+            <span className="mt-1 block text-sm text-muted-foreground">O acesso padrão do sistema é feito por uma ala.</span>
+            <span className="mt-1 block text-sm text-muted-foreground">
+              Acesso de estaca é solicitado depois, já dentro do sistema, após entrar em uma ala.
+            </span>
+          </span>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              {mode === "stake" ? "Nova estaca" : mode === "ward" ? "Nova ala" : "Escolher ala"}
-            </CardTitle>
-            <CardDescription>
-              {mode === "stake"
-                ? "Informe a estaca e uma ala de referência."
-                : mode === "ward"
-                  ? "Informe a estaca e a ala."
-                  : "Busque uma ala já cadastrada."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-5" onSubmit={handleSubmit}>
-              {mode !== "join" ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="stakeName">Nome da estaca</Label>
-                    <Input
-                      id="stakeName"
-                      value={stakeName}
-                      onChange={(event) => setStakeName(event.target.value)}
-                      placeholder="Estaca Fortaleza"
-                      required
-                    />
-                  </div>
+        {wardStep === "similar" ? renderSimilarWards() : wardStep === "create" ? renderCreateWard() : renderSearchWard()}
 
-                  <div className="space-y-2">
-                    <Label htmlFor="wardName">{mode === "stake" ? "Ala de referência" : "Nome da ala"}</Label>
-                    <Input
-                      id="wardName"
-                      value={wardName}
-                      onChange={(event) => setWardName(event.target.value)}
-                      placeholder="Ala Aldeota"
-                      required
-                    />
-                  </div>
+        <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirmar criação da ala</DialogTitle>
+              <DialogDescription>Revise os dados antes de criar o cadastro.</DialogDescription>
+            </DialogHeader>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="city">Cidade</Label>
-                    <Input id="city" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Fortaleza" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="state">Estado</Label>
-                    <Input id="state" value={state} onChange={(event) => setState(event.target.value)} placeholder="CE" />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="wardSearch">Buscar ala</Label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="wardSearch"
-                        className="pl-9"
-                        value={wardSearch}
-                        onChange={(event) => setWardSearch(event.target.value)}
-                        placeholder="Nome da ala, estaca ou cidade"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-2">
-                    {filteredWards.length ? (
-                      filteredWards.map(({ ward, stakeName }) => (
-                        <button
-                          key={ward.id}
-                          className={cn(
-                            "rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/40",
-                            selectedWardId === ward.id && "border-primary bg-primary/5",
-                          )}
-                          type="button"
-                          onClick={() => setSelectedWardId(ward.id)}
-                        >
-                          <span className="block font-medium">{ward.name}</span>
-                          <span className="mt-1 block text-sm text-muted-foreground">
-                            {[stakeName, ward.city, ward.state].filter(Boolean).join(" - ") || "Sem dados adicionais"}
-                          </span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Nenhuma ala cadastrada.</div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <Button type="submit" disabled={!canSubmit}>
-                  {submitting ? <LoaderCircle className="size-4 animate-spin" /> : "Continuar"}
-                </Button>
+            <div className="grid gap-3 rounded-lg border bg-card p-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">Ala</p>
+                <p className="font-medium">{wardName.trim()}</p>
               </div>
-            </form>
-          </CardContent>
-        </Card>
+              <div>
+                <p className="text-muted-foreground">Localidade</p>
+                <p className="font-medium">{organizationLocation([wardCountry.trim(), wardState.trim(), wardCity.trim()])}</p>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setConfirmOpen(false)}>
+                Voltar
+              </Button>
+              <Button type="button" disabled={!canCreateWard} onClick={handleConfirmCreateWard}>
+                {submitting ? <LoaderCircle className="size-4 animate-spin" /> : "Confirmar e criar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </main>
   );
