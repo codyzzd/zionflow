@@ -4,6 +4,7 @@ import {
   Building2,
   BusFront,
   ChartColumnIncreasing,
+  Cog,
   FileText,
   Handshake,
   HeartHandshake,
@@ -44,6 +45,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { isSystemAdmin } from "@/lib/system-access";
 import { cn } from "@/lib/utils";
 import type { PermissionKey, User } from "@/types/domain";
 
@@ -53,11 +55,13 @@ type NavItem = {
   icon: LucideIcon;
   viewPermission?: PermissionKey;
   alwaysVisible?: boolean;
+  systemOnly?: boolean;
   children?: Array<{
     href: string;
     label: string;
     viewPermission?: PermissionKey;
     alwaysVisible?: boolean;
+    systemOnly?: boolean;
   }>;
 };
 
@@ -83,6 +87,17 @@ const mainItems: NavItem[] = [
 ];
 
 const secondaryItems: NavItem[] = [
+  {
+    href: "/system/wards",
+    label: "Sistema",
+    icon: Cog,
+    systemOnly: true,
+    children: [
+      { href: "/system/wards", label: "Alas", systemOnly: true },
+      { href: "/system/stakes", label: "Estacas", systemOnly: true },
+      { href: "/system/hymns", label: "Hinos", systemOnly: true },
+    ],
+  },
   { href: "/ward", label: "Ala", icon: Building2, viewPermission: "ward.view" },
   { href: "/users", label: "Usuários e acessos", icon: KeyRound, viewPermission: "users.view" },
   { href: "/settings", label: "Configurações", icon: Settings, alwaysVisible: true },
@@ -119,17 +134,25 @@ function NavItems({
   items,
   onNavigate,
   hasPermission,
+  canViewSystem,
 }: {
   currentPath: string;
   items: NavItem[];
   onNavigate: () => void;
   hasPermission: (permission: PermissionKey) => boolean;
+  canViewSystem: boolean;
 }) {
   return (
     <SidebarMenu className="gap-0.5 px-2 group-data-[collapsible=icon]:px-1">
       {items.map((item) => {
-        const visibleChildren = item.children?.filter((child) => child.alwaysVisible || !child.viewPermission || hasPermission(child.viewPermission)) ?? [];
-        const itemIsVisible = item.alwaysVisible || (item.viewPermission ? hasPermission(item.viewPermission) : visibleChildren.length > 0);
+        const visibleChildren =
+          item.children?.filter((child) => {
+            if (child.systemOnly && !canViewSystem) return false;
+            return child.alwaysVisible || !child.viewPermission || hasPermission(child.viewPermission);
+          }) ?? [];
+        const itemIsVisible =
+          (!item.systemOnly || canViewSystem) &&
+          (item.alwaysVisible || (item.viewPermission ? hasPermission(item.viewPermission) : visibleChildren.length > 0));
         if (!itemIsVisible) return null;
 
         const href = item.viewPermission && !hasPermission(item.viewPermission) && visibleChildren.length ? visibleChildren[0].href : item.href;
@@ -187,6 +210,7 @@ export function SidebarNav({
   wardName,
 }: SidebarNavProps) {
   const { isMobile, setOpenMobile } = useSidebar();
+  const canViewSystem = isSystemAdmin(currentUser);
 
   function handleNavigate() {
     if (isMobile) {
@@ -220,11 +244,11 @@ export function SidebarNav({
       <SidebarContent className="border-t border-sidebar-border/80 py-4 group-data-[collapsible=icon]:py-2">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
-            <NavItems currentPath={currentPath} items={mainItems} onNavigate={handleNavigate} hasPermission={hasPermission} />
+            <NavItems currentPath={currentPath} items={mainItems} onNavigate={handleNavigate} hasPermission={hasPermission} canViewSystem={canViewSystem} />
             <div className="my-2 px-5 group-data-[collapsible=icon]:px-2">
               <div className="h-px bg-sidebar-border/80" />
             </div>
-            <NavItems currentPath={currentPath} items={secondaryItems} onNavigate={handleNavigate} hasPermission={hasPermission} />
+            <NavItems currentPath={currentPath} items={secondaryItems} onNavigate={handleNavigate} hasPermission={hasPermission} canViewSystem={canViewSystem} />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

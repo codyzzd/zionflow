@@ -10,6 +10,7 @@ import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -247,7 +248,7 @@ export default function MinutesPage() {
                   <div className="section-grid">
                     <div>
                       <Label>Data</Label>
-                      <Input type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} />
+                      <DatePicker value={form.date} onChange={(value) => setForm((current) => ({ ...current, date: value }))} />
                     </div>
                   </div>
 

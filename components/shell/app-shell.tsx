@@ -12,16 +12,60 @@ import { createClient } from "@/lib/supabase/client";
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { currentUser, currentWard, hasPermission, logout, ready, resetDemoData } = useAppContext();
+  const { currentUser, currentWard, hasPermission, logout, ready, resetDemoData, resolveAuthenticatedUser } = useAppContext();
 
   useEffect(() => {
-    if (ready && !currentUser) {
-      router.replace("/login");
+    if (!ready) {
+      return;
     }
-    if (ready && currentUser && !currentWard) {
+
+    if (currentUser && currentWard) {
+      return;
+    }
+
+    if (currentUser && !currentWard) {
       router.replace("/onboarding");
+      return;
     }
-  }, [currentUser, currentWard, ready, router]);
+
+    let cancelled = false;
+    const supabase = createClient();
+
+    supabase.auth
+      .getUser()
+      .then(async ({ data, error }) => {
+        if (cancelled) return;
+
+        if (error || !data.user?.email) {
+          router.replace("/login");
+          return;
+        }
+
+        const resolution = resolveAuthenticatedUser({
+          authUserId: data.user.id,
+          email: data.user.email,
+        });
+
+        if (resolution.status === "inactive") {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
+        if (resolution.route === "/onboarding") {
+          router.replace("/onboarding");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          router.replace("/login");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, currentWard, ready, resolveAuthenticatedUser, router]);
 
   if (!ready || !currentUser || !currentWard) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando contexto da ala...</div>;

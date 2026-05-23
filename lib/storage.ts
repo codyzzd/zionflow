@@ -13,12 +13,15 @@ import type {
   Member,
   MissionaryCompanionship,
   HostHouse,
+  Hymn,
   LunchSchedule,
   PatrolMember,
   PatrolSchedule,
   RecordMetadata,
   Role,
+  Stake,
   User,
+  Ward,
 } from "@/types/domain";
 
 const APP_PREFERENCES_STORAGE_KEY = "superala-preferences-v1";
@@ -220,6 +223,39 @@ function normalizeCaravanRegistration(registration: CaravanRegistration): Carava
   };
 }
 
+function normalizeStake(stake: Stake): Stake {
+  return {
+    id: stake.id,
+    name: String(stake.name ?? ""),
+    city: String(stake.city ?? ""),
+    state: String(stake.state ?? ""),
+    country: String(stake.country ?? "Brasil"),
+    ...normalizeRecordMetadata(stake),
+  };
+}
+
+function normalizeWard(ward: Ward): Ward {
+  return {
+    id: ward.id,
+    stakeId: String(ward.stakeId ?? ""),
+    name: String(ward.name ?? ""),
+    city: String(ward.city ?? ""),
+    state: String(ward.state ?? ""),
+    country: String(ward.country ?? "Brasil"),
+    ...normalizeRecordMetadata(ward),
+  };
+}
+
+function normalizeHymn(hymn: Hymn): Hymn {
+  return {
+    id: hymn.id,
+    number: String(hymn.number ?? ""),
+    title: String(hymn.title ?? ""),
+    active: hymn.active !== false,
+    ...normalizeRecordMetadata(hymn),
+  };
+}
+
 function normalizeSeatCount(value: unknown) {
   const parsed = Number(value);
 
@@ -289,23 +325,15 @@ export function normalizeDatabase(db: Database): Database {
       ...createEmptyDatabase(),
       ...legacyDb,
       roles,
-      stakes: (legacyDb.stakes ?? []).map((stake) => ({
-        ...stake,
-        city: String(stake.city ?? ""),
-        state: String(stake.state ?? ""),
-        country: String(stake.country ?? "Brasil"),
-      })),
-      wards: (legacyDb.wards ?? []).map((ward) => ({
-        ...ward,
-        country: String(ward.country ?? "Brasil"),
-      })),
+      stakes: (legacyDb.stakes ?? []).map((stake) => normalizeStake(stake)),
+      wards: (legacyDb.wards ?? []).map((ward) => normalizeWard(ward)),
     },
     users: (legacyDb.users ?? []).map((user) => normalizeUser(user, roles)),
     members: (legacyDb.members ?? []).map((member) => normalizeMember(member)),
     memberNotes: legacyDb.memberNotes ?? [],
     sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSimpleRecord(minute)),
     minuteVersions: legacyDb.minuteVersions ?? [],
-    hymns: legacyDb.hymns ?? [],
+    hymns: (legacyDb.hymns ?? []).map((hymn) => normalizeHymn(hymn)),
     missionaryCompanionships: (legacyDb.missionaryCompanionships ?? []).map((companionship) => normalizeCompanionship(companionship)),
     hostHouses: (legacyDb.hostHouses ?? []).map((hostHouse) => normalizeHostHouse(hostHouse)),
     lunchSchedules: (legacyDb.lunchSchedules ?? []).map((lunchSchedule) => normalizeLunchSchedule(lunchSchedule)),
@@ -401,6 +429,8 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         city: asOptionalString(record.city),
         state: asOptionalString(record.state),
         country: asOptionalString(record.country),
+        created_at: optionalText(record.createdAt),
+        updated_at: optionalText(record.updatedAt),
       };
     case "wards":
       return {
@@ -409,6 +439,8 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         city: asOptionalString(record.city),
         state: asOptionalString(record.state),
         country: asOptionalString(record.country),
+        created_at: optionalText(record.createdAt),
+        updated_at: optionalText(record.updatedAt),
       };
     case "roles":
       return {
@@ -550,6 +582,8 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         city: rowString(row, "city", "city"),
         state: rowString(row, "state", "state"),
         country: rowString(row, "country", "country", "Brasil"),
+        createdAt: asString(row.created_at) ?? UNKNOWN_TIMESTAMP,
+        updatedAt: asString(row.updated_at) ?? UNKNOWN_TIMESTAMP,
       };
     case "wards":
       return {
@@ -559,6 +593,8 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         city: rowString(row, "city", "city"),
         state: rowString(row, "state", "state"),
         country: rowString(row, "country", "country", "Brasil"),
+        createdAt: asString(row.created_at) ?? UNKNOWN_TIMESTAMP,
+        updatedAt: asString(row.updated_at) ?? UNKNOWN_TIMESTAMP,
       };
     case "roles":
       return {
@@ -597,10 +633,14 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
           id: row.id,
           number: row.number ?? "",
           title: row.title ?? "",
+          active: row.active !== false,
         };
       }
 
-      return row.data;
+      return {
+        ...row.data,
+        active: row.active !== false,
+      };
     default:
       return row.data;
   }

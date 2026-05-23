@@ -22,6 +22,7 @@ import type {
   DocumentType,
   HostHouse,
   HybridField,
+  Hymn,
   LunchSchedule,
   Member,
   MemberNote,
@@ -72,6 +73,17 @@ type SaveCaravanRegistrationInput = Omit<CaravanRegistration, "id" | "createdAt"
   id?: string;
 };
 
+type ResolveAuthenticatedUserInput = {
+  authUserId?: string;
+  email: string;
+  auditLogin?: boolean;
+};
+
+type AuthenticatedUserResolution =
+  | { status: "found"; route: "/dashboard" | "/onboarding"; user: User }
+  | { status: "inactive"; route: "/login"; user: User }
+  | { status: "missing"; route: "/onboarding" };
+
 type AppContextValue = {
   db: Database;
   ready: boolean;
@@ -96,6 +108,7 @@ type AppContextValue = {
   auditLogsByWard: AuditLog[];
   appPreferences: AppPreferences;
   loginAs: (userId: string) => void;
+  resolveAuthenticatedUser: (input: ResolveAuthenticatedUserInput) => AuthenticatedUserResolution;
   completeStakeOnboarding: (email: string, input: CreateStakeOnboardingInput) => boolean;
   completeWardOnboarding: (email: string, input: CreateWardOnboardingInput) => boolean;
   joinExistingWard: (email: string, wardId: string, authUserId?: string) => boolean;
@@ -104,7 +117,15 @@ type AppContextValue = {
   resetDemoData: () => void;
   changeCurrentUserRole: (roleId: string) => void;
   hasPermission: (permission: PermissionKey) => boolean;
+  saveStake: (input: Omit<Stake, "id"> & { id?: string }) => void;
+  archiveStake: (stakeId: string) => void;
+  unarchiveStake: (stakeId: string) => void;
+  deleteStake: (stakeId: string) => void;
   saveWard: (input: Ward) => void;
+  saveSystemWard: (input: Omit<Ward, "id"> & { id?: string }) => void;
+  archiveWard: (wardId: string) => void;
+  unarchiveWard: (wardId: string) => void;
+  deleteWard: (wardId: string) => void;
   saveMember: (input: Omit<Member, "id"> & { id?: string }) => void;
   deleteMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
@@ -112,6 +133,8 @@ type AppContextValue = {
   saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt"> & { id?: string }) => void;
   toggleUserStatus: (userId: string) => void;
   saveMinute: (input: SaveMinuteInput) => string;
+  saveHymn: (input: Omit<Hymn, "id"> & { id?: string }) => void;
+  deleteHymn: (hymnId: string) => void;
   saveCompanionship: (input: Omit<MissionaryCompanionship, "id"> & { id?: string }) => void;
   saveHostHouse: (input: Omit<HostHouse, "id"> & { id?: string }) => void;
   saveLunchSchedule: (input: Omit<LunchSchedule, "id"> & { id?: string }) => void;
@@ -195,6 +218,17 @@ function getActorUserId(db: Database) {
 
 function normalizeEmail(email: string) {
   return email.trim().toLocaleLowerCase("pt-BR");
+}
+
+function findAuthenticatedUser(users: User[], authUserId: string | undefined, email: string) {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedAuthUserId = authUserId?.trim();
+
+  return users.find(
+    (user) =>
+      Boolean(normalizedAuthUserId && user.authUserId === normalizedAuthUserId) ||
+      Boolean(normalizedEmail && normalizeEmail(user.email) === normalizedEmail),
+  );
 }
 
 function normalizeOrganizationName(name: string) {
@@ -371,6 +405,35 @@ function clearDeletedMemberReferences(db: Database, memberIds: Set<string>, acto
   };
 }
 
+function clearDeletedHymnReferences(db: Database, hymnIds: Set<string>, actorUserId?: string) {
+  if (!hymnIds.size) return db;
+
+  const clearHybridField = (field: HybridField): HybridField =>
+    field.mode === "linked" && field.linkedId && hymnIds.has(field.linkedId) ? { ...field, linkedId: "" } : field;
+
+  const clearMinuteForm = (form: MinuteFormData): MinuteFormData => ({
+    ...form,
+    openingHymn: clearHybridField(form.openingHymn),
+    sacramentHymn: clearHybridField(form.sacramentHymn),
+    intermediateHymn: clearHybridField(form.intermediateHymn),
+    closingHymn: clearHybridField(form.closingHymn),
+  });
+
+  return {
+    ...db,
+    sacramentMinutes: db.sacramentMinutes.map((minute) =>
+      withRecordMetadata(
+        {
+          ...minute,
+          form: clearMinuteForm(minute.form),
+        },
+        minute,
+        actorUserId,
+      ),
+    ),
+  };
+}
+
 function AppProviderContent({ children, initialDb, ready }: { children: ReactNode; initialDb: Database; ready: boolean }) {
   const [db, setDb] = useState<Database>(initialDb);
   const [remoteReady, setRemoteReady] = useState(false);
@@ -402,7 +465,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
   }, [ready]);
 
   useEffect(() => {
-    if (!ready || !remoteReady) {
+    if (!ready || !remoteReady || !db.session.currentUserId) {
       return;
     }
 
@@ -471,6 +534,71 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           summary: "Entrou no sistema com email e senha.",
         });
       });
+    }
+
+    function resolveAuthenticatedUser(input: ResolveAuthenticatedUserInput): AuthenticatedUserResolution {
+      const normalizedEmail = normalizeEmail(input.email);
+      const matchedUser = findAuthenticatedUser(db.users, input.authUserId, normalizedEmail);
+
+      if (!matchedUser) {
+        return { status: "missing", route: "/onboarding" };
+      }
+
+      if (matchedUser.status === "inactive") {
+        return { status: "inactive", route: "/login", user: matchedUser };
+      }
+
+      const route = matchedUser.wardId && db.wards.some((ward) => ward.id === matchedUser.wardId) ? "/dashboard" : "/onboarding";
+
+      setDb((currentDb) => {
+        const currentMatchedUser = findAuthenticatedUser(currentDb.users, input.authUserId, normalizedEmail);
+
+        if (!currentMatchedUser || currentMatchedUser.status !== "active") {
+          return currentDb;
+        }
+
+        const timestamp = nowIso();
+        const nextAuthUserId = currentMatchedUser.authUserId ?? input.authUserId?.trim();
+        const nextUser = withRecordMetadata(
+          {
+            ...currentMatchedUser,
+            authUserId: nextAuthUserId,
+            lastAccessAt: timestamp,
+          },
+          currentMatchedUser,
+          currentMatchedUser.id,
+          timestamp,
+        );
+        const nextDb = {
+          ...currentDb,
+          users: currentDb.users.map((user) => (user.id === currentMatchedUser.id ? nextUser : user)),
+          session: {
+            currentUserId: nextUser.id,
+            currentWardId: nextUser.wardId,
+          } satisfies SessionState,
+        };
+
+        if (!input.auditLogin) {
+          return nextDb;
+        }
+
+        return withAuditLog(nextDb, nextUser.id, {
+          wardId: nextUser.wardId,
+          action: "LOGIN",
+          module: "auth",
+          itemLabel: nextUser.name,
+          summary: "Entrou no sistema com email e senha.",
+        });
+      });
+
+      return {
+        status: "found",
+        route,
+        user: {
+          ...matchedUser,
+          authUserId: matchedUser.authUserId ?? input.authUserId?.trim(),
+        },
+      };
     }
 
     function completeStakeOnboarding(email: string, input: CreateStakeOnboardingInput) {
@@ -981,6 +1109,109 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       return currentUserPermissions.includes(permission);
     }
 
+    function saveStake(input: Omit<Stake, "id"> & { id?: string }) {
+      const existing = input.id ? db.stakes.find((stake) => stake.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("stake");
+        const currentExisting = currentDb.stakes.find((stake) => stake.id === id);
+        const exists = Boolean(currentExisting);
+        const actorUserId = getActorUserId(currentDb);
+        const stake = withRecordMetadata(
+          {
+            ...input,
+            id,
+            name: input.name.trim(),
+            city: input.city.trim(),
+            state: input.state.trim(),
+            country: input.country.trim() || "Brasil",
+            archivedAt: input.archivedAt ?? currentExisting?.archivedAt,
+          },
+          currentExisting,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          stakes: exists ? currentDb.stakes.map((current) => (current.id === id ? stake : current)) : [stake, ...currentDb.stakes],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: exists ? "UPDATE_STAKE" : "CREATE_STAKE",
+          module: "sistema",
+          itemLabel: stake.name,
+          summary: exists ? "Atualizou dados da estaca." : "Criou estaca pelo sistema.",
+        });
+      });
+
+      toast.success(existing ? "Estaca atualizada." : "Estaca cadastrada.");
+    }
+
+    function setStakeArchiveState(stakeId: string, archived: boolean) {
+      const target = db.stakes.find((stake) => stake.id === stakeId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const stake = currentDb.stakes.find((item) => item.id === stakeId);
+        if (!stake) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = {
+          ...currentDb,
+          stakes: currentDb.stakes.map((item) => (item.id === stakeId ? withArchiveMetadata(item, archived, actorUserId) : item)),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: archived ? "ARCHIVE_STAKE" : "UNARCHIVE_STAKE",
+          module: "sistema",
+          itemLabel: stake.name,
+          summary: archived ? "Arquivou estaca." : "Desarquivou estaca.",
+        });
+      });
+
+      toast.success(archived ? "Estaca arquivada." : "Estaca desarquivada.");
+    }
+
+    function archiveStake(stakeId: string) {
+      setStakeArchiveState(stakeId, true);
+    }
+
+    function unarchiveStake(stakeId: string) {
+      setStakeArchiveState(stakeId, false);
+    }
+
+    function deleteStake(stakeId: string) {
+      const target = db.stakes.find((stake) => stake.id === stakeId);
+      if (!target?.archivedAt) return;
+      const linkedWards = db.wards.filter((ward) => ward.stakeId === stakeId);
+
+      if (linkedWards.length) {
+        toast.error("Remova ou mova as alas desta estaca antes de deletar.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const stake = currentDb.stakes.find((item) => item.id === stakeId);
+        if (!stake?.archivedAt) return currentDb;
+
+        const nextDb = {
+          ...currentDb,
+          stakes: currentDb.stakes.filter((item) => item.id !== stakeId),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: "DELETE_STAKE",
+          module: "sistema",
+          itemLabel: stake.name,
+          summary: "Deletou estaca arquivada do sistema.",
+        });
+      });
+
+      toast.success("Estaca deletada.");
+    }
+
     function saveWard(input: Ward) {
       const exists = db.wards.some((ward) => ward.id === input.id);
       if (!exists) return;
@@ -1017,6 +1248,124 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
 
       toast.success("Dados da ala atualizados.");
+    }
+
+    function saveSystemWard(input: Omit<Ward, "id"> & { id?: string }) {
+      const existing = input.id ? db.wards.find((ward) => ward.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("ward");
+        const currentExisting = currentDb.wards.find((ward) => ward.id === id);
+        const exists = Boolean(currentExisting);
+        const actorUserId = getActorUserId(currentDb);
+        const ward = withRecordMetadata(
+          {
+            ...input,
+            id,
+            name: input.name.trim(),
+            city: input.city.trim(),
+            state: input.state.trim(),
+            country: input.country.trim() || "Brasil",
+            archivedAt: input.archivedAt ?? currentExisting?.archivedAt,
+          },
+          currentExisting,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          wards: exists ? currentDb.wards.map((current) => (current.id === id ? ward : current)) : [ward, ...currentDb.wards],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: ward.id,
+          action: exists ? "UPDATE_WARD" : "CREATE_WARD",
+          module: "sistema",
+          itemLabel: ward.name,
+          summary: exists ? "Atualizou dados da ala pelo sistema." : "Criou ala pelo sistema.",
+        });
+      });
+
+      toast.success(existing ? "Ala atualizada." : "Ala cadastrada.");
+    }
+
+    function setWardArchiveState(wardId: string, archived: boolean) {
+      const target = db.wards.find((ward) => ward.id === wardId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const ward = currentDb.wards.find((item) => item.id === wardId);
+        if (!ward) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = {
+          ...currentDb,
+          wards: currentDb.wards.map((item) => (item.id === wardId ? withArchiveMetadata(item, archived, actorUserId) : item)),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId,
+          action: archived ? "ARCHIVE_WARD" : "UNARCHIVE_WARD",
+          module: "sistema",
+          itemLabel: ward.name,
+          summary: archived ? "Arquivou ala." : "Desarquivou ala.",
+        });
+      });
+
+      toast.success(archived ? "Ala arquivada." : "Ala desarquivada.");
+    }
+
+    function archiveWard(wardId: string) {
+      setWardArchiveState(wardId, true);
+    }
+
+    function unarchiveWard(wardId: string) {
+      setWardArchiveState(wardId, false);
+    }
+
+    function deleteWard(wardId: string) {
+      const target = db.wards.find((ward) => ward.id === wardId);
+      if (!target?.archivedAt) return;
+
+      if (db.session.currentWardId === wardId) {
+        toast.error("Troque para outra ala antes de deletar a ala atual.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const ward = currentDb.wards.find((item) => item.id === wardId);
+        if (!ward?.archivedAt || currentDb.session.currentWardId === wardId) return currentDb;
+
+        const deletedMemberIds = new Set(currentDb.members.filter((member) => member.wardId === wardId).map((member) => member.id));
+        const deletedMinuteIds = new Set(currentDb.sacramentMinutes.filter((minute) => minute.wardId === wardId).map((minute) => minute.id));
+        const nextDb = {
+          ...currentDb,
+          wards: currentDb.wards.filter((item) => item.id !== wardId),
+          users: currentDb.users.filter((user) => user.wardId !== wardId),
+          members: currentDb.members.filter((member) => member.wardId !== wardId),
+          memberNotes: currentDb.memberNotes.filter((note) => !deletedMemberIds.has(note.memberId)),
+          sacramentMinutes: currentDb.sacramentMinutes.filter((minute) => minute.wardId !== wardId),
+          minuteVersions: currentDb.minuteVersions.filter((version) => !deletedMinuteIds.has(version.minuteId)),
+          missionaryCompanionships: currentDb.missionaryCompanionships.filter((item) => item.wardId !== wardId),
+          hostHouses: currentDb.hostHouses.filter((item) => item.wardId !== wardId),
+          lunchSchedules: currentDb.lunchSchedules.filter((item) => item.wardId !== wardId),
+          caravans: currentDb.caravans.filter((item) => item.wardId !== wardId),
+          caravanPeople: currentDb.caravanPeople.filter((item) => item.wardId !== wardId),
+          caravanRegistrations: currentDb.caravanRegistrations.filter((item) => item.wardId !== wardId),
+          patrolMembers: currentDb.patrolMembers.filter((item) => item.wardId !== wardId),
+          patrolSchedules: currentDb.patrolSchedules.filter((item) => item.wardId !== wardId),
+          auditLogs: currentDb.auditLogs.filter((log) => log.wardId !== wardId),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: "DELETE_WARD",
+          module: "sistema",
+          itemLabel: ward.name,
+          summary: "Deletou ala arquivada e seus dados vinculados do sistema.",
+        });
+      });
+
+      toast.success("Ala deletada.");
     }
 
     function saveMember(input: Omit<Member, "id"> & { id?: string }) {
@@ -1331,6 +1680,72 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
       toast.success(existing ? "Ata salva." : "Ata cadastrada.");
       return id;
+    }
+
+    function saveHymn(input: Omit<Hymn, "id"> & { id?: string }) {
+      const existing = input.id ? db.hymns.find((hymn) => hymn.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("hymn");
+        const currentExisting = currentDb.hymns.find((hymn) => hymn.id === id);
+        const exists = Boolean(currentExisting);
+        const actorUserId = getActorUserId(currentDb);
+        const hymn = withRecordMetadata(
+          {
+            ...input,
+            id,
+            number: input.number.trim(),
+            title: input.title.trim(),
+            active: input.active !== false,
+          },
+          currentExisting,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          hymns: exists ? currentDb.hymns.map((current) => (current.id === id ? hymn : current)) : [hymn, ...currentDb.hymns],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: exists ? "UPDATE_HYMN" : "CREATE_HYMN",
+          module: "sistema",
+          itemLabel: `Hino ${hymn.number}`,
+          summary: exists ? "Atualizou hino do catálogo." : "Criou hino no catálogo.",
+        });
+      });
+
+      toast.success(existing ? "Hino atualizado." : "Hino cadastrado.");
+    }
+
+    function deleteHymn(hymnId: string) {
+      const target = db.hymns.find((hymn) => hymn.id === hymnId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const hymn = currentDb.hymns.find((item) => item.id === hymnId);
+        if (!hymn) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = clearDeletedHymnReferences(
+          {
+            ...currentDb,
+            hymns: currentDb.hymns.filter((item) => item.id !== hymnId),
+          },
+          new Set([hymnId]),
+          actorUserId,
+        );
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: "DELETE_HYMN",
+          module: "sistema",
+          itemLabel: `Hino ${hymn.number}`,
+          summary: "Deletou hino do catálogo e removeu vínculos das atas.",
+        });
+      });
+
+      toast.success("Hino deletado.");
     }
 
     function saveCompanionship(input: Omit<MissionaryCompanionship, "id"> & { id?: string }) {
@@ -1777,6 +2192,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       auditLogsByWard,
       appPreferences: db.appPreferences,
       loginAs,
+      resolveAuthenticatedUser,
       completeStakeOnboarding,
       completeWardOnboarding,
       joinExistingWard,
@@ -1785,7 +2201,15 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       resetDemoData,
       changeCurrentUserRole,
       hasPermission,
+      saveStake,
+      archiveStake,
+      unarchiveStake,
+      deleteStake,
       saveWard,
+      saveSystemWard,
+      archiveWard,
+      unarchiveWard,
+      deleteWard,
       saveMember,
       deleteMembers,
       importMembers,
@@ -1793,6 +2217,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       saveUser,
       toggleUserStatus,
       saveMinute,
+      saveHymn,
+      deleteHymn,
       saveCompanionship,
       saveHostHouse,
       saveLunchSchedule,

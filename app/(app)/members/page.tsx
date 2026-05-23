@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -342,11 +343,10 @@ export default function MembersPage() {
                     </div>
                     <div>
                       <Label>Data de nascimento</Label>
-                      <Input
+                      <DatePicker
                         disabled={isReadOnly}
-                        type="date"
                         value={form.birthDate}
-                        onChange={(event) => setForm((current) => ({ ...current, birthDate: event.target.value }))}
+                        onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))}
                       />
                     </div>
                     <div>

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { Archive } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -8,6 +9,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -418,11 +420,10 @@ export default function CaravanPeoplePage() {
                   </div>
                   <div>
                     <Label>Data de nascimento</Label>
-                    <Input
+                    <DatePicker
                       disabled={isReadOnly}
-                      type="date"
                       value={form.birthDate}
-                      onChange={(event) => setForm((current) => ({ ...current, birthDate: event.target.value }))}
+                      onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))}
                     />
                   </div>
                   <div>
@@ -521,6 +522,7 @@ export default function CaravanPeoplePage() {
                     </Button>
                   ) : (
                     <Button disabled={Boolean(blockingArchiveCaravan)} onClick={archiveSelectedPerson} variant="destructive">
+                      <Archive />
                       Arquivar
                     </Button>
                   )

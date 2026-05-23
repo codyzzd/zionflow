@@ -147,6 +147,27 @@ html.dark {
   p {
     text-wrap: pretty;
   }
+
+  input[type="date"] {
+    color-scheme: light;
+  }
+
+  html.dark input[type="date"] {
+    color-scheme: dark;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.72;
+  }
+
+  input[type="date"]:hover::-webkit-calendar-picker-indicator {
+    opacity: 1;
+  }
+
+  html.dark input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
 }
 
 @layer components {

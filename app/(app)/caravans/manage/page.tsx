@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, List } from "lucide-react";
+import { Archive, Eye, List } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -11,6 +11,7 @@ import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -333,11 +334,10 @@ export default function CaravansPage() {
                 <div className="section-grid">
                   <div>
                     <Label>Data de partida</Label>
-                    <Input
+                    <DatePicker
                       disabled={isReadOnly}
-                      type="date"
                       value={form.departureDate}
-                      onChange={(event) => setForm((current) => ({ ...current, departureDate: event.target.value }))}
+                      onChange={(value) => setForm((current) => ({ ...current, departureDate: value }))}
                     />
                   </div>
                   <div>
@@ -351,11 +351,10 @@ export default function CaravansPage() {
                   </div>
                   <div>
                     <Label>Data de retorno</Label>
-                    <Input
+                    <DatePicker
                       disabled={isReadOnly}
-                      type="date"
                       value={form.returnDate}
-                      onChange={(event) => setForm((current) => ({ ...current, returnDate: event.target.value }))}
+                      onChange={(value) => setForm((current) => ({ ...current, returnDate: value }))}
                     />
                   </div>
                   <div>
@@ -433,6 +432,7 @@ export default function CaravansPage() {
                     </Button>
                   ) : (
                     <Button onClick={archiveSelectedCaravan} variant="destructive">
+                      <Archive />
                       Arquivar
                     </Button>
                   )

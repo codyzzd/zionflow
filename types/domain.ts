@@ -47,7 +47,7 @@ export const MEMBER_ORGANIZATION_OPTIONS = [
   "Jovens Adultos Solteiros",
 ] as const;
 
-export interface Stake {
+export interface Stake extends RecordMetadata {
   id: string;
   name: string;
   city: string;
@@ -174,10 +174,11 @@ export interface SacramentMinute extends RecordMetadata {
   versionIds: string[];
 }
 
-export interface Hymn {
+export interface Hymn extends RecordMetadata {
   id: string;
   number: string;
   title: string;
+  active: boolean;
 }
 
 export interface MissionaryCompanionship extends RecordMetadata {

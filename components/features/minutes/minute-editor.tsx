@@ -10,6 +10,7 @@ import { useAppContext } from "@/components/providers/app-provider";
 import { HybridSelector } from "@/components/shared/hybrid-selector";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -491,7 +492,7 @@ export function MinuteEditor({
               <CardContent className="section-grid">
                 <div>
                   <Label>Data</Label>
-                  <Input type="date" value={form.date} onChange={(event) => setForm((current) => (current ? { ...current, date: event.target.value } : current))} />
+                  <DatePicker value={form.date} onChange={(value) => setForm((current) => (current ? { ...current, date: value } : current))} />
                 </div>
               </CardContent>
             </Card>

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -134,7 +135,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                   </div>
                   <div>
                     <Label>Data de nascimento</Label>
-                    <Input type="date" value={form.birthDate} onChange={(e) => setForm((f) => ({ ...f, birthDate: e.target.value }))} />
+                    <DatePicker value={form.birthDate} onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))} />
                   </div>
                   <div>
                     <Label>Sexo</Label>

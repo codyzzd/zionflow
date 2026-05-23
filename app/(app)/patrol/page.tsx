@@ -10,8 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
@@ -537,11 +537,7 @@ export default function PatrolPage() {
               <div className="space-y-4">
                 <div>
                   <Label>Data</Label>
-                  <Input
-                    type="date"
-                    value={scheduleForm.date}
-                    onChange={(event) => setScheduleForm((current) => ({ ...current, date: event.target.value }))}
-                  />
+                  <DatePicker value={scheduleForm.date} onChange={(value) => setScheduleForm((current) => ({ ...current, date: value }))} />
                 </div>
 
                 <PatrolMemberSelect

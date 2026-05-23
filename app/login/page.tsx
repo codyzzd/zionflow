@@ -42,7 +42,7 @@ function getAuthErrorMessage(message: string) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { currentUser, currentWard, db, loginAs, ready } = useAppContext();
+  const { currentUser, currentWard, resolveAuthenticatedUser, ready } = useAppContext();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -77,16 +77,18 @@ export default function LoginPage() {
       }
 
       const authEmail = normalizeEmail(data.user.email);
-      const existingUser = db.users.find((user) => user.authUserId === data.user.id || normalizeEmail(user.email) === authEmail);
+      const resolution = resolveAuthenticatedUser({
+        authUserId: data.user.id,
+        email: authEmail,
+      });
 
-      if (existingUser?.status === "inactive") {
+      if (resolution.status === "inactive") {
         await supabase.auth.signOut();
         return;
       }
 
-      if (existingUser) {
-        loginAs(existingUser.id);
-        router.replace(existingUser.wardId ? "/dashboard" : "/onboarding");
+      if (resolution.status === "found") {
+        router.replace(resolution.route);
         return;
       }
 
@@ -100,7 +102,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, db.users, loginAs, ready, router]);
+  }, [currentUser, ready, resolveAuthenticatedUser, router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -147,17 +149,23 @@ export default function LoginPage() {
         return;
       }
 
-      const existingUser = db.users.find((user) => user.authUserId === data.user?.id || normalizeEmail(user.email) === normalizedEmail);
+      const authUser = data.user;
+      const resolution = authUser?.email
+        ? resolveAuthenticatedUser({
+            authUserId: authUser.id,
+            email: authUser.email,
+            auditLogin: true,
+          })
+        : { status: "missing" as const, route: "/onboarding" as const };
 
-      if (existingUser?.status === "inactive") {
+      if (resolution.status === "inactive") {
         await supabase.auth.signOut();
         toast.error("Este usuário está inativo no sistema.");
         return;
       }
 
-      if (existingUser) {
-        loginAs(existingUser.id);
-        router.push(existingUser.wardId ? "/dashboard" : "/onboarding");
+      if (resolution.status === "found") {
+        router.push(resolution.route);
         return;
       }
 

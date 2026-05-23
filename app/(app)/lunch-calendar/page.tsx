@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -594,11 +595,7 @@ export default function LunchCalendarPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Label>Data</Label>
-                    <Input
-                      type="date"
-                      value={lunchForm.date}
-                      onChange={(event) => setLunchForm((current) => ({ ...current, date: event.target.value }))}
-                    />
+                    <DatePicker value={lunchForm.date} onChange={(value) => setLunchForm((current) => ({ ...current, date: value }))} />
                   </div>
                   <div>
                     <Label>Horário</Label>

@@ -55,7 +55,7 @@ function isSimilarWard(searchName: string, candidateName: string, searchCity?: s
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { completeWardOnboarding, currentUser, currentWard, db, joinExistingWard, ready } = useAppContext();
+  const { completeWardOnboarding, currentUser, currentWard, db, joinExistingWard, ready, resolveAuthenticatedUser } = useAppContext();
   const [authEmail, setAuthEmail] = useState("");
   const [authUserId, setAuthUserId] = useState("");
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -87,9 +87,11 @@ export default function OnboardingPage() {
 
     let cancelled = false;
 
-    createClient()
+    const supabase = createClient();
+
+    supabase
       .auth.getUser()
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (cancelled) return;
 
         if (error || !data.user?.email) {
@@ -99,6 +101,23 @@ export default function OnboardingPage() {
 
         setAuthEmail(data.user.email);
         setAuthUserId(data.user.id);
+
+        const resolution = resolveAuthenticatedUser({
+          authUserId: data.user.id,
+          email: data.user.email,
+        });
+
+        if (resolution.status === "inactive") {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
+        if (resolution.status === "found" && resolution.route === "/dashboard") {
+          router.replace("/dashboard");
+          return;
+        }
+
         setCheckingAuth(false);
       })
       .catch(() => {
@@ -110,7 +129,7 @@ export default function OnboardingPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, currentWard, ready, router]);
+  }, [currentUser, currentWard, ready, resolveAuthenticatedUser, router]);
 
   const wardsWithStake = useMemo<SimilarWard[]>(() => {
     return db.wards.map((ward) => ({

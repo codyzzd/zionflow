@@ -1,0 +1,295 @@
+"use client";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { Archive, RotateCcw, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+
+import { useAppContext } from "@/components/providers/app-provider";
+import { PageHeader } from "@/components/shared/page-header";
+import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
+import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { Stake } from "@/types/domain";
+
+type StakeForm = Omit<Stake, "id">;
+type DrawerMode = "create" | "view" | "edit";
+type StatusFilter = "active" | "archived";
+
+const emptyStakeForm: StakeForm = {
+  name: "",
+  city: "",
+  state: "",
+  country: "Brasil",
+};
+
+function stakeToForm(stake: Stake): StakeForm {
+  return {
+    name: stake.name,
+    city: stake.city,
+    state: stake.state,
+    country: stake.country,
+    createdAt: stake.createdAt,
+    createdByUserId: stake.createdByUserId,
+    updatedAt: stake.updatedAt,
+    updatedByUserId: stake.updatedByUserId,
+    archivedAt: stake.archivedAt,
+    archivedByUserId: stake.archivedByUserId,
+  };
+}
+
+export default function SystemStakesPage() {
+  const { archiveStake, db, deleteStake, saveStake, unarchiveStake } = useAppContext();
+  const wardCountByStake = useMemo(() => {
+    const counts = new Map<string, number>();
+    db.wards.forEach((ward) => counts.set(ward.stakeId, (counts.get(ward.stakeId) ?? 0) + 1));
+    return counts;
+  }, [db.wards]);
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
+  const [selectedStake, setSelectedStake] = useState<Stake | null>(null);
+  const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [form, setForm] = useState<StakeForm>(emptyStakeForm);
+
+  const isReadOnly = drawerMode === "view";
+  const selectedStakeIsArchived = Boolean(selectedStake?.archivedAt);
+  const selectedStakeWardCount = selectedStake ? wardCountByStake.get(selectedStake.id) ?? 0 : 0;
+
+  const filteredStakes = useMemo(
+    () =>
+      db.stakes
+        .filter((stake) => {
+          const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
+          const matchesStatus = statusFilter === "archived" ? Boolean(stake.archivedAt) : !stake.archivedAt;
+          const matchesSearch =
+            !normalizedSearch ||
+            stake.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
+            stake.city.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
+            stake.state.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
+
+          return matchesStatus && matchesSearch;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+    [db.stakes, search, statusFilter],
+  );
+
+  function resetDrawer() {
+    setSelectedStake(null);
+    setDrawerMode("create");
+    setForm(emptyStakeForm);
+  }
+
+  function handleDrawerOpenChange(open: boolean) {
+    setDrawerOpen(open);
+    if (!open) resetDrawer();
+  }
+
+  function openCreateDrawer() {
+    setSelectedStake(null);
+    setDrawerMode("create");
+    setForm(emptyStakeForm);
+    setDrawerOpen(true);
+  }
+
+  function openViewDrawer(stake: Stake) {
+    setSelectedStake(stake);
+    setDrawerMode("view");
+    setForm(stakeToForm(stake));
+    setDrawerOpen(true);
+  }
+
+  function openEditDrawer(stake: Stake) {
+    setSelectedStake(stake);
+    setDrawerMode("edit");
+    setForm(stakeToForm(stake));
+    setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+    handleDrawerOpenChange(false);
+  }
+
+  function saveCurrentStake() {
+    if (!form.name.trim()) return;
+
+    saveStake({
+      id: selectedStake?.id,
+      ...form,
+      name: form.name.trim(),
+      city: form.city.trim(),
+      state: form.state.trim(),
+      country: form.country.trim() || "Brasil",
+    });
+    closeDrawer();
+  }
+
+  const columns = useMemo<ColumnDef<Stake>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        meta: { label: "Estaca" },
+        header: ({ column }) => (
+          <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
+            Estaca {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
+          </Button>
+        ),
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <p className="font-medium">{row.original.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {[row.original.city, row.original.state, row.original.country].filter(Boolean).join(" / ") || "Local não informado"}
+            </p>
+          </div>
+        ),
+      },
+      {
+        id: "wards",
+        meta: { label: "Alas" },
+        header: "Alas",
+        cell: ({ row }) => <Badge variant="secondary">{wardCountByStake.get(row.original.id) ?? 0} alas</Badge>,
+        sortingFn: (rowA, rowB) => (wardCountByStake.get(rowA.original.id) ?? 0) - (wardCountByStake.get(rowB.original.id) ?? 0),
+      },
+      {
+        id: "status",
+        meta: { label: "Status" },
+        header: "Status",
+        cell: ({ row }) => <Badge variant={row.original.archivedAt ? "secondary" : "default"}>{row.original.archivedAt ? "Arquivada" : "Ativa"}</Badge>,
+      },
+      {
+        id: "actions",
+        enableHiding: false,
+        header: () => <div className="text-right">Ações</div>,
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
+              Visualizar
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [wardCountByStake],
+  );
+
+  return (
+    <SystemAdminGuard>
+      <div>
+        <PageHeader
+          eyebrow="Sistema"
+          title="Estacas"
+          description="Cadastro administrativo de estacas do sistema."
+          actions={
+            <Button onClick={openCreateDrawer} size="lg">
+              Nova estaca
+            </Button>
+          }
+        />
+
+        <DataTable
+          columns={columns}
+          data={filteredStakes}
+          emptyMessage="Nenhuma estaca encontrada com os filtros atuais."
+          enableColumnVisibility
+          toolbar={
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <Input
+                className="lg:max-w-lg"
+                placeholder="Buscar por estaca, cidade ou estado"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter((value as StatusFilter) ?? "active")}>
+                <SelectTrigger className="lg:w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Ativas</SelectItem>
+                  <SelectItem value="archived">Arquivadas</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          }
+        />
+
+        <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerOpenChange}>
+          <DrawerContent className="sm:max-w-2xl" direction="right">
+            <DrawerHeader className="border-b">
+              <DrawerTitle>{drawerMode === "create" ? "Nova estaca" : drawerMode === "edit" ? "Editar estaca" : selectedStake?.name ?? "Estaca"}</DrawerTitle>
+              <DrawerDescription>Dados usados para organizar alas e cadastros do sistema.</DrawerDescription>
+            </DrawerHeader>
+
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <div className="section-grid">
+                <div>
+                  <Label>Nome da estaca</Label>
+                  <Input disabled={isReadOnly} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+                </div>
+                <div>
+                  <Label>Cidade</Label>
+                  <Input disabled={isReadOnly} value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} />
+                </div>
+                <div>
+                  <Label>Estado</Label>
+                  <Input disabled={isReadOnly} value={form.state} onChange={(event) => setForm((current) => ({ ...current, state: event.target.value }))} />
+                </div>
+                <div>
+                  <Label>País</Label>
+                  <Input disabled={isReadOnly} value={form.country} onChange={(event) => setForm((current) => ({ ...current, country: event.target.value }))} />
+                </div>
+                {selectedStake ? (
+                  <div>
+                    <Label>Alas vinculadas</Label>
+                    <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm">{selectedStakeWardCount}</div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <DrawerFooter className="border-t bg-background">
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+                <div className="flex gap-2">
+                  {isReadOnly && selectedStake ? (
+                    selectedStakeIsArchived ? (
+                      <>
+                        <Button onClick={() => unarchiveStake(selectedStake.id)} variant="outline">
+                          <RotateCcw />
+                          Desarquivar
+                        </Button>
+                        <Button disabled={selectedStakeWardCount > 0} onClick={() => deleteStake(selectedStake.id)} variant="destructive">
+                          <Trash2 />
+                          Deletar
+                        </Button>
+                      </>
+                    ) : (
+                      <Button onClick={() => archiveStake(selectedStake.id)} variant="destructive">
+                        <Archive />
+                        Arquivar
+                      </Button>
+                    )
+                  ) : null}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button onClick={closeDrawer} variant="ghost">
+                    {isReadOnly ? "Fechar" : "Cancelar"}
+                  </Button>
+                  {isReadOnly && selectedStake ? <Button onClick={() => openEditDrawer(selectedStake)}>Editar estaca</Button> : null}
+                  {!isReadOnly ? (
+                    <Button disabled={!form.name.trim()} onClick={saveCurrentStake}>
+                      {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar estaca"}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </DrawerFooter>
+          </DrawerContent>
+        </Drawer>
+      </div>
+    </SystemAdminGuard>
+  );
+}
