@@ -178,9 +178,16 @@ export interface SacramentMinute extends RecordMetadata {
 
 export interface Hymn extends RecordMetadata {
   id: string;
+  hymnBookId: string;
   number: string;
   title: string;
   active: boolean;
+}
+
+export interface HymnBook extends RecordMetadata {
+  id: string;
+  name: string;
+  emoji: string;
 }
 
 export interface MissionaryCompanionship extends RecordMetadata {
@@ -316,6 +323,7 @@ export interface Database {
   memberNotes: MemberNote[];
   sacramentMinutes: SacramentMinute[];
   minuteVersions: SacramentMinuteVersion[];
+  hymnBooks: HymnBook[];
   hymns: Hymn[];
   missionaryCompanionships: MissionaryCompanionship[];
   hostHouses: HostHouse[];

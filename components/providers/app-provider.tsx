@@ -23,6 +23,7 @@ import type {
   HostHouse,
   HybridField,
   Hymn,
+  HymnBook,
   LunchSchedule,
   Member,
   MemberNote,
@@ -138,6 +139,8 @@ type AppContextValue = {
   saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt"> & { id?: string }) => void;
   toggleUserStatus: (userId: string) => void;
   saveMinute: (input: SaveMinuteInput) => string;
+  saveHymnBook: (input: Omit<HymnBook, "id"> & { id?: string }) => void;
+  deleteHymnBook: (hymnBookId: string) => void;
   saveHymn: (input: Omit<Hymn, "id"> & { id?: string }) => void;
   deleteHymn: (hymnId: string) => void;
   saveCompanionship: (input: Omit<MissionaryCompanionship, "id"> & { id?: string }) => void;
@@ -443,9 +446,29 @@ function clearDeletedHymnReferences(db: Database, hymnIds: Set<string>, actorUse
   };
 }
 
+function describeRemoteError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const remoteError = error as Partial<Record<"message" | "code" | "details" | "hint", unknown>>;
+    const parts = [remoteError.message, remoteError.code, remoteError.details, remoteError.hint].filter(
+      (part): part is string => typeof part === "string" && Boolean(part.trim()),
+    );
+
+    if (parts.length) {
+      return parts.join(" ");
+    }
+  }
+
+  return "Erro desconhecido.";
+}
+
 function AppProviderContent({ children, initialDb, ready }: { children: ReactNode; initialDb: Database; ready: boolean }) {
   const [db, setDb] = useState<Database>(initialDb);
   const [remoteReady, setRemoteReady] = useState(false);
+  const loadErrorShownRef = useRef(false);
   const saveErrorShownRef = useRef(false);
 
   useEffect(() => {
@@ -462,7 +485,14 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         setRemoteReady(true);
       })
       .catch((error) => {
-        console.error("Failed to load Supabase data.", error);
+        const errorMessage = describeRemoteError(error);
+        console.error("Failed to load Supabase data.", errorMessage, error);
+        if (!loadErrorShownRef.current) {
+          toast.error("Nao foi possivel carregar os dados do Supabase.", {
+            description: errorMessage,
+          });
+          loadErrorShownRef.current = true;
+        }
         if (!cancelled) {
           setRemoteReady(true);
         }
@@ -1744,9 +1774,22 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
     function saveHymn(input: Omit<Hymn, "id"> & { id?: string }) {
       const existing = input.id ? db.hymns.find((hymn) => hymn.id === input.id) : undefined;
+      const duplicated = db.hymns.some(
+        (hymn) => hymn.id !== input.id && hymn.hymnBookId === input.hymnBookId && hymn.number.trim() === input.number.trim(),
+      );
+
+      if (duplicated) {
+        toast.error("Já existe um hino com esse número nesse hinário.");
+        return;
+      }
 
       setDb((currentDb) => {
         const id = input.id ?? uid("hymn");
+        const duplicatedInCurrentDb = currentDb.hymns.some(
+          (hymn) => hymn.id !== id && hymn.hymnBookId === input.hymnBookId && hymn.number.trim() === input.number.trim(),
+        );
+        if (duplicatedInCurrentDb) return currentDb;
+
         const currentExisting = currentDb.hymns.find((hymn) => hymn.id === id);
         const exists = Boolean(currentExisting);
         const actorUserId = getActorUserId(currentDb);
@@ -1754,6 +1797,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           {
             ...input,
             id,
+            hymnBookId: input.hymnBookId,
             number: input.number.trim(),
             title: input.title.trim(),
             active: input.active !== false,
@@ -1776,6 +1820,71 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
 
       toast.success(existing ? "Hino atualizado." : "Hino cadastrado.");
+    }
+
+    function saveHymnBook(input: Omit<HymnBook, "id"> & { id?: string }) {
+      const existing = input.id ? db.hymnBooks.find((hymnBook) => hymnBook.id === input.id) : undefined;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("hymn-book");
+        const currentExisting = currentDb.hymnBooks.find((hymnBook) => hymnBook.id === id);
+        const exists = Boolean(currentExisting);
+        const actorUserId = getActorUserId(currentDb);
+        const hymnBook = withRecordMetadata(
+          {
+            ...input,
+            id,
+            name: input.name.trim(),
+            emoji: input.emoji.trim(),
+          },
+          currentExisting,
+          actorUserId,
+        );
+        const nextDb = {
+          ...currentDb,
+          hymnBooks: exists ? currentDb.hymnBooks.map((current) => (current.id === id ? hymnBook : current)) : [hymnBook, ...currentDb.hymnBooks],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: exists ? "UPDATE_HYMN_BOOK" : "CREATE_HYMN_BOOK",
+          module: "sistema",
+          itemLabel: hymnBook.name,
+          summary: exists ? "Atualizou livro do hinário." : "Criou livro do hinário.",
+        });
+      });
+
+      toast.success(existing ? "Livro atualizado." : "Livro cadastrado.");
+    }
+
+    function deleteHymnBook(hymnBookId: string) {
+      const target = db.hymnBooks.find((hymnBook) => hymnBook.id === hymnBookId);
+      if (!target) return;
+
+      if (db.hymns.some((hymn) => hymn.hymnBookId === hymnBookId)) {
+        toast.error("Não é possível apagar um livro com hinos vinculados.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const hymnBook = currentDb.hymnBooks.find((item) => item.id === hymnBookId);
+        if (!hymnBook || currentDb.hymns.some((hymn) => hymn.hymnBookId === hymnBookId)) return currentDb;
+
+        const nextDb = {
+          ...currentDb,
+          hymnBooks: currentDb.hymnBooks.filter((item) => item.id !== hymnBookId),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: "DELETE_HYMN_BOOK",
+          module: "sistema",
+          itemLabel: hymnBook.name,
+          summary: "Deletou livro do hinário.",
+        });
+      });
+
+      toast.success("Livro deletado.");
     }
 
     function deleteHymn(hymnId: string) {
@@ -2277,6 +2386,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       saveUser,
       toggleUserStatus,
       saveMinute,
+      saveHymnBook,
+      deleteHymnBook,
       saveHymn,
       deleteHymn,
       saveCompanionship,

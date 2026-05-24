@@ -1,4 +1,5 @@
 import type { Database, MinuteFormData } from "@/types/domain";
+import { DEFAULT_HYMN_BOOK_IDS } from "@/lib/system-ids";
 
 export function emptyHybridField() {
   return {
@@ -46,6 +47,11 @@ export function createSeedDatabase(): Database {
     memberNotes: [],
     sacramentMinutes: [],
     minuteVersions: [],
+    hymnBooks: [
+      { id: DEFAULT_HYMN_BOOK_IDS.old, name: "Antigo", emoji: "📜" },
+      { id: DEFAULT_HYMN_BOOK_IDS.new, name: "Novo", emoji: "📘" },
+      { id: DEFAULT_HYMN_BOOK_IDS.primary, name: "Primária", emoji: "🌈" },
+    ],
     hymns: [],
     missionaryCompanionships: [],
     hostHouses: [],

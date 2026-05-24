@@ -162,13 +162,20 @@ export function MinuteEditor({
     [membersByWard],
   );
 
+  const hymnBooksById = useMemo(() => new Map(db.hymnBooks.map((hymnBook) => [hymnBook.id, hymnBook])), [db.hymnBooks]);
   const hymnOptions = useMemo(
     () =>
-      db.hymns.map((hymn) => ({
-        value: hymn.id,
-        label: `Hino ${hymn.number} - ${hymn.title}`,
-      })),
-    [db.hymns],
+      db.hymns.map((hymn) => {
+        const hymnBook = hymnBooksById.get(hymn.hymnBookId);
+        const bookLabel = hymnBook ? ` (${hymnBook.name})` : "";
+        const emoji = hymnBook?.emoji ? `${hymnBook.emoji} ` : "";
+
+        return {
+          value: hymn.id,
+          label: `${emoji}Hino ${hymn.number} - ${hymn.title}${bookLabel}`,
+        };
+      }),
+    [db.hymns, hymnBooksById],
   );
 
   useEffect(() => {

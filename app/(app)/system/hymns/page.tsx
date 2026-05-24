@@ -12,12 +12,14 @@ import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Hymn } from "@/types/domain";
 
 type HymnForm = Omit<Hymn, "id">;
 type DrawerMode = "create" | "view" | "edit";
 
 const emptyHymnForm: HymnForm = {
+  hymnBookId: "",
   number: "",
   title: "",
   active: true,
@@ -25,6 +27,7 @@ const emptyHymnForm: HymnForm = {
 
 function hymnToForm(hymn: Hymn): HymnForm {
   return {
+    hymnBookId: hymn.hymnBookId,
     number: hymn.number,
     title: hymn.title,
     active: hymn.active,
@@ -44,6 +47,8 @@ function hymnSortValue(number: string) {
 
 export default function SystemHymnsPage() {
   const { db, deleteHymn, saveHymn } = useAppContext();
+  const hymnBooksById = useMemo(() => new Map(db.hymnBooks.map((hymnBook) => [hymnBook.id, hymnBook])), [db.hymnBooks]);
+  const hymnBookOptions = useMemo(() => db.hymnBooks.slice().sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.hymnBooks]);
 
   const [search, setSearch] = useState("");
   const [selectedHymn, setSelectedHymn] = useState<Hymn | null>(null);
@@ -52,6 +57,12 @@ export default function SystemHymnsPage() {
   const [form, setForm] = useState<HymnForm>(emptyHymnForm);
 
   const isReadOnly = drawerMode === "view";
+  const defaultHymnBookId = hymnBookOptions[0]?.id ?? "";
+  const currentDuplicate = Boolean(
+    form.hymnBookId &&
+      form.number.trim() &&
+      db.hymns.some((hymn) => hymn.id !== selectedHymn?.id && hymn.hymnBookId === form.hymnBookId && hymn.number.trim() === form.number.trim()),
+  );
 
   const filteredHymns = useMemo(
     () =>
@@ -60,10 +71,17 @@ export default function SystemHymnsPage() {
           const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
           if (!normalizedSearch) return true;
 
-          return hymn.number.toLocaleLowerCase("pt-BR").includes(normalizedSearch) || hymn.title.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
+          const hymnBook = hymnBooksById.get(hymn.hymnBookId);
+
+          return [hymn.number, hymn.title, hymnBook?.name ?? "", hymnBook?.emoji ?? ""].some((field) =>
+            field.toLocaleLowerCase("pt-BR").includes(normalizedSearch),
+          );
         })
-        .sort((a, b) => hymnSortValue(a.number) - hymnSortValue(b.number) || a.title.localeCompare(b.title, "pt-BR")),
-    [db.hymns, search],
+        .sort((a, b) => {
+          const bookSort = (hymnBooksById.get(a.hymnBookId)?.name ?? "").localeCompare(hymnBooksById.get(b.hymnBookId)?.name ?? "", "pt-BR");
+          return bookSort || hymnSortValue(a.number) - hymnSortValue(b.number) || a.title.localeCompare(b.title, "pt-BR");
+        }),
+    [db.hymns, hymnBooksById, search],
   );
 
   function resetDrawer() {
@@ -80,7 +98,7 @@ export default function SystemHymnsPage() {
   function openCreateDrawer() {
     setSelectedHymn(null);
     setDrawerMode("create");
-    setForm(emptyHymnForm);
+    setForm({ ...emptyHymnForm, hymnBookId: defaultHymnBookId });
     setDrawerOpen(true);
   }
 
@@ -103,11 +121,12 @@ export default function SystemHymnsPage() {
   }
 
   function saveCurrentHymn() {
-    if (!form.number.trim() || !form.title.trim()) return;
+    if (!form.hymnBookId || !form.number.trim() || !form.title.trim() || currentDuplicate) return;
 
     saveHymn({
       id: selectedHymn?.id,
       ...form,
+      hymnBookId: form.hymnBookId,
       number: form.number.trim(),
       title: form.title.trim(),
       active: true,
@@ -124,6 +143,17 @@ export default function SystemHymnsPage() {
 
   const columns = useMemo<ColumnDef<Hymn>[]>(
     () => [
+      {
+        id: "hymnBookId",
+        meta: { label: "Hinário" },
+        header: "Hinário",
+        cell: ({ row }) => {
+          const hymnBook = hymnBooksById.get(row.original.hymnBookId);
+          return hymnBook ? `${hymnBook.emoji} ${hymnBook.name}` : "Sem hinário";
+        },
+        sortingFn: (rowA, rowB) =>
+          (hymnBooksById.get(rowA.original.hymnBookId)?.name ?? "").localeCompare(hymnBooksById.get(rowB.original.hymnBookId)?.name ?? "", "pt-BR"),
+      },
       {
         accessorKey: "number",
         meta: { label: "Número" },
@@ -157,7 +187,7 @@ export default function SystemHymnsPage() {
         ),
       },
     ],
-    [],
+    [hymnBooksById],
   );
 
   return (
@@ -179,7 +209,7 @@ export default function SystemHymnsPage() {
           data={filteredHymns}
           emptyMessage="Nenhum hino encontrado com os filtros atuais."
           enableColumnVisibility
-          toolbar={<Input className="md:max-w-lg" placeholder="Buscar por número ou título" value={search} onChange={(event) => setSearch(event.target.value)} />}
+          toolbar={<Input className="md:max-w-lg" placeholder="Buscar por número, título ou hinário" value={search} onChange={(event) => setSearch(event.target.value)} />}
         />
 
         <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerOpenChange}>
@@ -192,6 +222,21 @@ export default function SystemHymnsPage() {
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="section-grid">
                 <div>
+                  <Label>Hinário</Label>
+                  <Select disabled={isReadOnly} value={form.hymnBookId} onValueChange={(value) => setForm((current) => ({ ...current, hymnBookId: value }))}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Escolha o hinário" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {hymnBookOptions.map((hymnBook) => (
+                        <SelectItem key={hymnBook.id} value={hymnBook.id}>
+                          {hymnBook.emoji} {hymnBook.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <Label>Número</Label>
                   <Input disabled={isReadOnly} value={form.number} onChange={(event) => setForm((current) => ({ ...current, number: event.target.value }))} />
                 </div>
@@ -199,6 +244,7 @@ export default function SystemHymnsPage() {
                   <Label>Título</Label>
                   <Input disabled={isReadOnly} value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
                 </div>
+                {currentDuplicate ? <p className="text-sm text-destructive">Já existe um hino com esse número nesse hinário.</p> : null}
               </div>
             </div>
 
@@ -211,7 +257,7 @@ export default function SystemHymnsPage() {
                   </Button>
                   {isReadOnly && selectedHymn ? <Button onClick={() => openEditDrawer(selectedHymn)}>Editar hino</Button> : null}
                   {!isReadOnly ? (
-                    <Button disabled={!form.number.trim() || !form.title.trim()} onClick={saveCurrentHymn}>
+                    <Button disabled={!form.hymnBookId || !form.number.trim() || !form.title.trim() || currentDuplicate} onClick={saveCurrentHymn}>
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar hino"}
                     </Button>
                   ) : null}

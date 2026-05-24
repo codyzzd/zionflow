@@ -98,6 +98,7 @@ const secondaryItems: NavItem[] = [
     children: [
       { href: "/system/wards", label: "Alas", systemOnly: true },
       { href: "/system/stakes", label: "Estacas", systemOnly: true },
+      { href: "/system/hymn-books", label: "Livros de hinos", systemOnly: true },
       { href: "/system/hymns", label: "Hinos", systemOnly: true },
       { href: "/system/users", label: "Usuários", systemOnly: true },
     ],

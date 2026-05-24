@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { createSeedDatabase } from "@/lib/demo-data";
 import { normalizePermissionSet, permissionsFromLegacyRole } from "@/lib/access-control";
-import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
+import { DEFAULT_HYMN_BOOK_IDS, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
 import type {
   AppPreferences,
@@ -14,6 +14,7 @@ import type {
   MissionaryCompanionship,
   HostHouse,
   Hymn,
+  HymnBook,
   LunchSchedule,
   PatrolMember,
   PatrolSchedule,
@@ -40,6 +41,7 @@ const REMOTE_TABLES = [
   { key: "memberNotes", table: "member_notes" },
   { key: "sacramentMinutes", table: "sacrament_minutes" },
   { key: "minuteVersions", table: "minute_versions" },
+  { key: "hymnBooks", table: "hymn_books" },
   { key: "hymns", table: "hymns" },
   { key: "missionaryCompanionships", table: "missionary_companionships" },
   { key: "hostHouses", table: "host_houses" },
@@ -59,6 +61,9 @@ type RemoteRecord = {
   number?: string | null;
   title?: string | null;
   active?: boolean | null;
+  name?: string | null;
+  emoji?: string | null;
+  hymn_book_id?: string | null;
   [key: string]: unknown;
 };
 type RemoteCollectionKey = (typeof REMOTE_TABLES)[number]["key"];
@@ -249,10 +254,20 @@ function normalizeWard(ward: Ward): Ward {
 function normalizeHymn(hymn: Hymn): Hymn {
   return {
     id: hymn.id,
+    hymnBookId: String(hymn.hymnBookId ?? DEFAULT_HYMN_BOOK_IDS.new),
     number: String(hymn.number ?? ""),
     title: String(hymn.title ?? ""),
     active: hymn.active !== false,
     ...normalizeRecordMetadata(hymn),
+  };
+}
+
+function normalizeHymnBook(hymnBook: HymnBook): HymnBook {
+  return {
+    id: hymnBook.id,
+    name: String(hymnBook.name ?? ""),
+    emoji: String(hymnBook.emoji ?? ""),
+    ...normalizeRecordMetadata(hymnBook),
   };
 }
 
@@ -333,6 +348,7 @@ export function normalizeDatabase(db: Database): Database {
     memberNotes: legacyDb.memberNotes ?? [],
     sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSimpleRecord(minute)),
     minuteVersions: legacyDb.minuteVersions ?? [],
+    hymnBooks: (legacyDb.hymnBooks ?? createEmptyDatabase().hymnBooks).map((hymnBook) => normalizeHymnBook(hymnBook)),
     hymns: (legacyDb.hymns ?? []).map((hymn) => normalizeHymn(hymn)),
     missionaryCompanionships: (legacyDb.missionaryCompanionships ?? []).map((companionship) => normalizeCompanionship(companionship)),
     hostHouses: (legacyDb.hostHouses ?? []).map((hostHouse) => normalizeHostHouse(hostHouse)),
@@ -479,8 +495,16 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
       };
     case "minuteVersions":
       return { minute_id: optionalUuid(record.minuteId) };
+    case "hymnBooks":
+      return {
+        name: asOptionalString(record.name),
+        emoji: asOptionalString(record.emoji),
+        created_at: optionalText(record.createdAt),
+        updated_at: optionalText(record.updatedAt),
+      };
     case "hymns":
       return {
+        hymn_book_id: optionalUuid(record.hymnBookId),
         number: optionalText(record.number),
         title: optionalText(record.title),
         active: typeof record.active === "boolean" ? record.active : true,
@@ -562,15 +586,17 @@ function remoteSelectColumns(key: RemoteCollectionKey) {
         "created_at",
         "updated_at",
       ].join(",");
+    case "hymnBooks":
+      return "id,data,name,emoji,created_at,updated_at";
     case "hymns":
-      return "id,data,number,title,active";
+      return "id,data,hymn_book_id,number,title,active";
     default:
       return "id,data";
   }
 }
 
 function usesStructuredColumns(key: RemoteCollectionKey) {
-  return key === "stakes" || key === "wards" || key === "roles" || key === "users";
+  return key === "stakes" || key === "wards" || key === "roles" || key === "users" || key === "hymnBooks";
 }
 
 function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
@@ -627,20 +653,27 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         lastAccessAt: rowOptionalString(row, "last_access_at", "lastAccessAt"),
       };
     }
-    case "hymns":
-      if (!row.data || !Object.keys(row.data).length) {
-        return {
-          id: row.id,
-          number: row.number ?? "",
-          title: row.title ?? "",
-          active: row.active !== false,
-        };
-      }
+    case "hymnBooks": {
+      const data = asDataObject(row);
 
       return {
-        ...row.data,
+        id: row.id,
+        name: rowString(row, "name", "name"),
+        emoji: rowString(row, "emoji", "emoji"),
+        createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
+        updatedAt: asString(row.updated_at) ?? asString(data.updatedAt) ?? UNKNOWN_TIMESTAMP,
+      };
+    }
+    case "hymns":
+      return {
+        ...asDataObject(row),
+        id: row.id,
+        hymnBookId: rowOptionalString(row, "hymn_book_id", "hymnBookId") ?? DEFAULT_HYMN_BOOK_IDS.new,
+        number: rowString(row, "number", "number"),
+        title: rowString(row, "title", "title"),
         active: row.active !== false,
       };
+
     default:
       return row.data;
   }
