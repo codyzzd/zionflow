@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { HymnImportDialog } from "@/components/features/hymns/hymn-import-dialog";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
@@ -15,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Hymn } from "@/types/domain";
 
-type HymnForm = Omit<Hymn, "id">;
+type HymnForm = Omit<Hymn, "id" | "number"> & { number: number | "" };
 type DrawerMode = "create" | "view" | "edit";
 
 const emptyHymnForm: HymnForm = {
@@ -24,6 +25,11 @@ const emptyHymnForm: HymnForm = {
   title: "",
   active: true,
 };
+
+function normalizeHymnNumberInput(value: string): number | "" {
+  const digits = value.replace(/\D/g, "");
+  return digits ? Number(digits) : "";
+}
 
 function hymnToForm(hymn: Hymn): HymnForm {
   return {
@@ -40,9 +46,8 @@ function hymnToForm(hymn: Hymn): HymnForm {
   };
 }
 
-function hymnSortValue(number: string) {
-  const parsed = Number(number);
-  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+function hymnSortValue(number: number) {
+  return Number.isFinite(number) ? number : Number.MAX_SAFE_INTEGER;
 }
 
 export default function SystemHymnsPage() {
@@ -60,8 +65,8 @@ export default function SystemHymnsPage() {
   const defaultHymnBookId = hymnBookOptions[0]?.id ?? "";
   const currentDuplicate = Boolean(
     form.hymnBookId &&
-      form.number.trim() &&
-      db.hymns.some((hymn) => hymn.id !== selectedHymn?.id && hymn.hymnBookId === form.hymnBookId && hymn.number.trim() === form.number.trim()),
+      form.number !== "" &&
+      db.hymns.some((hymn) => hymn.id !== selectedHymn?.id && hymn.hymnBookId === form.hymnBookId && hymn.number === form.number),
   );
 
   const filteredHymns = useMemo(
@@ -73,7 +78,7 @@ export default function SystemHymnsPage() {
 
           const hymnBook = hymnBooksById.get(hymn.hymnBookId);
 
-          return [hymn.number, hymn.title, hymnBook?.name ?? "", hymnBook?.emoji ?? ""].some((field) =>
+          return [String(hymn.number), hymn.title, hymnBook?.name ?? "", hymnBook?.emoji ?? ""].some((field) =>
             field.toLocaleLowerCase("pt-BR").includes(normalizedSearch),
           );
         })
@@ -121,13 +126,13 @@ export default function SystemHymnsPage() {
   }
 
   function saveCurrentHymn() {
-    if (!form.hymnBookId || !form.number.trim() || !form.title.trim() || currentDuplicate) return;
+    if (!form.hymnBookId || form.number === "" || !form.title.trim() || currentDuplicate) return;
 
     saveHymn({
       id: selectedHymn?.id,
       ...form,
       hymnBookId: form.hymnBookId,
-      number: form.number.trim(),
+      number: form.number,
       title: form.title.trim(),
       active: true,
     });
@@ -198,9 +203,12 @@ export default function SystemHymnsPage() {
           title="Hinos"
           description="Catálogo de hinos usados nos campos das atas sacramentais."
           actions={
-            <Button onClick={openCreateDrawer} size="lg">
-              Novo hino
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <HymnImportDialog />
+              <Button onClick={openCreateDrawer} size="lg">
+                Novo hino
+              </Button>
+            </div>
           }
         />
 
@@ -238,7 +246,13 @@ export default function SystemHymnsPage() {
                 </div>
                 <div>
                   <Label>Número</Label>
-                  <Input disabled={isReadOnly} value={form.number} onChange={(event) => setForm((current) => ({ ...current, number: event.target.value }))} />
+                  <Input
+                    disabled={isReadOnly}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={form.number}
+                    onChange={(event) => setForm((current) => ({ ...current, number: normalizeHymnNumberInput(event.target.value) }))}
+                  />
                 </div>
                 <div>
                   <Label>Título</Label>
@@ -257,7 +271,7 @@ export default function SystemHymnsPage() {
                   </Button>
                   {isReadOnly && selectedHymn ? <Button onClick={() => openEditDrawer(selectedHymn)}>Editar hino</Button> : null}
                   {!isReadOnly ? (
-                    <Button disabled={!form.hymnBookId || !form.number.trim() || !form.title.trim() || currentDuplicate} onClick={saveCurrentHymn}>
+                    <Button disabled={!form.hymnBookId || form.number === "" || !form.title.trim() || currentDuplicate} onClick={saveCurrentHymn}>
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar hino"}
                     </Button>
                   ) : null}

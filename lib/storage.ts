@@ -58,7 +58,7 @@ const REMOTE_TABLES = [
 type RemoteRecord = {
   id: string;
   data?: Record<string, unknown> | null;
-  number?: string | null;
+  number?: number | string | null;
   title?: string | null;
   active?: boolean | null;
   name?: string | null;
@@ -67,7 +67,7 @@ type RemoteRecord = {
   [key: string]: unknown;
 };
 type RemoteCollectionKey = (typeof REMOTE_TABLES)[number]["key"];
-type RemoteColumnValue = boolean | string | string[] | unknown[] | Record<string, unknown> | null;
+type RemoteColumnValue = boolean | number | string | string[] | unknown[] | Record<string, unknown> | null;
 type RemoteColumns = Record<string, RemoteColumnValue>;
 
 type LegacyMetadata = Partial<RecordMetadata> & {
@@ -255,7 +255,7 @@ function normalizeHymn(hymn: Hymn): Hymn {
   return {
     id: hymn.id,
     hymnBookId: String(hymn.hymnBookId ?? DEFAULT_HYMN_BOOK_IDS.new),
-    number: String(hymn.number ?? ""),
+    number: normalizeNumber(hymn.number, 0),
     title: String(hymn.title ?? ""),
     active: hymn.active !== false,
     ...normalizeRecordMetadata(hymn),
@@ -269,6 +269,16 @@ function normalizeHymnBook(hymnBook: HymnBook): HymnBook {
     emoji: String(hymnBook.emoji ?? ""),
     ...normalizeRecordMetadata(hymnBook),
   };
+}
+
+function normalizeNumber(value: unknown, fallback: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.trunc(parsed);
 }
 
 function normalizeSeatCount(value: unknown) {
@@ -505,7 +515,7 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
     case "hymns":
       return {
         hymn_book_id: optionalUuid(record.hymnBookId),
-        number: optionalText(record.number),
+        number: normalizeNumber(record.number, 0),
         title: optionalText(record.title),
         active: typeof record.active === "boolean" ? record.active : true,
       };
@@ -669,7 +679,7 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         ...asDataObject(row),
         id: row.id,
         hymnBookId: rowOptionalString(row, "hymn_book_id", "hymnBookId") ?? DEFAULT_HYMN_BOOK_IDS.new,
-        number: rowString(row, "number", "number"),
+        number: normalizeNumber(row.number ?? asDataObject(row).number, 0),
         title: rowString(row, "title", "title"),
         active: row.active !== false,
       };

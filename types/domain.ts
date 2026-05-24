@@ -179,7 +179,7 @@ export interface SacramentMinute extends RecordMetadata {
 export interface Hymn extends RecordMetadata {
   id: string;
   hymnBookId: string;
-  number: string;
+  number: number;
   title: string;
   active: boolean;
 }

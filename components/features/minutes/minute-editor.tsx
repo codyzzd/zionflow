@@ -167,12 +167,12 @@ export function MinuteEditor({
     () =>
       db.hymns.map((hymn) => {
         const hymnBook = hymnBooksById.get(hymn.hymnBookId);
-        const bookLabel = hymnBook ? ` (${hymnBook.name})` : "";
-        const emoji = hymnBook?.emoji ? `${hymnBook.emoji} ` : "";
+        const emoji = hymnBook?.emoji?.trim() || "🎵";
 
         return {
           value: hymn.id,
-          label: `${emoji}Hino ${hymn.number} - ${hymn.title}${bookLabel}`,
+          label: `${emoji} ${hymn.number}. ${hymn.title}`,
+          searchValue: [hymn.number, hymn.title].join(" "),
         };
       }),
     [db.hymns, hymnBooksById],

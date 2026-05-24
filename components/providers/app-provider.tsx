@@ -51,6 +51,12 @@ type ImportMembersInput = {
   removeMissing: boolean;
 };
 
+type ImportHymnsInput = {
+  hymnBookId: string;
+  hymns: Array<{ number: number; title: string; active?: boolean }>;
+  removeMissing: boolean;
+};
+
 type CreateStakeOnboardingInput = {
   authUserId?: string;
   stakeName: string;
@@ -142,6 +148,7 @@ type AppContextValue = {
   saveHymnBook: (input: Omit<HymnBook, "id"> & { id?: string }) => void;
   deleteHymnBook: (hymnBookId: string) => void;
   saveHymn: (input: Omit<Hymn, "id"> & { id?: string }) => void;
+  importHymns: (input: ImportHymnsInput) => void;
   deleteHymn: (hymnId: string) => void;
   saveCompanionship: (input: Omit<MissionaryCompanionship, "id"> & { id?: string }) => void;
   saveHostHouse: (input: Omit<HostHouse, "id"> & { id?: string }) => void;
@@ -1775,7 +1782,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function saveHymn(input: Omit<Hymn, "id"> & { id?: string }) {
       const existing = input.id ? db.hymns.find((hymn) => hymn.id === input.id) : undefined;
       const duplicated = db.hymns.some(
-        (hymn) => hymn.id !== input.id && hymn.hymnBookId === input.hymnBookId && hymn.number.trim() === input.number.trim(),
+        (hymn) => hymn.id !== input.id && hymn.hymnBookId === input.hymnBookId && hymn.number === input.number,
       );
 
       if (duplicated) {
@@ -1786,7 +1793,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       setDb((currentDb) => {
         const id = input.id ?? uid("hymn");
         const duplicatedInCurrentDb = currentDb.hymns.some(
-          (hymn) => hymn.id !== id && hymn.hymnBookId === input.hymnBookId && hymn.number.trim() === input.number.trim(),
+          (hymn) => hymn.id !== id && hymn.hymnBookId === input.hymnBookId && hymn.number === input.number,
         );
         if (duplicatedInCurrentDb) return currentDb;
 
@@ -1798,7 +1805,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             ...input,
             id,
             hymnBookId: input.hymnBookId,
-            number: input.number.trim(),
+            number: input.number,
             title: input.title.trim(),
             active: input.active !== false,
           },
@@ -1820,6 +1827,103 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
 
       toast.success(existing ? "Hino atualizado." : "Hino cadastrado.");
+    }
+
+    function importHymns(input: ImportHymnsInput) {
+      const importedHymns = input.hymns.filter((hymn) => Number.isFinite(hymn.number) && hymn.number > 0 && hymn.title.trim());
+      if (!input.hymnBookId || !importedHymns.length) return;
+
+      setDb((currentDb) => {
+        const hymnBook = currentDb.hymnBooks.find((item) => item.id === input.hymnBookId);
+        if (!hymnBook) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const hymnsByNumber = new Map<number, Hymn>();
+        currentDb.hymns
+          .filter((hymn) => hymn.hymnBookId === input.hymnBookId)
+          .forEach((hymn) => {
+            hymnsByNumber.set(hymn.number, hymn);
+          });
+
+        const importByNumber = new Map<number, { number: number; title: string; active?: boolean }>();
+        importedHymns.forEach((hymn) => {
+          importByNumber.set(hymn.number, {
+            number: hymn.number,
+            title: hymn.title.trim(),
+            active: hymn.active !== false,
+          });
+        });
+
+        let createdCount = 0;
+        let updatedCount = 0;
+        const importedNumbers = new Set(importByNumber.keys());
+        const missingHymnIds = new Set(
+          currentDb.hymns
+            .filter((hymn) => hymn.hymnBookId === input.hymnBookId && !importedNumbers.has(hymn.number))
+            .map((hymn) => hymn.id),
+        );
+        const importedRecords = Array.from(importByNumber.values()).map((hymn) => {
+          const existing = hymnsByNumber.get(hymn.number);
+
+          if (existing) {
+            updatedCount += 1;
+            return {
+              ...withRecordMetadata<Hymn>(
+                {
+                  ...existing,
+                  hymnBookId: input.hymnBookId,
+                  number: hymn.number,
+                  title: hymn.title,
+                  active: hymn.active !== false,
+                },
+                existing,
+                actorUserId,
+              ),
+              archivedAt: undefined,
+              archivedByUserId: undefined,
+            } satisfies Hymn;
+          }
+
+          createdCount += 1;
+          return withRecordMetadata<Hymn>(
+            {
+              id: uid("hymn"),
+              hymnBookId: input.hymnBookId,
+              number: hymn.number,
+              title: hymn.title,
+              active: hymn.active !== false,
+            },
+            undefined,
+            actorUserId,
+          ) satisfies Hymn;
+        });
+
+        const importedRecordIds = new Set(importedRecords.map((hymn) => hymn.id));
+        const nextDb: Database = {
+          ...currentDb,
+          hymns: [
+            ...importedRecords,
+            ...currentDb.hymns.filter((hymn) => {
+              if (hymn.hymnBookId !== input.hymnBookId) return true;
+              if (importedRecordIds.has(hymn.id)) return false;
+
+              return !input.removeMissing || !missingHymnIds.has(hymn.id);
+            }),
+          ],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: "IMPORT_HYMNS",
+          module: "sistema",
+          itemLabel: `${importedRecords.length} hinos`,
+          summary: input.removeMissing
+            ? `Importou ${importedRecords.length} hinos em ${hymnBook.name}, atualizou ${updatedCount}, criou ${createdCount} e removeu ${missingHymnIds.size} fora do CSV.`
+            : `Importou ${importedRecords.length} hinos em ${hymnBook.name}, atualizou ${updatedCount} e criou ${createdCount}.`,
+        });
+      });
+
+      toast.success(`${importedHymns.length} ${importedHymns.length === 1 ? "hino importado" : "hinos importados"}.`);
     }
 
     function saveHymnBook(input: Omit<HymnBook, "id"> & { id?: string }) {
@@ -2389,6 +2493,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       saveHymnBook,
       deleteHymnBook,
       saveHymn,
+      importHymns,
       deleteHymn,
       saveCompanionship,
       saveHostHouse,

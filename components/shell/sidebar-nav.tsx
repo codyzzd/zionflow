@@ -4,6 +4,7 @@ import {
   Building2,
   BusFront,
   ChartColumnIncreasing,
+  ChevronRight,
   Cog,
   FileText,
   Handshake,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 
 import {
   SidebarContent,
@@ -37,6 +39,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -146,62 +149,110 @@ function NavItems({
   hasPermission: (permission: PermissionKey) => boolean;
   canViewSystem: boolean;
 }) {
+  const visibleItems = items
+    .map((item) => {
+      const visibleChildren =
+        item.children?.filter((child) => {
+          if (child.systemOnly && !canViewSystem) return false;
+          return child.alwaysVisible || !child.viewPermission || hasPermission(child.viewPermission);
+        }) ?? [];
+      const itemIsVisible =
+        (!item.systemOnly || canViewSystem) &&
+        (item.alwaysVisible || (item.viewPermission ? hasPermission(item.viewPermission) : visibleChildren.length > 0));
+
+      return itemIsVisible ? { item, visibleChildren } : null;
+    })
+    .filter((entry): entry is { item: NavItem; visibleChildren: NonNullable<NavItem["children"]> } => Boolean(entry));
+
   return (
     <SidebarMenu className="gap-0.5 px-2 group-data-[collapsible=icon]:px-1">
-      {items.map((item) => {
-        const visibleChildren =
-          item.children?.filter((child) => {
-            if (child.systemOnly && !canViewSystem) return false;
-            return child.alwaysVisible || !child.viewPermission || hasPermission(child.viewPermission);
-          }) ?? [];
-        const itemIsVisible =
-          (!item.systemOnly || canViewSystem) &&
-          (item.alwaysVisible || (item.viewPermission ? hasPermission(item.viewPermission) : visibleChildren.length > 0));
-        if (!itemIsVisible) return null;
-
-        const href = item.viewPermission && !hasPermission(item.viewPermission) && visibleChildren.length ? visibleChildren[0].href : item.href;
-        const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
-        const Icon = item.icon;
-
-        return (
-          <SidebarMenuItem key={item.href}>
-            <SidebarMenuButton
-              asChild
-              className={cn(
-                "h-8 rounded-md px-3 text-sm transition-colors duration-200",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-              )}
-              isActive={isActive}
-              tooltip={item.label}
-            >
-              <Link href={href} onClick={onNavigate}>
-                <Icon className="size-4" />
-                <span className="font-medium">{item.label}</span>
-              </Link>
-            </SidebarMenuButton>
-            {visibleChildren.length ? (
-              <SidebarMenuSub>
-                {visibleChildren.map((child) => {
-                  const isChildActive = child.href === item.href ? currentPath === child.href : currentPath === child.href || currentPath.startsWith(`${child.href}/`);
-
-                  return (
-                    <SidebarMenuSubItem key={child.href}>
-                      <SidebarMenuSubButton asChild className="text-sidebar-foreground/70" isActive={isChildActive}>
-                        <Link href={child.href} onClick={onNavigate}>
-                          <span>{child.label}</span>
-                        </Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  );
-                })}
-              </SidebarMenuSub>
-            ) : null}
-          </SidebarMenuItem>
-        );
-      })}
+      {visibleItems.map(({ item, visibleChildren }) => (
+        <NavMenuItem key={item.href} currentPath={currentPath} item={item} visibleChildren={visibleChildren} onNavigate={onNavigate} hasPermission={hasPermission} />
+      ))}
     </SidebarMenu>
+  );
+}
+
+function NavMenuItem({
+  currentPath,
+  item,
+  visibleChildren,
+  onNavigate,
+  hasPermission,
+}: {
+  currentPath: string;
+  item: NavItem;
+  visibleChildren: NonNullable<NavItem["children"]>;
+  onNavigate: () => void;
+  hasPermission: (permission: PermissionKey) => boolean;
+}) {
+  const href = item.viewPermission && !hasPermission(item.viewPermission) && visibleChildren.length ? visibleChildren[0].href : item.href;
+  const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
+  const Icon = item.icon;
+  const hasChildren = visibleChildren.length > 0;
+  const [isOpen, setIsOpen] = useState(isActive);
+
+  if (!hasChildren) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          asChild
+          className={cn(
+            "h-8 rounded-md px-3 text-sm transition-colors duration-200",
+            isActive
+              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+              : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          )}
+          isActive={isActive}
+          tooltip={item.label}
+        >
+          <Link href={href} onClick={onNavigate}>
+            <Icon className="size-4" />
+            <span className="font-medium">{item.label}</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
+  return (
+    <Collapsible asChild open={isOpen} onOpenChange={setIsOpen} className="group/collapsible">
+      <SidebarMenuItem>
+        <CollapsibleTrigger asChild>
+          <SidebarMenuButton
+            className={cn(
+              "h-8 rounded-md px-3 text-sm transition-colors duration-200",
+              isActive
+                ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            )}
+            isActive={isActive}
+            tooltip={item.label}
+          >
+            <Icon className="size-4" />
+            <span className="font-medium">{item.label}</span>
+            <ChevronRight className="ml-auto size-4 text-sidebar-foreground/55 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden" />
+          </SidebarMenuButton>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarMenuSub>
+            {visibleChildren.map((child) => {
+              const isChildActive = child.href === item.href ? currentPath === child.href : currentPath === child.href || currentPath.startsWith(`${child.href}/`);
+
+              return (
+                <SidebarMenuSubItem key={child.href}>
+                  <SidebarMenuSubButton asChild className="text-sidebar-foreground/70" isActive={isChildActive}>
+                    <Link href={child.href} onClick={onNavigate}>
+                      <span>{child.label}</span>
+                    </Link>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              );
+            })}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </SidebarMenuItem>
+    </Collapsible>
   );
 }
 

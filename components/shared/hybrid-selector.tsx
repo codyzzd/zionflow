@@ -13,6 +13,7 @@ import type { HybridField } from "@/types/domain";
 type Option = {
   value: string;
   label: string;
+  searchValue?: string;
 };
 
 export function HybridSelector({
@@ -45,7 +46,7 @@ export function HybridSelector({
     }
 
     return options
-      .filter((option) => option.label.toLocaleLowerCase("pt-BR").includes(normalizedQuery))
+      .filter((option) => (option.searchValue ?? option.label).toLocaleLowerCase("pt-BR").includes(normalizedQuery))
       .slice(0, 8);
   }, [options, trimmedQuery]);
 
@@ -116,7 +117,7 @@ export function HybridSelector({
                       <CommandItem
                         key={option.value}
                         data-checked={isSelected}
-                        value={`${option.label} ${option.value}`}
+                        value={`${option.searchValue ?? option.label} ${option.value}`}
                         onSelect={() => selectLinkedOption(option)}
                       >
                         <span className="flex-1">{option.label}</span>
