@@ -8,10 +8,20 @@ import { createClient } from "@/lib/supabase/client";
 
 export default function HomePage() {
   const router = useRouter();
-  const { ready, currentUser, currentWard, resolveAuthenticatedUser } = useAppContext();
+  const { ready, currentUser, currentWard, logout, resolveAuthenticatedUser } = useAppContext();
 
   useEffect(() => {
     if (!ready) return;
+    if (currentUser?.status === "inactive") {
+      createClient()
+        .auth.signOut()
+        .finally(() => {
+          logout();
+          router.replace("/login");
+        });
+      return;
+    }
+
     if (currentUser && currentWard) {
       router.replace("/dashboard");
       return;
@@ -42,6 +52,7 @@ export default function HomePage() {
 
         if (resolution.status === "inactive") {
           await supabase.auth.signOut();
+          logout();
           router.replace("/login");
           return;
         }
@@ -57,7 +68,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, currentWard, ready, resolveAuthenticatedUser, router]);
+  }, [currentUser, currentWard, logout, ready, resolveAuthenticatedUser, router]);
 
   return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando Zionwise...</div>;
 }

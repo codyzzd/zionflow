@@ -2,6 +2,8 @@ export type PermissionKey =
   | "dashboard.view"
   | "ward.view"
   | "ward.manage"
+  | "stake.view"
+  | "stake.manage"
   | "users.view"
   | "users.manage"
   | "roles.manage"

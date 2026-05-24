@@ -9,6 +9,7 @@ import {
   Handshake,
   HeartHandshake,
   KeyRound,
+  Landmark,
   LayoutDashboard,
   LogOut,
   MoreHorizontal,
@@ -84,6 +85,8 @@ const mainItems: NavItem[] = [
   },
   { href: "/patrol", label: "Ronda", icon: ShieldCheck, viewPermission: "patrol.view" },
   { href: "/lunch-calendar", label: "Calendário de almoços", icon: Utensils, viewPermission: "lunch.view" },
+  { href: "/ward", label: "Ala", icon: Building2, viewPermission: "ward.view" },
+  { href: "/stake", label: "Estaca", icon: Landmark, viewPermission: "stake.view" },
 ];
 
 const secondaryItems: NavItem[] = [
@@ -96,9 +99,9 @@ const secondaryItems: NavItem[] = [
       { href: "/system/wards", label: "Alas", systemOnly: true },
       { href: "/system/stakes", label: "Estacas", systemOnly: true },
       { href: "/system/hymns", label: "Hinos", systemOnly: true },
+      { href: "/system/users", label: "Usuários", systemOnly: true },
     ],
   },
-  { href: "/ward", label: "Ala", icon: Building2, viewPermission: "ward.view" },
   { href: "/users", label: "Usuários e acessos", icon: KeyRound, viewPermission: "users.view" },
   { href: "/settings", label: "Configurações", icon: Settings, alwaysVisible: true },
 ];

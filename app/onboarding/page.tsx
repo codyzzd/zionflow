@@ -55,7 +55,7 @@ function isSimilarWard(searchName: string, candidateName: string, searchCity?: s
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { completeWardOnboarding, currentUser, currentWard, db, joinExistingWard, ready, resolveAuthenticatedUser } = useAppContext();
+  const { completeWardOnboarding, currentUser, currentWard, db, joinExistingWard, logout, ready, resolveAuthenticatedUser } = useAppContext();
   const [authEmail, setAuthEmail] = useState("");
   const [authUserId, setAuthUserId] = useState("");
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -73,6 +73,16 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!ready) {
+      return;
+    }
+
+    if (currentUser?.status === "inactive") {
+      createClient()
+        .auth.signOut()
+        .finally(() => {
+          logout();
+          router.replace("/login");
+        });
       return;
     }
 
@@ -109,6 +119,7 @@ export default function OnboardingPage() {
 
         if (resolution.status === "inactive") {
           await supabase.auth.signOut();
+          logout();
           router.replace("/login");
           return;
         }
@@ -129,7 +140,7 @@ export default function OnboardingPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, currentWard, ready, resolveAuthenticatedUser, router]);
+  }, [currentUser, currentWard, logout, ready, resolveAuthenticatedUser, router]);
 
   const wardsWithStake = useMemo<SimilarWard[]>(() => {
     return db.wards.map((ward) => ({
@@ -214,11 +225,11 @@ export default function OnboardingPage() {
       const completed = joinExistingWard(effectiveAuthEmail, wardId, effectiveAuthUserId);
 
       if (!completed) {
-        toast.error("Não foi possível solicitar acesso à ala.");
+        toast.error("Não foi possível entrar na ala.");
         return;
       }
 
-      toast.success("Solicitação de acesso registrada.");
+      toast.success("Você entrou na ala.");
       router.push("/dashboard");
     } finally {
       setSubmitting(false);
@@ -233,7 +244,7 @@ export default function OnboardingPage() {
           <p className="mt-1 text-sm text-muted-foreground">{organizationLocation([stakeName, ward.city, ward.state, ward.country])}</p>
         </div>
         <Button type="button" variant="secondary" onClick={() => handleRequestWardAccess(ward.id)}>
-          Solicitar acesso
+          Entrar
         </Button>
       </div>
     );
@@ -316,7 +327,7 @@ export default function OnboardingPage() {
       <Card>
         <CardHeader>
           <CardTitle>Encontrar sua ala</CardTitle>
-          <CardDescription>Busque sua ala para solicitar acesso ou criar uma nova.</CardDescription>
+          <CardDescription>Busque sua ala para entrar ou criar uma nova.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">

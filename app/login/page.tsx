@@ -42,7 +42,7 @@ function getAuthErrorMessage(message: string) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { currentUser, currentWard, resolveAuthenticatedUser, ready } = useAppContext();
+  const { currentUser, currentWard, logout, resolveAuthenticatedUser, ready } = useAppContext();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,13 +53,23 @@ export default function LoginPage() {
   const canSubmit = normalizedEmail.includes("@") && password.length >= 6 && ready && !loading;
 
   useEffect(() => {
+    if (ready && currentUser?.status === "inactive") {
+      createClient()
+        .auth.signOut()
+        .finally(() => {
+          logout();
+          toast.error("Este usuário está inativo no sistema.");
+        });
+      return;
+    }
+
     if (ready && currentUser && currentWard) {
       router.replace("/dashboard");
     }
     if (ready && currentUser && !currentWard) {
       router.replace("/onboarding");
     }
-  }, [currentUser, currentWard, ready, router]);
+  }, [currentUser, currentWard, logout, ready, router]);
 
   useEffect(() => {
     if (!ready || currentUser) {
@@ -84,6 +94,7 @@ export default function LoginPage() {
 
       if (resolution.status === "inactive") {
         await supabase.auth.signOut();
+        logout();
         return;
       }
 
@@ -102,7 +113,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, ready, resolveAuthenticatedUser, router]);
+  }, [currentUser, logout, ready, resolveAuthenticatedUser, router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -160,6 +171,7 @@ export default function LoginPage() {
 
       if (resolution.status === "inactive") {
         await supabase.auth.signOut();
+        logout();
         toast.error("Este usuário está inativo no sistema.");
         return;
       }

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Archive, RotateCcw, Trash2 } from "lucide-react";
+import { Archive, ChevronsUpDown, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -9,20 +9,23 @@ import { PageHeader } from "@/components/shared/page-header";
 import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { Ward } from "@/types/domain";
+import { cn } from "@/lib/utils";
+import type { Stake, Ward } from "@/types/domain";
 
 type WardForm = Omit<Ward, "id">;
 type DrawerMode = "create" | "view" | "edit";
 type StatusFilter = "active" | "archived";
 
-function createEmptyForm(stakeId = ""): WardForm {
+function createEmptyForm(): WardForm {
   return {
-    stakeId,
+    stakeId: "",
     name: "",
     city: "",
     state: "",
@@ -46,9 +49,87 @@ function wardToForm(ward: Ward): WardForm {
   };
 }
 
+function StakeCombobox({
+  disabled,
+  onChange,
+  options,
+  value,
+}: {
+  disabled: boolean;
+  onChange: (value: string) => void;
+  options: Stake[];
+  value: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selectedStake = useMemo(() => options.find((stake) => stake.id === value), [options, value]);
+  const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
+  const filteredOptions = useMemo(() => {
+    if (!normalizedQuery) return options.slice(0, 8);
+
+    return options
+      .filter((stake) =>
+        [stake.name, stake.city, stake.state, stake.country].some((field) => field.toLocaleLowerCase("pt-BR").includes(normalizedQuery)),
+      )
+      .slice(0, 8);
+  }, [normalizedQuery, options]);
+
+  const displayValue = selectedStake?.name ?? "";
+
+  function selectStake(stakeId: string) {
+    onChange(stakeId);
+    setIsOpen(false);
+  }
+
+  return (
+    <Popover
+      open={isOpen}
+      onOpenChange={(open) => {
+        setIsOpen(open);
+        if (open) {
+          setQuery(displayValue);
+        }
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button className="w-full justify-between" disabled={disabled} variant="outline">
+          <span className={cn("truncate", !displayValue && "text-muted-foreground")}>{displayValue || "Sem estaca vinculada"}</span>
+          <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-(--anchor-width) p-0">
+        <Command shouldFilter={false}>
+          <CommandInput placeholder="Buscar estaca" value={query} onValueChange={setQuery} />
+          <CommandList>
+            <CommandGroup heading="Vínculo">
+              <CommandItem data-checked={!value} value="sem-estaca" onSelect={() => selectStake("")}>
+                <span className="flex-1">Sem estaca vinculada</span>
+              </CommandItem>
+            </CommandGroup>
+            {filteredOptions.length ? (
+              <CommandGroup heading="Estacas">
+                {filteredOptions.map((stake) => (
+                  <CommandItem key={stake.id} data-checked={value === stake.id} value={`${stake.name} ${stake.city} ${stake.state}`} onSelect={() => selectStake(stake.id)}>
+                    <span className="flex-1 truncate">{stake.name}</span>
+                    {[stake.city, stake.state].filter(Boolean).length ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">{[stake.city, stake.state].filter(Boolean).join(" / ")}</span>
+                    ) : null}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : normalizedQuery ? (
+              <CommandEmpty>Nenhuma estaca encontrada.</CommandEmpty>
+            ) : null}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function SystemWardsPage() {
   const { archiveWard, db, deleteWard, saveSystemWard, unarchiveWard } = useAppContext();
-  const activeStakes = useMemo(() => db.stakes.filter((stake) => !stake.archivedAt).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.stakes]);
+  const stakeOptions = useMemo(() => db.stakes.filter((stake) => !stake.archivedAt).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.stakes]);
   const stakesById = useMemo(() => new Map(db.stakes.map((stake) => [stake.id, stake])), [db.stakes]);
 
   const [search, setSearch] = useState("");
@@ -56,7 +137,7 @@ export default function SystemWardsPage() {
   const [selectedWard, setSelectedWard] = useState<Ward | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [form, setForm] = useState<WardForm>(() => createEmptyForm(activeStakes[0]?.id));
+  const [form, setForm] = useState<WardForm>(() => createEmptyForm());
 
   const isReadOnly = drawerMode === "view";
   const selectedWardIsArchived = Boolean(selectedWard?.archivedAt);
@@ -84,7 +165,7 @@ export default function SystemWardsPage() {
   function resetDrawer() {
     setSelectedWard(null);
     setDrawerMode("create");
-    setForm(createEmptyForm(activeStakes[0]?.id));
+    setForm(createEmptyForm());
   }
 
   function handleDrawerOpenChange(open: boolean) {
@@ -95,7 +176,7 @@ export default function SystemWardsPage() {
   function openCreateDrawer() {
     setSelectedWard(null);
     setDrawerMode("create");
-    setForm(createEmptyForm(activeStakes[0]?.id));
+    setForm(createEmptyForm());
     setDrawerOpen(true);
   }
 
@@ -118,7 +199,7 @@ export default function SystemWardsPage() {
   }
 
   function saveCurrentWard() {
-    if (!form.name.trim() || !form.stakeId) return;
+    if (!form.name.trim()) return;
 
     saveSystemWard({
       id: selectedWard?.id,
@@ -188,7 +269,7 @@ export default function SystemWardsPage() {
           title="Alas"
           description="Cadastro administrativo de alas do sistema."
           actions={
-            <Button disabled={!activeStakes.length} onClick={openCreateDrawer} size="lg">
+            <Button onClick={openCreateDrawer} size="lg">
               Nova ala
             </Button>
           }
@@ -235,18 +316,12 @@ export default function SystemWardsPage() {
                 </div>
                 <div>
                   <Label>Estaca</Label>
-                  <Select disabled={isReadOnly} value={form.stakeId} onValueChange={(value) => setForm((current) => ({ ...current, stakeId: value }))}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione a estaca" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeStakes.map((stake) => (
-                        <SelectItem key={stake.id} value={stake.id}>
-                          {stake.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <StakeCombobox
+                    disabled={isReadOnly}
+                    options={stakeOptions}
+                    value={form.stakeId}
+                    onChange={(value) => setForm((current) => ({ ...current, stakeId: value }))}
+                  />
                 </div>
                 <div>
                   <Label>Cidade</Label>
@@ -292,7 +367,7 @@ export default function SystemWardsPage() {
                   </Button>
                   {isReadOnly && selectedWard ? <Button onClick={() => openEditDrawer(selectedWard)}>Editar ala</Button> : null}
                   {!isReadOnly ? (
-                    <Button disabled={!form.name.trim() || !form.stakeId} onClick={saveCurrentWard}>
+                    <Button disabled={!form.name.trim()} onClick={saveCurrentWard}>
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar ala"}
                     </Button>
                   ) : null}

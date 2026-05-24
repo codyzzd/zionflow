@@ -73,6 +73,11 @@ type SaveCaravanRegistrationInput = Omit<CaravanRegistration, "id" | "createdAt"
   id?: string;
 };
 
+type SaveStakeInput = Omit<Stake, "id"> & {
+  id?: string;
+  wardIds?: string[];
+};
+
 type ResolveAuthenticatedUserInput = {
   authUserId?: string;
   email: string;
@@ -117,7 +122,7 @@ type AppContextValue = {
   resetDemoData: () => void;
   changeCurrentUserRole: (roleId: string) => void;
   hasPermission: (permission: PermissionKey) => boolean;
-  saveStake: (input: Omit<Stake, "id"> & { id?: string }) => void;
+  saveStake: (input: SaveStakeInput) => void;
   archiveStake: (stakeId: string) => void;
   unarchiveStake: (stakeId: string) => void;
   deleteStake: (stakeId: string) => void;
@@ -159,6 +164,8 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "dashboard.view",
   "ward.view",
   "ward.manage",
+  "stake.view",
+  "stake.manage",
   "users.view",
   "users.manage",
   "roles.manage",
@@ -186,7 +193,7 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "exports.run",
   "audit.view",
 ];
-const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "ward.view", "members.view", "minutes.view", "missionary.view", "caravan.view", "patrol.view"];
+const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "ward.view", "stake.view", "missionary.view", "lunch.view", "patrol.view"];
 
 let hydrationReady = false;
 
@@ -293,8 +300,10 @@ function upsertRole(roles: Role[], role: Role) {
 }
 
 function buildOnboardingUser(email: string, wardId: string, role: Role, timestamp: string, authUserId?: string): User {
+  const id = uid("user");
+
   return {
-    id: uid("user"),
+    id,
     authUserId,
     wardId,
     name: formatNameFromEmail(email),
@@ -305,9 +314,9 @@ function buildOnboardingUser(email: string, wardId: string, role: Role, timestam
     permissionOverrides: normalizePermissionSet(role.permissions),
     permissionsConfigured: true,
     createdAt: timestamp,
-    createdByUserId: undefined,
+    createdByUserId: id,
     updatedAt: timestamp,
-    updatedByUserId: undefined,
+    updatedByUserId: id,
     lastAccessAt: timestamp,
   };
 }
@@ -626,22 +635,32 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             const timestamp = nowIso();
             const role = createOnboardingRole("stake-admin");
             const viewerRole = createOnboardingRole("viewer");
-            const stake: Stake = {
-              id: uid("stake"),
-              name: stakeName,
-              city,
-              state,
-              country,
-            };
+            const stake: Stake = withRecordMetadata<Stake>(
+              {
+                id: uid("stake"),
+                name: stakeName,
+                city,
+                state,
+                country,
+              },
+              undefined,
+              currentExistingUser.id,
+              timestamp,
+            );
             const referenceWard: Ward | undefined = referenceWardName
-              ? {
-                  id: uid("ward"),
-                  stakeId: stake.id,
-                  name: referenceWardName,
-                  city,
-                  state,
-                  country,
-                }
+              ? withRecordMetadata<Ward>(
+                  {
+                    id: uid("ward"),
+                    stakeId: stake.id,
+                    name: referenceWardName,
+                    city,
+                    state,
+                    country,
+                  },
+                  undefined,
+                  currentExistingUser.id,
+                  timestamp,
+                )
               : undefined;
             const updatedUser = withRecordMetadata(
               {
@@ -708,24 +727,36 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const timestamp = nowIso();
         const role = createOnboardingRole("stake-admin");
         const viewerRole = createOnboardingRole("viewer");
-        const stake: Stake = {
-          id: uid("stake"),
-          name: stakeName,
-          city,
-          state,
-          country,
-        };
-        const referenceWard: Ward | undefined = referenceWardName
-          ? {
-              id: uid("ward"),
-              stakeId: stake.id,
-              name: referenceWardName,
-              city,
-              state,
-              country,
-            }
+        const stakeId = uid("stake");
+        const referenceWardId = referenceWardName ? uid("ward") : undefined;
+        const user = buildOnboardingUser(normalizedEmail, referenceWardId ?? "", role, timestamp, input.authUserId);
+        const stake: Stake = withRecordMetadata<Stake>(
+          {
+            id: stakeId,
+            name: stakeName,
+            city,
+            state,
+            country,
+          },
+          undefined,
+          user.id,
+          timestamp,
+        );
+        const referenceWard: Ward | undefined = referenceWardName && referenceWardId
+          ? withRecordMetadata<Ward>(
+              {
+                id: referenceWardId,
+                stakeId: stake.id,
+                name: referenceWardName,
+                city,
+                state,
+                country,
+              },
+              undefined,
+              user.id,
+              timestamp,
+            )
           : undefined;
-        const user = buildOnboardingUser(normalizedEmail, referenceWard?.id ?? "", role, timestamp, input.authUserId);
 
         const nextDb = {
           ...currentDb,
@@ -773,7 +804,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const city = input.city?.trim() ?? "";
       const country = input.country?.trim() ?? "";
       const stakeName = input.stakeName?.trim() ?? "";
-      const stakeId = input.stakeId?.trim() ?? "";
+      const inputStakeId = input.stakeId?.trim() ?? "";
 
       if (!normalizedEmail || !wardName || !city || !country || existingUser?.status === "inactive") {
         return false;
@@ -792,26 +823,36 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             const role = createOnboardingRole("ward-admin");
             const viewerRole = createOnboardingRole("viewer");
             const existingStake =
-              currentDb.stakes.find((stake) => stake.id === stakeId) ??
+              currentDb.stakes.find((stake) => stake.id === inputStakeId) ??
               (stakeName ? currentDb.stakes.find((stake) => normalizeOrganizationName(stake.name) === normalizeOrganizationName(stakeName)) : undefined);
             const stake: Stake | undefined =
               stakeName && !existingStake
-                ? {
-                    id: uid("stake"),
-                    name: stakeName,
-                    city,
-                    state: input.state?.trim() ?? "",
-                    country,
-                  }
+                ? withRecordMetadata<Stake>(
+                    {
+                      id: uid("stake"),
+                      name: stakeName,
+                      city,
+                      state: input.state?.trim() ?? "",
+                      country,
+                    },
+                    undefined,
+                    currentExistingUser.id,
+                    timestamp,
+                  )
                 : undefined;
-            const ward: Ward = {
-              id: uid("ward"),
-              stakeId: existingStake?.id ?? stake?.id ?? "",
-              name: wardName,
-              city,
-              state: input.state?.trim() ?? "",
-              country,
-            };
+            const ward: Ward = withRecordMetadata<Ward>(
+              {
+                id: uid("ward"),
+                stakeId: existingStake?.id ?? stake?.id ?? "",
+                name: wardName,
+                city,
+                state: input.state?.trim() ?? "",
+                country,
+              },
+              undefined,
+              currentExistingUser.id,
+              timestamp,
+            );
             const updatedUser = withRecordMetadata(
               {
                 ...currentExistingUser,
@@ -878,27 +919,39 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const role = createOnboardingRole("ward-admin");
         const viewerRole = createOnboardingRole("viewer");
         const existingStake =
-          currentDb.stakes.find((stake) => stake.id === stakeId) ??
+          currentDb.stakes.find((stake) => stake.id === inputStakeId) ??
           (stakeName ? currentDb.stakes.find((stake) => normalizeOrganizationName(stake.name) === normalizeOrganizationName(stakeName)) : undefined);
+        const newStakeId = stakeName && !existingStake ? uid("stake") : undefined;
+        const wardId = uid("ward");
+        const user = buildOnboardingUser(normalizedEmail, wardId, role, timestamp, input.authUserId);
         const stake: Stake | undefined =
-          stakeName && !existingStake
-            ? {
-                id: uid("stake"),
-                name: stakeName,
-                city,
-                state: input.state?.trim() ?? "",
-                country,
-              }
+          stakeName && !existingStake && newStakeId
+            ? withRecordMetadata<Stake>(
+                {
+                  id: newStakeId,
+                  name: stakeName,
+                  city,
+                  state: input.state?.trim() ?? "",
+                  country,
+                },
+                undefined,
+                user.id,
+                timestamp,
+              )
             : undefined;
-        const ward: Ward = {
-          id: uid("ward"),
-          stakeId: existingStake?.id ?? stake?.id ?? "",
-          name: wardName,
-          city,
-          state: input.state?.trim() ?? "",
-          country,
-        };
-        const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, input.authUserId);
+        const ward: Ward = withRecordMetadata<Ward>(
+          {
+            id: wardId,
+            stakeId: existingStake?.id ?? stake?.id ?? "",
+            name: wardName,
+            city,
+            state: input.state?.trim() ?? "",
+            country,
+          },
+          undefined,
+          user.id,
+          timestamp,
+        );
 
         const nextDb = {
           ...currentDb,
@@ -1109,7 +1162,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       return currentUserPermissions.includes(permission);
     }
 
-    function saveStake(input: Omit<Stake, "id"> & { id?: string }) {
+    function saveStake(input: SaveStakeInput) {
       const existing = input.id ? db.stakes.find((stake) => stake.id === input.id) : undefined;
 
       setDb((currentDb) => {
@@ -1117,15 +1170,17 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const currentExisting = currentDb.stakes.find((stake) => stake.id === id);
         const exists = Boolean(currentExisting);
         const actorUserId = getActorUserId(currentDb);
+        const { wardIds, ...stakeInput } = input;
+        const wardIdsToAttach = new Set(wardIds ?? []);
         const stake = withRecordMetadata(
           {
-            ...input,
+            ...stakeInput,
             id,
-            name: input.name.trim(),
-            city: input.city.trim(),
-            state: input.state.trim(),
-            country: input.country.trim() || "Brasil",
-            archivedAt: input.archivedAt ?? currentExisting?.archivedAt,
+            name: stakeInput.name.trim(),
+            city: stakeInput.city.trim(),
+            state: stakeInput.state.trim(),
+            country: stakeInput.country.trim() || "Brasil",
+            archivedAt: stakeInput.archivedAt ?? currentExisting?.archivedAt,
           },
           currentExisting,
           actorUserId,
@@ -1133,6 +1188,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const nextDb = {
           ...currentDb,
           stakes: exists ? currentDb.stakes.map((current) => (current.id === id ? stake : current)) : [stake, ...currentDb.stakes],
+          wards: wardIdsToAttach.size
+            ? currentDb.wards.map((ward) => (wardIdsToAttach.has(ward.id) ? withRecordMetadata({ ...ward, stakeId: id }, ward, actorUserId) : ward))
+            : currentDb.wards,
         };
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
@@ -1140,7 +1198,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           action: exists ? "UPDATE_STAKE" : "CREATE_STAKE",
           module: "sistema",
           itemLabel: stake.name,
-          summary: exists ? "Atualizou dados da estaca." : "Criou estaca pelo sistema.",
+          summary: exists
+            ? `Atualizou dados da estaca e vinculou ${wardIdsToAttach.size} alas.`
+            : `Criou estaca pelo sistema e vinculou ${wardIdsToAttach.size} alas.`,
         });
       });
 

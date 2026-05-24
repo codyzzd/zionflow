@@ -9,7 +9,10 @@ import { PageHeader } from "@/components/shared/page-header";
 import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,6 +47,8 @@ function stakeToForm(stake: Stake): StakeForm {
 
 export default function SystemStakesPage() {
   const { archiveStake, db, deleteStake, saveStake, unarchiveStake } = useAppContext();
+  const stakesById = useMemo(() => new Map(db.stakes.map((stake) => [stake.id, stake])), [db.stakes]);
+  const wardOptions = useMemo(() => db.wards.filter((ward) => !ward.archivedAt).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.wards]);
   const wardCountByStake = useMemo(() => {
     const counts = new Map<string, number>();
     db.wards.forEach((ward) => counts.set(ward.stakeId, (counts.get(ward.stakeId) ?? 0) + 1));
@@ -55,11 +60,29 @@ export default function SystemStakesPage() {
   const [selectedStake, setSelectedStake] = useState<Stake | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [form, setForm] = useState<StakeForm>(emptyStakeForm);
+  const [selectedWardIds, setSelectedWardIds] = useState<string[]>([]);
+  const [wardSearch, setWardSearch] = useState("");
 
   const isReadOnly = drawerMode === "view";
   const selectedStakeIsArchived = Boolean(selectedStake?.archivedAt);
   const selectedStakeWardCount = selectedStake ? wardCountByStake.get(selectedStake.id) ?? 0 : 0;
+  const selectedWardIdSet = useMemo(() => new Set(selectedWardIds), [selectedWardIds]);
+  const selectedWards = useMemo(() => wardOptions.filter((ward) => selectedWardIdSet.has(ward.id)), [selectedWardIdSet, wardOptions]);
+  const filteredWardOptions = useMemo(() => {
+    const normalizedSearch = wardSearch.trim().toLocaleLowerCase("pt-BR");
+    if (!normalizedSearch) return wardOptions.slice(0, 8);
+
+    return wardOptions
+      .filter((ward) => {
+        const currentStakeName = stakesById.get(ward.stakeId)?.name ?? "";
+        return [ward.name, ward.city, ward.state, ward.country, currentStakeName].some((field) =>
+          field.toLocaleLowerCase("pt-BR").includes(normalizedSearch),
+        );
+      })
+      .slice(0, 8);
+  }, [stakesById, wardOptions, wardSearch]);
 
   const filteredStakes = useMemo(
     () =>
@@ -83,6 +106,9 @@ export default function SystemStakesPage() {
     setSelectedStake(null);
     setDrawerMode("create");
     setForm(emptyStakeForm);
+    setSelectedWardIds([]);
+    setWardSearch("");
+    setConfirmOpen(false);
   }
 
   function handleDrawerOpenChange(open: boolean) {
@@ -94,6 +120,8 @@ export default function SystemStakesPage() {
     setSelectedStake(null);
     setDrawerMode("create");
     setForm(emptyStakeForm);
+    setSelectedWardIds([]);
+    setWardSearch("");
     setDrawerOpen(true);
   }
 
@@ -108,11 +136,30 @@ export default function SystemStakesPage() {
     setSelectedStake(stake);
     setDrawerMode("edit");
     setForm(stakeToForm(stake));
+    setSelectedWardIds(db.wards.filter((ward) => ward.stakeId === stake.id && !ward.archivedAt).map((ward) => ward.id));
+    setWardSearch("");
     setDrawerOpen(true);
   }
 
   function closeDrawer() {
     handleDrawerOpenChange(false);
+  }
+
+  function openSaveConfirmation() {
+    if (!form.name.trim()) return;
+    setConfirmOpen(true);
+  }
+
+  function getPreviousStakeLabel(stakeId: string) {
+    const previousStake = stakesById.get(stakeId);
+    if (!previousStake) return "Sem atrelamento";
+
+    const location = [previousStake.city, previousStake.state].filter(Boolean).join(" / ");
+    return location ? `${previousStake.name} (${location})` : previousStake.name;
+  }
+
+  function toggleWardSelection(wardId: string) {
+    setSelectedWardIds((current) => (current.includes(wardId) ? current.filter((id) => id !== wardId) : [...current, wardId]));
   }
 
   function saveCurrentStake() {
@@ -125,7 +172,9 @@ export default function SystemStakesPage() {
       city: form.city.trim(),
       state: form.state.trim(),
       country: form.country.trim() || "Brasil",
+      wardIds: selectedWardIds,
     });
+    setConfirmOpen(false);
     closeDrawer();
   }
 
@@ -248,6 +297,58 @@ export default function SystemStakesPage() {
                     <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm">{selectedStakeWardCount}</div>
                   </div>
                 ) : null}
+                {!isReadOnly ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Alas a atrelar</Label>
+                    <Command className="rounded-lg border" shouldFilter={false}>
+                      <CommandInput placeholder="Buscar ala por nome, cidade, estado ou estaca atual" value={wardSearch} onValueChange={setWardSearch} />
+                      <CommandList className="max-h-52">
+                        {filteredWardOptions.length ? (
+                          <CommandGroup heading="Alas">
+                            {filteredWardOptions.map((ward) => {
+                              const isSelected = selectedWardIdSet.has(ward.id);
+                              const previousStakeLabel = getPreviousStakeLabel(ward.stakeId);
+
+                              return (
+                                <CommandItem key={ward.id} data-checked={isSelected} value={`${ward.name} ${previousStakeLabel}`} onSelect={() => toggleWardSelection(ward.id)}>
+                                  <Checkbox checked={isSelected} className="pointer-events-none" />
+                                  <span className="flex-1 truncate">{ward.name}</span>
+                                  <span className="shrink-0 text-xs text-muted-foreground">{previousStakeLabel}</span>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        ) : (
+                          <CommandEmpty>Nenhuma ala encontrada.</CommandEmpty>
+                        )}
+                      </CommandList>
+                    </Command>
+                    <div className="flex min-h-7 flex-wrap gap-2">
+                      {selectedWards.length ? (
+                        selectedWards.map((ward) => (
+                          <Badge key={ward.id} variant="secondary">
+                            {ward.name}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Nenhuma ala selecionada para atrelar.</span>
+                      )}
+                    </div>
+                  </div>
+                ) : selectedStakeWardCount ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Alas vinculadas</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {wardOptions
+                        .filter((ward) => ward.stakeId === selectedStake?.id)
+                        .map((ward) => (
+                          <Badge key={ward.id} variant="secondary">
+                            {ward.name}
+                          </Badge>
+                        ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -280,7 +381,7 @@ export default function SystemStakesPage() {
                   </Button>
                   {isReadOnly && selectedStake ? <Button onClick={() => openEditDrawer(selectedStake)}>Editar estaca</Button> : null}
                   {!isReadOnly ? (
-                    <Button disabled={!form.name.trim()} onClick={saveCurrentStake}>
+                    <Button disabled={!form.name.trim()} onClick={openSaveConfirmation}>
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar estaca"}
                     </Button>
                   ) : null}
@@ -289,6 +390,47 @@ export default function SystemStakesPage() {
             </DrawerFooter>
           </DrawerContent>
         </Drawer>
+
+        <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{drawerMode === "edit" ? "Confirmar alteração da estaca" : "Confirmar criação da estaca"}</DialogTitle>
+              <DialogDescription>
+                Revise as alas que serão atreladas à estaca {form.name.trim() || "sem nome"} antes de confirmar.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="max-h-[50vh] overflow-y-auto rounded-lg border">
+              {selectedWards.length ? (
+                <div className="divide-y">
+                  {selectedWards.map((ward) => (
+                    <div className="grid gap-1 p-3 sm:grid-cols-[1fr_1fr] sm:items-center" key={ward.id}>
+                      <div>
+                        <p className="font-medium">{ward.name}</p>
+                        <p className="text-xs text-muted-foreground">{[ward.city, ward.state, ward.country].filter(Boolean).join(" / ")}</p>
+                      </div>
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Atrelamento anterior: </span>
+                        <span className="font-medium">{getPreviousStakeLabel(ward.stakeId)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 text-sm text-muted-foreground">Nenhuma ala será atrelada nesta ação.</div>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button onClick={() => setConfirmOpen(false)} variant="ghost">
+                Voltar
+              </Button>
+              <Button disabled={!form.name.trim()} onClick={saveCurrentStake}>
+                Confirmar e {drawerMode === "edit" ? "salvar" : "criar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </SystemAdminGuard>
   );

@@ -19,6 +19,16 @@ export function AppShell({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (currentUser?.status === "inactive") {
+      createClient()
+        .auth.signOut()
+        .finally(() => {
+          logout();
+          router.replace("/login");
+        });
+      return;
+    }
+
     if (currentUser && currentWard) {
       return;
     }
@@ -65,7 +75,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, currentWard, ready, resolveAuthenticatedUser, router]);
+  }, [currentUser, currentWard, logout, ready, resolveAuthenticatedUser, router]);
 
   if (!ready || !currentUser || !currentWard) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando contexto da ala...</div>;
