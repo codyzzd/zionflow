@@ -30,6 +30,7 @@ function createEmptyForm(): WardForm {
     city: "",
     state: "",
     country: "Brasil",
+    lunchPDayWeekday: "monday",
   };
 }
 
@@ -40,6 +41,7 @@ function wardToForm(ward: Ward): WardForm {
     city: ward.city,
     state: ward.state,
     country: ward.country,
+    lunchPDayWeekday: ward.lunchPDayWeekday,
     createdAt: ward.createdAt,
     createdByUserId: ward.createdByUserId,
     updatedAt: ward.updatedAt,

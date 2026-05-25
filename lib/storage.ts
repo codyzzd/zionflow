@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { createSeedDatabase } from "@/lib/demo-data";
-import { normalizePermissionSet, permissionsFromLegacyRole } from "@/lib/access-control";
+import { normalizePermissionSet, normalizeUserAccessLevel, permissionsFromLegacyRole } from "@/lib/access-control";
 import { DEFAULT_HYMN_BOOK_IDS, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
 import type {
@@ -70,6 +70,10 @@ type RemoteRecord = {
 type RemoteCollectionKey = (typeof REMOTE_TABLES)[number]["key"];
 type RemoteColumnValue = boolean | number | string | string[] | unknown[] | Record<string, unknown> | null;
 type RemoteColumns = Record<string, RemoteColumnValue>;
+type RemoteSchemaOptions = {
+  includeWardLunchPDay?: boolean;
+  includeUserAccessLevel?: boolean;
+};
 
 type LegacyMetadata = Partial<RecordMetadata> & {
   createdBy?: unknown;
@@ -91,6 +95,18 @@ function asBoolean(value: unknown, fallback = false) {
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeWeekday(value: unknown) {
+  return value === "sunday" ||
+    value === "monday" ||
+    value === "tuesday" ||
+    value === "wednesday" ||
+    value === "thursday" ||
+    value === "friday" ||
+    value === "saturday"
+    ? value
+    : "monday";
 }
 
 function asDataObject(row: RemoteRecord) {
@@ -152,16 +168,25 @@ function normalizeUser(user: User, roles: Role[]): User {
   const rolePermissions = roles.find((role) => role.id === normalizedUser.roleId)?.permissions ?? [];
   const directPermissions = Array.isArray(user.permissionOverrides) ? user.permissionOverrides : [];
   const permissionsConfigured = user.permissionsConfigured === true;
+  const legacyUser = user as User & { accessLevel?: unknown };
 
   return {
     ...normalizedUser,
     accountType: normalizedUser.accountType === "system_super_user" ? "system_super_user" : "regular",
+    accessLevel: normalizeUserAccessLevel(legacyUser.accessLevel ?? inferUserAccessLevel(normalizedUser.roleId)),
     roleId: normalizedUser.roleId || SYSTEM_ROLE_IDS.viewer,
     permissionOverrides: permissionsConfigured
       ? normalizePermissionSet(directPermissions)
       : permissionsFromLegacyRole(normalizedUser.roleId, [...rolePermissions, ...directPermissions]),
     permissionsConfigured: true,
   };
+}
+
+function inferUserAccessLevel(roleId: string) {
+  if (roleId === SYSTEM_ROLE_IDS.stakeAdmin) return "stake_owner";
+  if (roleId === SYSTEM_ROLE_IDS.wardAdmin || roleId === "role_admin" || roleId === "role_bishopric") return "ward_owner";
+
+  return "member";
 }
 
 function normalizeMember(member: Member): Member {
@@ -249,6 +274,7 @@ function normalizeWard(ward: Ward): Ward {
     city: String(ward.city ?? ""),
     state: String(ward.state ?? ""),
     country: String(ward.country ?? "Brasil"),
+    lunchPDayWeekday: normalizeWeekday(ward.lunchPDayWeekday),
     ...normalizeRecordMetadata(ward),
   };
 }
@@ -466,7 +492,7 @@ function optionalUuid(value: unknown): string | null {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed) ? trimmed : null;
 }
 
-function relationColumns(key: RemoteCollectionKey, record: { id: string } & Record<string, unknown>): RemoteColumns {
+function relationColumns(key: RemoteCollectionKey, record: { id: string } & Record<string, unknown>, options: RemoteSchemaOptions = {}): RemoteColumns {
   switch (key) {
     case "stakes":
       return {
@@ -484,6 +510,7 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         city: asOptionalString(record.city),
         state: asOptionalString(record.state),
         country: asOptionalString(record.country),
+        ...(options.includeWardLunchPDay === false ? {} : { lunch_p_day_weekday: normalizeWeekday(record.lunchPDayWeekday) }),
         created_at: optionalText(record.createdAt),
         updated_at: optionalText(record.updatedAt),
       };
@@ -504,6 +531,7 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         phone: asOptionalString(record.phone),
         status: record.status === "inactive" ? "inactive" : "active",
         account_type: record.accountType === "system_super_user" ? "system_super_user" : "regular",
+        ...(options.includeUserAccessLevel === false ? {} : { access_level: normalizeUserAccessLevel(record.accessLevel) }),
         permission_overrides: Array.isArray(record.permissionOverrides) ? record.permissionOverrides : [],
         permissions_configured: record.permissionsConfigured !== false,
         last_access_at: optionalText(record.lastAccessAt),
@@ -589,12 +617,22 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
   }
 }
 
-function remoteSelectColumns(key: RemoteCollectionKey) {
+function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOptions = {}) {
   switch (key) {
     case "stakes":
       return "id,name,city,state,country,created_at,updated_at";
     case "wards":
-      return "id,stake_id,name,city,state,country,created_at,updated_at";
+      return [
+        "id",
+        "stake_id",
+        "name",
+        "city",
+        "state",
+        "country",
+        ...(options.includeWardLunchPDay === false ? [] : ["lunch_p_day_weekday"]),
+        "created_at",
+        "updated_at",
+      ].join(",");
     case "roles":
       return "id,name,description,permissions,created_at,updated_at";
     case "users":
@@ -609,6 +647,7 @@ function remoteSelectColumns(key: RemoteCollectionKey) {
         "phone",
         "status",
         "account_type",
+        ...(options.includeUserAccessLevel === false ? [] : ["access_level"]),
         "permission_overrides",
         "permissions_configured",
         "last_access_at",
@@ -632,6 +671,17 @@ function usesStructuredColumns(key: RemoteCollectionKey) {
   return key === "stakes" || key === "wards" || key === "roles" || key === "users" || key === "hymnBooks";
 }
 
+function isMissingRemoteColumn(error: unknown, columnName: string) {
+  if (!error || typeof error !== "object") return false;
+
+  const remoteError = error as Partial<Record<"code" | "message" | "details" | "hint", unknown>>;
+  const message = [remoteError.message, remoteError.details, remoteError.hint]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+
+  return message.includes(columnName) && (remoteError.code === "42703" || message.toLocaleLowerCase("pt-BR").includes("column"));
+}
+
 function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
   switch (key) {
     case "stakes":
@@ -652,6 +702,7 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         city: rowString(row, "city", "city"),
         state: rowString(row, "state", "state"),
         country: rowString(row, "country", "country", "Brasil"),
+        lunchPDayWeekday: normalizeWeekday(rowString(row, "lunch_p_day_weekday", "lunchPDayWeekday", "monday")),
         createdAt: asString(row.created_at) ?? UNKNOWN_TIMESTAMP,
         updatedAt: asString(row.updated_at) ?? UNKNOWN_TIMESTAMP,
       };
@@ -676,6 +727,7 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         phone: rowString(row, "phone", "phone"),
         status: rowString(row, "status", "status", "active") === "inactive" ? "inactive" : "active",
         accountType: rowString(row, "account_type", "accountType", "regular") === "system_super_user" ? "system_super_user" : "regular",
+        accessLevel: normalizeUserAccessLevel(rowString(row, "access_level", "accessLevel", "member")),
         permissionOverrides: rowStringArray(row, "permission_overrides", "permissionOverrides"),
         permissionsConfigured: rowBoolean(row, "permissions_configured", "permissionsConfigured", true),
         createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
@@ -723,7 +775,19 @@ export async function loadDatabase(): Promise<Database> {
   const supabase = createClient();
   const entries = await Promise.all(
     REMOTE_TABLES.map(async ({ key, table }) => {
-      const { data, error } = await supabase.from(table).select(remoteSelectColumns(key));
+      let { data, error } = await supabase.from(table).select(remoteSelectColumns(key));
+
+      if (key === "wards" && isMissingRemoteColumn(error, "lunch_p_day_weekday")) {
+        const fallback = await supabase.from(table).select(remoteSelectColumns(key, { includeWardLunchPDay: false }));
+        data = fallback.data;
+        error = fallback.error;
+      }
+
+      if (key === "users" && isMissingRemoteColumn(error, "access_level")) {
+        const fallback = await supabase.from(table).select(remoteSelectColumns(key, { includeUserAccessLevel: false }));
+        data = fallback.data;
+        error = fallback.error;
+      }
 
       if (error) {
         throw error;
@@ -786,14 +850,36 @@ export async function saveDatabase(db: Database): Promise<void> {
       continue;
     }
 
-    const { error: upsertError } = await supabase.from(table).upsert(
-      records.map((record) => ({
+    const recordsForUpsert =
+      key === "users"
+        ? [...records].sort((a, b) => {
+            const userA = a as User;
+            const userB = b as User;
+            const ownerA = userA.accessLevel === "ward_owner" || userA.accessLevel === "stake_owner";
+            const ownerB = userB.accessLevel === "ward_owner" || userB.accessLevel === "stake_owner";
+
+            return Number(ownerA) - Number(ownerB);
+          })
+        : records;
+
+    const buildUpsertPayload = (options?: RemoteSchemaOptions) =>
+      recordsForUpsert.map((record) => ({
         id: record.id,
         ...(usesStructuredColumns(key) ? {} : { data: record }),
-        ...relationColumns(key, record),
-      })),
-      { onConflict: "id" },
-    );
+        ...relationColumns(key, record, options),
+      }));
+
+    let { error: upsertError } = await supabase.from(table).upsert(buildUpsertPayload(), { onConflict: "id" });
+
+    if (key === "wards" && isMissingRemoteColumn(upsertError, "lunch_p_day_weekday")) {
+      const fallback = await supabase.from(table).upsert(buildUpsertPayload({ includeWardLunchPDay: false }), { onConflict: "id" });
+      upsertError = fallback.error;
+    }
+
+    if (key === "users" && isMissingRemoteColumn(upsertError, "access_level")) {
+      const fallback = await supabase.from(table).upsert(buildUpsertPayload({ includeUserAccessLevel: false }), { onConflict: "id" });
+      upsertError = fallback.error;
+    }
 
     if (upsertError) {
       throw upsertError;

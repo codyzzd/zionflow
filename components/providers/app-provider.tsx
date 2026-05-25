@@ -4,7 +4,14 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyn
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
-import { normalizePermissionSet } from "@/lib/access-control";
+import {
+  applyOwnerTransfer,
+  canAssignAccessLevel,
+  canManageUser,
+  getWardStakeId,
+  normalizePermissionSet,
+  normalizeUserAccessLevel,
+} from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { createEmptyDatabase, loadDatabase, normalizeHymnTags, saveDatabase } from "@/lib/storage";
@@ -39,6 +46,7 @@ import type {
   SessionState,
   Stake,
   User,
+  UserAccessLevel,
   UserAccountType,
   Ward,
 } from "@/types/domain";
@@ -237,14 +245,59 @@ function getActorUserId(db: Database) {
   return db.session.currentUserId;
 }
 
+function canActorManageUsers(db: Database, actor?: User) {
+  return Boolean(actor && (isSystemAdmin(actor) || resolvePermissions(db, actor).includes("users.manage")));
+}
+
 function canMutateUser(db: Database, user: User) {
-  return !isSystemAdmin(user) || db.session.currentUserId === user.id;
+  const actor = db.users.find((item) => item.id === db.session.currentUserId);
+
+  return canActorManageUsers(db, actor) && canManageUser(actor, user, db.wards);
 }
 
 function canAssignSystemAccountType(db: Database) {
   const actor = db.users.find((user) => user.id === db.session.currentUserId);
 
   return isSystemAdmin(actor);
+}
+
+function canSaveUserAccessLevel(db: Database, targetWardId: string, targetAccessLevel: UserAccessLevel) {
+  const actor = db.users.find((user) => user.id === db.session.currentUserId);
+  const targetWard = db.wards.find((ward) => ward.id === targetWardId);
+
+  return canActorManageUsers(db, actor) && canAssignAccessLevel(actor, targetAccessLevel, targetWard, db.wards);
+}
+
+function isSoleActiveOwner(users: User[], owner: User, wards: Ward[]) {
+  if (owner.status !== "active" || (owner.accessLevel !== "ward_owner" && owner.accessLevel !== "stake_owner")) return false;
+
+  if (owner.accessLevel === "ward_owner") {
+    return !users.some((user) => user.id !== owner.id && user.status === "active" && user.accessLevel === "ward_owner" && user.wardId === owner.wardId);
+  }
+
+  const ownerStakeId = getWardStakeId(owner.wardId, wards);
+  return Boolean(
+    ownerStakeId &&
+      !users.some(
+        (user) =>
+          user.id !== owner.id &&
+          user.status === "active" &&
+          user.accessLevel === "stake_owner" &&
+          getWardStakeId(user.wardId, wards) === ownerStakeId,
+      ),
+  );
+}
+
+function applyOwnerTransferMetadata(users: User[], targetUser: User, wards: Ward[], actorUserId?: string) {
+  const beforeById = new Map(users.map((user) => [user.id, user]));
+  const transferredUsers = applyOwnerTransfer(users, targetUser.id, targetUser.accessLevel, targetUser.wardId, wards);
+
+  return transferredUsers.map((user) => {
+    const before = beforeById.get(user.id);
+    if (!before || before.id === targetUser.id || before.accessLevel === user.accessLevel) return user;
+
+    return withRecordMetadata(user, before, actorUserId);
+  });
 }
 
 function normalizeEmail(email: string) {
@@ -323,7 +376,7 @@ function upsertRole(roles: Role[], role: Role) {
   return [role, ...roles];
 }
 
-function buildOnboardingUser(email: string, wardId: string, role: Role, timestamp: string, authUserId?: string): User {
+function buildOnboardingUser(email: string, wardId: string, role: Role, accessLevel: UserAccessLevel, timestamp: string, authUserId?: string): User {
   const id = uid("user");
 
   return {
@@ -335,6 +388,7 @@ function buildOnboardingUser(email: string, wardId: string, role: Role, timestam
     phone: "",
     status: "active",
     accountType: "regular",
+    accessLevel,
     roleId: role.id,
     permissionOverrides: normalizePermissionSet(role.permissions),
     permissionsConfigured: true,
@@ -671,7 +725,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const country = input.country?.trim() || "Brasil";
       const referenceWardName = input.referenceWardName?.trim() ?? "";
 
-      if (!normalizedEmail || !stakeName || existingUser?.status === "inactive") {
+      if (!normalizedEmail || !stakeName || !referenceWardName || existingUser?.status === "inactive") {
         return false;
       }
 
@@ -708,16 +762,18 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
                     city,
                     state,
                     country,
+                    lunchPDayWeekday: "monday",
                   },
                   undefined,
                   currentExistingUser.id,
                   timestamp,
                 )
               : undefined;
-            const updatedUser = withRecordMetadata(
+            const updatedUser: User = withRecordMetadata(
               {
                 ...currentExistingUser,
                 wardId: referenceWard?.id ?? "",
+                accessLevel: "stake_owner",
                 roleId: role.id,
                 permissionOverrides: normalizePermissionSet(role.permissions),
                 permissionsConfigured: true,
@@ -781,7 +837,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const viewerRole = createOnboardingRole("viewer");
         const stakeId = uid("stake");
         const referenceWardId = referenceWardName ? uid("ward") : undefined;
-        const user = buildOnboardingUser(normalizedEmail, referenceWardId ?? "", role, timestamp, input.authUserId);
+        const user = buildOnboardingUser(normalizedEmail, referenceWardId ?? "", role, "stake_owner", timestamp, input.authUserId);
         const stake: Stake = withRecordMetadata<Stake>(
           {
             id: stakeId,
@@ -803,6 +859,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
                 city,
                 state,
                 country,
+                lunchPDayWeekday: "monday",
               },
               undefined,
               user.id,
@@ -900,15 +957,17 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
                 city,
                 state: input.state?.trim() ?? "",
                 country,
+                lunchPDayWeekday: "monday",
               },
               undefined,
               currentExistingUser.id,
               timestamp,
             );
-            const updatedUser = withRecordMetadata(
+            const updatedUser: User = withRecordMetadata(
               {
                 ...currentExistingUser,
                 wardId: ward.id,
+                accessLevel: "ward_owner",
                 roleId: role.id,
                 permissionOverrides: normalizePermissionSet(role.permissions),
                 permissionsConfigured: true,
@@ -975,7 +1034,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           (stakeName ? currentDb.stakes.find((stake) => normalizeOrganizationName(stake.name) === normalizeOrganizationName(stakeName)) : undefined);
         const newStakeId = stakeName && !existingStake ? uid("stake") : undefined;
         const wardId = uid("ward");
-        const user = buildOnboardingUser(normalizedEmail, wardId, role, timestamp, input.authUserId);
+        const user = buildOnboardingUser(normalizedEmail, wardId, role, "ward_owner", timestamp, input.authUserId);
         const stake: Stake | undefined =
           stakeName && !existingStake && newStakeId
             ? withRecordMetadata<Stake>(
@@ -999,6 +1058,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             city,
             state: input.state?.trim() ?? "",
             country,
+            lunchPDayWeekday: "monday",
           },
           undefined,
           user.id,
@@ -1069,10 +1129,11 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           if (!currentExistingUser.wardId) {
             const timestamp = nowIso();
             const role = createOnboardingRole("viewer");
-            const updatedUser = withRecordMetadata(
+            const updatedUser: User = withRecordMetadata(
               {
                 ...currentExistingUser,
                 wardId: ward.id,
+                accessLevel: "member",
                 roleId: role.id,
                 permissionOverrides: normalizePermissionSet(role.permissions),
                 permissionsConfigured: true,
@@ -1130,7 +1191,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
         const timestamp = nowIso();
         const role = createOnboardingRole("viewer");
-        const user = buildOnboardingUser(normalizedEmail, ward.id, role, timestamp, authUserId);
+        const user = buildOnboardingUser(normalizedEmail, ward.id, role, "member", timestamp, authUserId);
 
         const nextDb = {
           ...currentDb,
@@ -1337,6 +1398,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             city: input.city.trim(),
             state: input.state.trim(),
             country: input.country.trim(),
+            lunchPDayWeekday: input.lunchPDayWeekday,
           },
           existing,
           actorUserId,
@@ -1374,6 +1436,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             city: input.city.trim(),
             state: input.state.trim(),
             country: input.country.trim() || "Brasil",
+            lunchPDayWeekday: input.lunchPDayWeekday,
             archivedAt: input.archivedAt ?? currentExisting?.archivedAt,
           },
           currentExisting,
@@ -1673,9 +1736,24 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function saveUser(input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) {
       const exists = input.id ? db.users.some((user) => user.id === input.id) : false;
       const targetUser = input.id ? db.users.find((user) => user.id === input.id) : undefined;
+      const nextAccessLevel = normalizeUserAccessLevel(input.accessLevel);
 
       if (targetUser && !canMutateUser(db, targetUser)) {
-        toast.error("Somente o super usuário pode alterar a própria conta de sistema.");
+        toast.error("Seu usuário não pode alterar este acesso.");
+        return;
+      }
+
+      if (!canSaveUserAccessLevel(db, input.wardId, nextAccessLevel)) {
+        toast.error("Seu usuário não pode atribuir esse nível de liderança.");
+        return;
+      }
+
+      if (
+        targetUser &&
+        isSoleActiveOwner(db.users, targetUser, db.wards) &&
+        (input.status === "inactive" || targetUser.wardId !== input.wardId || targetUser.accessLevel !== nextAccessLevel)
+      ) {
+        toast.error("Transfira este cargo de líder antes de remover o dono atual.");
         return;
       }
 
@@ -1687,7 +1765,16 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       setDb((currentDb) => {
         const id = input.id ?? uid("user");
         const existing = currentDb.users.find((user) => user.id === id);
+        const accessLevel = normalizeUserAccessLevel(input.accessLevel);
         if (existing && !canMutateUser(currentDb, existing)) return currentDb;
+        if (!canSaveUserAccessLevel(currentDb, input.wardId, accessLevel)) return currentDb;
+        if (
+          existing &&
+          isSoleActiveOwner(currentDb.users, existing, currentDb.wards) &&
+          (input.status === "inactive" || existing.wardId !== input.wardId || existing.accessLevel !== accessLevel)
+        ) {
+          return currentDb;
+        }
         if (input.accountType === "system_super_user" && !canAssignSystemAccountType(currentDb)) return currentDb;
 
         const actorUserId = getActorUserId(currentDb);
@@ -1696,6 +1783,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             ...input,
             id,
             accountType: input.accountType ?? existing?.accountType ?? "regular",
+            accessLevel,
             permissionOverrides: normalizePermissionSet(input.permissionOverrides),
             permissionsConfigured: true,
             createdAt: existing?.createdAt ?? nowIso(),
@@ -1705,11 +1793,16 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           actorUserId,
         );
 
+        const nextUsers = applyOwnerTransferMetadata(
+          existing ? currentDb.users.map((current) => (current.id === id ? user : current)) : [user, ...currentDb.users],
+          user,
+          currentDb.wards,
+          actorUserId,
+        );
+
         const nextDb = {
           ...currentDb,
-          users: existing
-            ? currentDb.users.map((current) => (current.id === id ? user : current))
-            : [user, ...currentDb.users],
+          users: nextUsers,
         };
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
@@ -1798,11 +1891,16 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       if (!targetUser) return;
 
       if (!canMutateUser(db, targetUser)) {
-        toast.error("Somente o super usuário pode alterar o status da própria conta de sistema.");
+        toast.error("Seu usuário não pode alterar este acesso.");
         return;
       }
 
       const nextStatus: User["status"] = targetUser.status === "active" ? "inactive" : "active";
+
+      if (nextStatus === "inactive" && isSoleActiveOwner(db.users, targetUser, db.wards)) {
+        toast.error("Transfira este cargo de líder antes de desativar o dono atual.");
+        return;
+      }
 
       setDb((currentDb) => {
         const target = currentDb.users.find((user) => user.id === userId);
@@ -1810,6 +1908,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         if (!canMutateUser(currentDb, target)) return currentDb;
 
         const nextStatus: User["status"] = target.status === "active" ? "inactive" : "active";
+        if (nextStatus === "inactive" && isSoleActiveOwner(currentDb.users, target, currentDb.wards)) return currentDb;
+
         const actorUserId = getActorUserId(currentDb);
         const nextDb = {
           ...currentDb,
@@ -2207,7 +2307,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         });
       });
 
-      toast.success(existing ? (existing.status !== input.status ? "Status do almoço atualizado." : "Almoço atualizado.") : "Almoço cadastrado.");
+      toast.success(existing ? "Almoço atualizado." : "Almoço cadastrado.");
     }
 
     function deleteLunchSchedule(lunchId: string) {

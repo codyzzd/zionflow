@@ -69,7 +69,6 @@ type NavItem = {
 
 const mainItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, viewPermission: "dashboard.view" },
-  { href: "/members", label: "Membros", icon: Users, viewPermission: "members.view" },
   {
     href: "/meetings",
     label: "Atas Sacramentais",
@@ -80,7 +79,10 @@ const mainItems: NavItem[] = [
       { href: "/frequency", label: "Frequência", viewPermission: "frequency.view" },
     ],
   },
+  { href: "/members", label: "Membros", icon: Users, viewPermission: "members.view" },
   { href: "/missionaries", label: "Missionários", icon: Handshake, viewPermission: "missionary.view" },
+  { href: "/lunch-calendar", label: "Almoços", icon: Utensils, viewPermission: "lunch.view" },
+  { href: "/patrol", label: "Ronda", icon: ShieldCheck, viewPermission: "patrol.view" },
   {
     href: "/caravans",
     label: "Caravanas",
@@ -92,10 +94,6 @@ const mainItems: NavItem[] = [
       { href: "/caravans/people", label: "Pessoas", alwaysVisible: true },
     ],
   },
-  { href: "/patrol", label: "Ronda", icon: ShieldCheck, viewPermission: "patrol.view" },
-  { href: "/lunch-calendar", label: "Calendário de almoços", icon: Utensils, viewPermission: "lunch.view" },
-  { href: "/ward", label: "Ala", icon: Building2, viewPermission: "ward.view" },
-  { href: "/stake", label: "Estaca", icon: Landmark, viewPermission: "stake.view" },
 ];
 
 const secondaryItems: NavItem[] = [
@@ -114,6 +112,8 @@ const secondaryItems: NavItem[] = [
     ],
   },
   { href: "/users", label: "Usuários e acessos", icon: KeyRound, viewPermission: "users.view" },
+  { href: "/ward", label: "Ala", icon: Building2, viewPermission: "ward.view" },
+  { href: "/stake", label: "Estaca", icon: Landmark, viewPermission: "stake.view" },
   { href: "/settings", label: "Configurações", icon: Settings, alwaysVisible: true },
 ];
 

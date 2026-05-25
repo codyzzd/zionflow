@@ -10,7 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { formatRelativeDay } from "@/lib/utils";
-import type { PatrolSchedule } from "@/types/domain";
+import type { ConfirmationStatus, PatrolSchedule } from "@/types/domain";
+
+const confirmationLabels: Record<ConfirmationStatus, string> = {
+  not_viewed: "Não visualizado",
+  viewed: "Visualizado",
+  accepted: "Aceito",
+  declined: "Recusado",
+};
 
 function resolveSacramentalMemberIds(schedule: PatrolSchedule) {
   if (schedule.sacramentalMemberIds?.length) return schedule.sacramentalMemberIds;
@@ -57,8 +64,8 @@ export default function DashboardPage() {
   const patrolMembersById = new Map(patrolMembersByWard.map((member) => [member.id, member]));
   const alerts = [
     ...lunchSchedulesByWard
-      .filter((item) => item.status === "pending")
-      .map((item) => `Almoço missionário pendente em ${formatDate(item.date)} às ${item.time}.`),
+      .filter((item) => item.confirmationStatus !== "accepted")
+      .map((item) => `Almoço missionário sem confirmação aceita em ${formatDate(item.date)} às ${item.time}.`),
     ...patrolSchedulesByWard
       .filter((item) => !resolveSacramentalMemberIds(item).length || !resolveClassMemberIds(item).length)
       .map((item) => `Ronda em ${formatDate(item.date)} sem irmãos para sacramental ou aulas.`),
@@ -126,7 +133,7 @@ export default function DashboardPage() {
               <div key={lunch.id} className="rounded-lg border p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-medium">{formatRelativeDay(lunch.date)}</p>
-                  <Badge variant={lunch.status === "confirmed" ? "default" : "secondary"}>{lunch.status}</Badge>
+                  <Badge variant={lunch.confirmationStatus === "accepted" ? "default" : "secondary"}>{confirmationLabels[lunch.confirmationStatus]}</Badge>
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground tabular-nums">{`${formatDate(lunch.date)} às ${lunch.time}`}</p>
               </div>

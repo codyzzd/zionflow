@@ -34,13 +34,14 @@ export type PermissionKey =
 
 export type UserStatus = "active" | "inactive";
 export type UserAccountType = "regular" | "system_super_user";
+export type UserAccessLevel = "stake_owner" | "stake_leader" | "ward_owner" | "ward_leader" | "member";
 export type MinuteStatus = "draft" | "published";
-export type LunchStatus = "pending" | "confirmed" | "cancelled";
 export type ConfirmationStatus = "not_viewed" | "viewed" | "accepted" | "declined";
 export type PatrolStatus = "scheduled" | "confirmed" | "done" | "missed";
 export type MissionaryType = "elders" | "sisters";
 export type CaravanPersonType = "family" | "friends";
 export type CaravanSeatMode = "quantity" | "vehicle";
+export type Weekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
 export type CalendarWeekStartsOn = "sunday" | "monday";
 export type DateFormat = "short" | "medium" | "long";
 
@@ -66,6 +67,7 @@ export interface Ward extends RecordMetadata {
   city: string;
   state: string;
   country: string;
+  lunchPDayWeekday: Weekday;
 }
 
 export interface Role {
@@ -96,6 +98,7 @@ export interface User extends RecordMetadata {
   phone: string;
   status: UserStatus;
   accountType: UserAccountType;
+  accessLevel: UserAccessLevel;
   roleId: string;
   permissionOverrides: PermissionKey[];
   permissionsConfigured?: boolean;
@@ -225,7 +228,6 @@ export interface LunchSchedule extends RecordMetadata {
   companionshipIds: string[];
   hostMemberId: string;
   notes: string;
-  status: LunchStatus;
   confirmationStatus: ConfirmationStatus;
 }
 

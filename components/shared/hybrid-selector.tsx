@@ -16,6 +16,42 @@ type Option = {
   searchValue?: string;
 };
 
+const SEARCH_COLLATOR = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" });
+
+function normalizeSearchValue(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLocaleLowerCase("pt-BR");
+}
+
+function getOptionSearchText(option: Option) {
+  return normalizeSearchValue(`${option.label} ${option.searchValue ?? ""}`);
+}
+
+function getOptionPrimaryToken(option: Option) {
+  const source = option.searchValue?.trim() || option.label.trim();
+  return normalizeSearchValue(source.split(/\s+/)[0] ?? "");
+}
+
+function getOptionRank(option: Option, normalizedQuery: string) {
+  const primaryToken = getOptionPrimaryToken(option);
+  const searchText = getOptionSearchText(option);
+  const isNumericQuery = /^\d+[a-z]?$/i.test(normalizedQuery);
+
+  if (isNumericQuery) {
+    if (primaryToken === normalizedQuery) return 0;
+    if (primaryToken.startsWith(normalizedQuery)) return 1;
+    if (primaryToken.includes(normalizedQuery)) return 2;
+  }
+
+  if (searchText.startsWith(normalizedQuery)) return 3;
+  if (searchText.includes(normalizedQuery)) return 4;
+
+  return Number.POSITIVE_INFINITY;
+}
+
 export function HybridSelector({
   label,
   value,
@@ -41,24 +77,35 @@ export function HybridSelector({
   const trimmedQuery = draftQuery.trim();
 
   const matchingOption = useMemo(() => {
-    const normalizedQuery = trimmedQuery.toLocaleLowerCase("pt-BR");
+    const normalizedQuery = normalizeSearchValue(trimmedQuery);
     if (!normalizedQuery) return undefined;
 
     return options.find((option) => {
-      const values = [option.label, option.searchValue ?? ""].map((item) => item.trim().toLocaleLowerCase("pt-BR"));
+      const values = [option.label, option.searchValue ?? "", getOptionPrimaryToken(option)].map(normalizeSearchValue);
       return values.some((item) => item === normalizedQuery);
     });
   }, [options, trimmedQuery]);
 
   const filteredOptions = useMemo(() => {
-    const normalizedQuery = trimmedQuery.toLocaleLowerCase("pt-BR");
+    const normalizedQuery = normalizeSearchValue(trimmedQuery);
 
     if (!normalizedQuery) {
       return options.slice(0, 8);
     }
 
     return options
-      .filter((option) => `${option.label} ${option.searchValue ?? ""}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery))
+      .map((option, index) => ({ index, option, rank: getOptionRank(option, normalizedQuery) }))
+      .filter((item) => Number.isFinite(item.rank))
+      .sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+
+        const primaryTokenSort = SEARCH_COLLATOR.compare(getOptionPrimaryToken(a.option), getOptionPrimaryToken(b.option));
+        if (primaryTokenSort !== 0) return primaryTokenSort;
+
+        const labelSort = SEARCH_COLLATOR.compare(a.option.label, b.option.label);
+        return labelSort || a.index - b.index;
+      })
+      .map((item) => item.option)
       .slice(0, 8);
   }, [options, trimmedQuery]);
 

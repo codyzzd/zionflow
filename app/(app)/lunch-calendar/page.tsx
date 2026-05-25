@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, ChevronsUpDown, Home, Mars, Pencil, Plus, Trash2, Venus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsUpDown, Copy, Home, Mars, Pencil, Plus, Trash2, Venus, X } from "lucide-react";
 import { type KeyboardEvent, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -19,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { cn, todayDate } from "@/lib/utils";
-import type { CalendarWeekStartsOn, ConfirmationStatus, LunchSchedule, LunchStatus, MissionaryCompanionship } from "@/types/domain";
+import type { CalendarWeekStartsOn, ConfirmationStatus, LunchSchedule, MissionaryCompanionship, Weekday } from "@/types/domain";
 
 type LunchForm = {
   id?: string;
@@ -28,7 +29,6 @@ type LunchForm = {
   companionshipIds: string[];
   hostMemberId: string;
   notes: string;
-  status: LunchStatus;
   confirmationStatus: ConfirmationStatus;
 };
 
@@ -42,17 +42,18 @@ type CompanionshipSelectProps = {
   onSelectedIdsChange: (ids: string[]) => void;
 };
 
-const statusLabels = {
-  pending: "Pendente",
-  confirmed: "Confirmado",
-  cancelled: "Cancelado",
-} as const;
-
 const confirmationLabels = {
   not_viewed: "Não visualizado",
   viewed: "Visualizado",
   accepted: "Aceito",
   declined: "Recusado",
+} as const;
+
+const confirmationBadgeVariants = {
+  not_viewed: "secondary",
+  viewed: "outline",
+  accepted: "default",
+  declined: "destructive",
 } as const;
 
 const emptyLunchForm: LunchForm = {
@@ -61,7 +62,6 @@ const emptyLunchForm: LunchForm = {
   companionshipIds: [],
   hostMemberId: "",
   notes: "",
-  status: "pending",
   confirmationStatus: "not_viewed",
 };
 
@@ -69,6 +69,18 @@ const weekdaysByStart: Record<CalendarWeekStartsOn, string[]> = {
   sunday: ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"],
   monday: ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"],
 };
+
+const weekdayOptions: Array<{ value: Weekday; label: string }> = [
+  { value: "sunday", label: "Domingo" },
+  { value: "monday", label: "Segunda-feira" },
+  { value: "tuesday", label: "Terça-feira" },
+  { value: "wednesday", label: "Quarta-feira" },
+  { value: "thursday", label: "Quinta-feira" },
+  { value: "friday", label: "Sexta-feira" },
+  { value: "saturday", label: "Sábado" },
+];
+
+const weekdaysByIndex: Weekday[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 function parseDate(date: string) {
   return new Date(`${date}T12:00:00`);
@@ -84,6 +96,22 @@ function monthLabel(date: Date) {
     year: "numeric",
     timeZone: "America/Fortaleza",
   }).format(date);
+}
+
+function monthDates(monthDate: Date) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const date = new Date(year, month, index + 1);
+
+    return {
+      date,
+      key: toDateKey(date),
+      day: index + 1,
+    };
+  });
 }
 
 function buildMonthCells(monthDate: Date, weekStartsOn: CalendarWeekStartsOn) {
@@ -203,6 +231,7 @@ export default function LunchCalendarPage() {
     hostHousesByWard,
     lunchSchedulesByWard,
     membersByWard,
+    saveWard,
     saveLunchSchedule,
   } = useAppContext();
   const { formatDate } = useDateFormatter();
@@ -225,9 +254,30 @@ export default function LunchCalendarPage() {
 
   const weekdays = weekdaysByStart[appPreferences.calendarWeekStartsOn];
   const monthCells = useMemo(() => buildMonthCells(monthDate, appPreferences.calendarWeekStartsOn), [appPreferences.calendarWeekStartsOn, monthDate]);
+  const visibleMonthDates = useMemo(() => monthDates(monthDate), [monthDate]);
   const activeCompanionships = useMemo(() => companionshipsByWard.filter((companionship) => companionship.status === "active"), [companionshipsByWard]);
+  const activeCompanionshipIds = useMemo(() => new Set(activeCompanionships.map((companionship) => companionship.id)), [activeCompanionships]);
+  const lunchPDayWeekday = currentWard?.lunchPDayWeekday ?? "monday";
+  const pDayLabel = weekdayOptions.find((option) => option.value === lunchPDayWeekday)?.label ?? "Segunda-feira";
   const selectedLunches = lunchesByDate.get(selectedDate) ?? [];
   const selectedDateLabel = formatDate(selectedDate);
+  const coverageSummary = useMemo(() => {
+    if (!activeCompanionships.length) {
+      return "Nenhuma dupla ativa cadastrada";
+    }
+
+    const missingCount = visibleMonthDates.reduce((total, item) => {
+      if (weekdaysByIndex[item.date.getDay()] === lunchPDayWeekday) return total;
+
+      const coveredIds = new Set(
+        (lunchesByDate.get(item.key) ?? []).flatMap((lunch) => lunch.companionshipIds).filter((id) => activeCompanionshipIds.has(id)),
+      );
+
+      return total + activeCompanionships.filter((companionship) => !coveredIds.has(companionship.id)).length;
+    }, 0);
+
+    return missingCount ? `Faltam ${missingCount} almoços de duplas neste mês` : "Todas as duplas têm almoço nos dias disponíveis";
+  }, [activeCompanionshipIds, activeCompanionships, lunchPDayWeekday, lunchesByDate, visibleMonthDates]);
 
   function moveMonth(offset: number) {
     setMonthDate((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
@@ -261,6 +311,27 @@ export default function LunchCalendarPage() {
     return companionshipIds.map((id) => companionshipsByWard.find((item) => item.id === id)).filter(isCompanionship);
   }
 
+  function getMissingCompanionshipsForDate(date: string) {
+    const coveredIds = new Set(
+      (lunchesByDate.get(date) ?? []).flatMap((lunch) => lunch.companionshipIds).filter((id) => activeCompanionshipIds.has(id)),
+    );
+
+    return activeCompanionships.filter((companionship) => !coveredIds.has(companionship.id));
+  }
+
+  function isPDayDate(date: Date) {
+    return weekdaysByIndex[date.getDay()] === lunchPDayWeekday;
+  }
+
+  function updateLunchPDayWeekday(value: Weekday) {
+    if (!currentWard || !canManageLunches) return;
+
+    saveWard({
+      ...currentWard,
+      lunchPDayWeekday: value,
+    });
+  }
+
   function handleDrawerOpenChange(open: boolean) {
     setDrawerOpen(open);
 
@@ -286,7 +357,6 @@ export default function LunchCalendarPage() {
       companionshipIds: lunch.companionshipIds,
       hostMemberId: getLegacyHostMemberId(lunch),
       notes: lunch.notes,
-      status: lunch.status,
       confirmationStatus: lunch.confirmationStatus,
     });
     setSelectedDate(lunch.date);
@@ -315,29 +385,12 @@ export default function LunchCalendarPage() {
       companionshipIds: lunchForm.companionshipIds,
       hostMemberId: lunchForm.hostMemberId,
       notes: lunchForm.notes.trim(),
-      status: lunchForm.status,
       confirmationStatus: lunchForm.confirmationStatus,
     });
 
     setSelectedDate(lunchForm.date);
     setMonthDate(parseDate(lunchForm.date));
     closeDrawer();
-  }
-
-  function updateLunchStatus(lunch: LunchSchedule, status: LunchStatus) {
-    if (!currentWard) return;
-
-    saveLunchSchedule({
-      id: lunch.id,
-      wardId: currentWard.id,
-      date: lunch.date,
-      time: lunch.time,
-      companionshipIds: lunch.companionshipIds,
-      hostMemberId: getLegacyHostMemberId(lunch),
-      notes: lunch.notes,
-      status,
-      confirmationStatus: lunch.confirmationStatus,
-    });
   }
 
   function removeLunch(lunch: LunchSchedule) {
@@ -347,6 +400,48 @@ export default function LunchCalendarPage() {
     deleteLunchSchedule(lunch.id);
   }
 
+  async function copyMonthLunchList() {
+    const lines = [`Calendário de almoços missionários - ${monthLabel(monthDate)}`, ""];
+
+    for (const item of visibleMonthDates) {
+      const lunches = lunchesByDate.get(item.key) ?? [];
+
+      if (isPDayDate(item.date)) {
+        lines.push(`${item.day}. P-DAY`);
+        continue;
+      }
+
+      if (!activeCompanionships.length) {
+        lines.push(`${item.day}. Nenhuma dupla ativa cadastrada`);
+        continue;
+      }
+
+      const scheduledText = lunches.map((lunch) => {
+        const companionshipNames = getLunchCompanionships(lunch.companionshipIds)
+          .map((companionship) => companionship.name)
+          .join(", ");
+
+        return `${getLunchHostLabel(lunch)} - ${companionshipNames || "Dupla não definida"}`;
+      });
+      const missingNames = getMissingCompanionshipsForDate(item.key).map((companionship) => companionship.name);
+
+      if (!scheduledText.length) {
+        lines.push(`${item.day}. Sem almoço ainda - faltam: ${missingNames.join(", ")}`);
+      } else if (missingNames.length) {
+        lines.push(`${item.day}. ${scheduledText.join(" / ")} / Faltam: ${missingNames.join(", ")}`);
+      } else {
+        lines.push(`${item.day}. ${scheduledText.join(" / ")}`);
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      toast.success("Lista de almoços copiada.");
+    } catch {
+      toast.error("Não foi possível copiar a lista.");
+    }
+  }
+
   return (
     <PermissionGuard permission="lunch.view">
       <PageHeader
@@ -354,12 +449,18 @@ export default function LunchCalendarPage() {
         title="Almoços missionários"
         description="Calendário mensal com família anfitriã, duplas e status de confirmação em cada almoço."
         actions={
-          canManageLunches ? (
-            <Button onClick={() => openCreateDrawer()} size="lg">
-              <Plus />
-              Novo almoço
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={copyMonthLunchList} size="lg" variant="outline">
+              <Copy />
+              Copiar lista
             </Button>
-          ) : null
+            {canManageLunches ? (
+              <Button onClick={() => openCreateDrawer()} size="lg">
+                <Plus />
+                Novo almoço
+              </Button>
+            ) : null}
+          </div>
         }
       />
 
@@ -369,9 +470,30 @@ export default function LunchCalendarPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle className="capitalize">{monthLabel(monthDate)}</CardTitle>
-                <CardDescription>Selecione um dia para ver todos os detalhes.</CardDescription>
+                <CardDescription>{coverageSummary}</CardDescription>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground" htmlFor="lunch-p-day">
+                    P-DAY
+                  </Label>
+                  {canManageLunches ? (
+                    <Select value={lunchPDayWeekday} onValueChange={(value) => updateLunchPDayWeekday(value as Weekday)}>
+                      <SelectTrigger className="h-9 w-[170px]" id="lunch-p-day">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {weekdayOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant="outline">{pDayLabel}</Badge>
+                  )}
+                </div>
                 <Button aria-label="Mês anterior" onClick={() => moveMonth(-1)} size="icon" variant="outline">
                   <ChevronLeft className="size-4" />
                 </Button>
@@ -397,6 +519,8 @@ export default function LunchCalendarPage() {
                     const lunches = lunchesByDate.get(cell.key) ?? [];
                     const isSelected = cell.key === selectedDate;
                     const isToday = cell.key === todayDate();
+                    const isPDay = isPDayDate(cell.date);
+                    const missingCompanionships = cell.isCurrentMonth && !isPDay ? getMissingCompanionshipsForDate(cell.key) : [];
 
                     return (
                       <div
@@ -405,6 +529,7 @@ export default function LunchCalendarPage() {
                         className={cn(
                           "group relative min-h-20 cursor-pointer border-b border-r px-1 pb-1 pt-8 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-32 sm:p-2 sm:pt-10 [&:nth-child(7n+1)]:border-l",
                           !cell.isCurrentMonth && "bg-muted/25 text-muted-foreground/55",
+                          cell.isCurrentMonth && isPDay && "bg-amber-50/70 dark:bg-amber-950/20",
                           isSelected && "bg-primary/8 ring-1 ring-inset ring-primary/35",
                         )}
                         onClick={() => setSelectedDate(cell.key)}
@@ -422,6 +547,11 @@ export default function LunchCalendarPage() {
                             {cell.day}
                           </span>
                           <span className="flex items-center gap-1">
+                            {cell.isCurrentMonth && isPDay ? (
+                              <Badge className="hidden bg-background/80 sm:inline-flex" variant="outline">
+                                P-DAY
+                              </Badge>
+                            ) : null}
                             {canManageLunches ? (
                               <Button
                                 aria-label={`Adicionar almoço em ${formatDate(cell.key)}`}
@@ -446,7 +576,9 @@ export default function LunchCalendarPage() {
                         </div>
 
                         <div className="flex justify-center sm:hidden">
-                          {lunches.length ? (
+                          {cell.isCurrentMonth && isPDay ? (
+                            <span className="mt-1 rounded-full border bg-background/80 px-1.5 py-0.5 text-[10px] font-medium">P-DAY</span>
+                          ) : lunches.length ? (
                             <span className="mt-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/10 px-1 text-[10px] font-medium text-primary tabular-nums">
                               {lunches.length}
                             </span>
@@ -484,6 +616,9 @@ export default function LunchCalendarPage() {
                             );
                           })}
                           {lunches.length > 2 ? <p className="text-xs text-muted-foreground tabular-nums">+{lunches.length - 2} almoço(s)</p> : null}
+                          {cell.isCurrentMonth && !isPDay && missingCompanionships.length ? (
+                            <p className="text-xs text-muted-foreground tabular-nums">Faltam {missingCompanionships.length}</p>
+                          ) : null}
                           {canManageLunches && !lunches.length && cell.isCurrentMonth && isSelected ? (
                             <p className="text-xs text-muted-foreground">Use o painel ao lado para cadastrar.</p>
                           ) : null}
@@ -519,20 +654,7 @@ export default function LunchCalendarPage() {
                 <div key={lunch.id} className="rounded-lg border p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="font-medium tabular-nums">{lunch.time}</p>
-                    {canManageLunches ? (
-                      <Select value={lunch.status} onValueChange={(value) => value && updateLunchStatus(lunch, value as LunchStatus)}>
-                        <SelectTrigger className="h-8 w-[150px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pending">Pendente</SelectItem>
-                          <SelectItem value="confirmed">Confirmado</SelectItem>
-                          <SelectItem value="cancelled">Cancelado</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Badge variant={lunch.status === "confirmed" ? "default" : "secondary"}>{statusLabels[lunch.status]}</Badge>
-                    )}
+                    <Badge variant={confirmationBadgeVariants[lunch.confirmationStatus]}>{confirmationLabels[lunch.confirmationStatus]}</Badge>
                   </div>
                   <div className="mt-3 grid gap-2 text-sm">
                     <p className="flex items-center gap-2">
@@ -555,9 +677,6 @@ export default function LunchCalendarPage() {
                     </div>
                   </div>
                   {lunch.notes ? <p className="mt-3 text-sm text-muted-foreground">{lunch.notes}</p> : null}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Badge variant="outline">{confirmationLabels[lunch.confirmationStatus]}</Badge>
-                  </div>
                   {canManageLunches ? (
                     <div className="mt-3 flex flex-wrap justify-end gap-2">
                       <Button onClick={() => openEditDrawer(lunch)} size="sm" variant="outline">
@@ -628,20 +747,6 @@ export default function LunchCalendarPage() {
                   onSelectedIdsChange={(ids) => setLunchForm((current) => ({ ...current, companionshipIds: ids }))}
                   selectedIds={lunchForm.companionshipIds}
                 />
-
-                <div>
-                  <Label>Status</Label>
-                  <Select value={lunchForm.status} onValueChange={(value) => value && setLunchForm((current) => ({ ...current, status: value as LunchStatus }))}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pendente</SelectItem>
-                      <SelectItem value="confirmed">Confirmado</SelectItem>
-                      <SelectItem value="cancelled">Cancelado</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
 
                 <div>
                   <Label>Confirmação da família</Label>

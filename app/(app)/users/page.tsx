@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useCallback, useMemo, useState } from "react";
 
 import { AccessMatrixEditor } from "@/components/features/access/access-matrix-editor";
+import { UserAccessLevelSelect } from "@/components/features/access/user-access-level-select";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
@@ -15,16 +16,25 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { ACCESS_MATRIX_AREAS, accessLevelFromPermissions } from "@/lib/access-control";
+import {
+  ACCESS_MATRIX_AREAS,
+  USER_ACCESS_LEVEL_LABELS,
+  USER_ACCESS_LEVELS,
+  accessLevelFromPermissions,
+  canAssignAccessLevel,
+  canManageUser,
+} from "@/lib/access-control";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId } from "@/lib/system-ids";
-import type { PermissionKey, User, UserStatus } from "@/types/domain";
+import type { PermissionKey, User, UserAccessLevel, UserStatus } from "@/types/domain";
 
 type UserForm = {
   name: string;
   email: string;
   phone: string;
+  accessLevel: UserAccessLevel;
   roleId: string;
   memberId: string;
   status: UserStatus;
@@ -35,6 +45,7 @@ const emptyUserForm: UserForm = {
   name: "",
   email: "",
   phone: "",
+  accessLevel: "member",
   roleId: "",
   memberId: "",
   status: "active",
@@ -55,9 +66,10 @@ function getAccessSummary(permissions: PermissionKey[]) {
 }
 
 export default function UsersPage() {
-  const { currentUser, currentWard, hasPermission, membersByWard, roles, toggleUserStatus, usersByWard, saveUser } = useAppContext();
+  const { currentUser, currentWard, hasPermission, membersByWard, roles, toggleUserStatus, usersByWard, saveUser, wards } = useAppContext();
   const { formatDateTime } = useDateFormatter();
   const canManageUsers = hasPermission("users.manage");
+  const canCreateUser = Boolean(canManageUsers && currentWard && canAssignAccessLevel(currentUser, "member", currentWard, wards));
   const accessTemplates = useMemo(() => roles.filter((role) => !isSystemRoleId(role.id)).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [roles]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -65,6 +77,10 @@ export default function UsersPage() {
   const [form, setForm] = useState<UserForm>(emptyUserForm);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedAccessTemplateId, setSelectedAccessTemplateId] = useState<string>();
+  const assignableAccessLevels = useMemo(
+    () => (currentWard ? USER_ACCESS_LEVELS.filter((level) => canAssignAccessLevel(currentUser, level, currentWard, wards)) : []),
+    [currentUser, currentWard, wards],
+  );
 
   const filteredUsers = useMemo(
     () =>
@@ -99,7 +115,7 @@ export default function UsersPage() {
   }
 
   function openCreateDrawer() {
-    if (!canManageUsers) return;
+    if (!canCreateUser) return;
     resetForm();
     setDrawerOpen(true);
   }
@@ -107,12 +123,14 @@ export default function UsersPage() {
   const openEditDrawer = useCallback((user: User) => {
     if (!canManageUsers) return;
     if (isSystemAdmin(user) && user.id !== currentUser?.id) return;
+    if (!canManageUser(currentUser, user, wards)) return;
 
     setEditingId(user.id);
     setForm({
       name: user.name,
       email: user.email,
       phone: user.phone,
+      accessLevel: user.accessLevel,
       roleId: user.roleId,
       memberId: user.memberId ?? "",
       status: user.status,
@@ -120,7 +138,7 @@ export default function UsersPage() {
     });
     setSelectedAccessTemplateId(undefined);
     setDrawerOpen(true);
-  }, [canManageUsers, currentUser?.id]);
+  }, [canManageUsers, currentUser, wards]);
 
   function applyAccessTemplate(templateId: string) {
     const template = accessTemplates.find((role) => role.id === templateId);
@@ -146,6 +164,7 @@ export default function UsersPage() {
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
+      accessLevel: form.accessLevel,
       roleId: form.roleId,
       memberId: form.memberId || undefined,
       status: form.status,
@@ -205,6 +224,13 @@ export default function UsersPage() {
         },
       },
       {
+        id: "accessLevel",
+        header: "Nível",
+        cell: ({ row }) => USER_ACCESS_LEVEL_LABELS[row.original.accessLevel],
+        sortingFn: (rowA, rowB) =>
+          USER_ACCESS_LEVEL_LABELS[rowA.original.accessLevel].localeCompare(USER_ACCESS_LEVEL_LABELS[rowB.original.accessLevel], "pt-BR"),
+      },
+      {
         id: "access",
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
@@ -252,10 +278,11 @@ export default function UsersPage() {
         cell: ({ row }) => {
           const user = row.original;
           const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
+          const canEditTarget = canManageUsers && !isProtectedSystemUser && canManageUser(currentUser, user, wards);
 
           return (
             <div className="flex justify-end gap-2">
-              {canManageUsers && !isProtectedSystemUser ? (
+              {canEditTarget ? (
                 <>
                   <Button onClick={() => openEditDrawer(user)} size="sm" variant="outline">
                     Editar
@@ -270,7 +297,7 @@ export default function UsersPage() {
         },
       },
     ],
-    [canManageUsers, currentUser?.id, formatDateTime, membersByWard, openEditDrawer, toggleUserStatus],
+    [canManageUsers, currentUser, formatDateTime, membersByWard, openEditDrawer, toggleUserStatus, wards],
   );
 
   return (
@@ -281,7 +308,7 @@ export default function UsersPage() {
           title="Acessos por área"
           description="Gestão de contas e matriz de acesso por área do sistema."
           actions={
-            canManageUsers ? (
+            canCreateUser ? (
             <Button onClick={openCreateDrawer} size="lg">
               Novo usuário
             </Button>
@@ -324,7 +351,7 @@ export default function UsersPage() {
             </DrawerHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-4">
-              <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label>Nome completo</Label>
                   <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
@@ -357,18 +384,27 @@ export default function UsersPage() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Status</Label>
-                  <Select value={form.status} onValueChange={(value) => value && setForm((current) => ({ ...current, status: value as UserStatus }))}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Ativo</SelectItem>
-                      <SelectItem value="inactive">Inativo</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Nível de liderança</Label>
+                  <UserAccessLevelSelect
+                    levels={assignableAccessLevels}
+                    value={form.accessLevel}
+                    onValueChange={(value) => setForm((current) => ({ ...current, accessLevel: value }))}
+                  />
                 </div>
-                <div className="space-y-3">
+                <div className="rounded-lg border bg-card px-3 py-2.5">
+                  <div className="flex min-h-8 items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <Label className="mb-0">Status</Label>
+                      <p className="text-sm text-muted-foreground">{statusLabels[form.status]}</p>
+                    </div>
+                    <Switch
+                      aria-label="Status do usuário"
+                      checked={form.status === "active"}
+                      onCheckedChange={(checked) => setForm((current) => ({ ...current, status: checked ? "active" : "inactive" }))}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-3 md:col-span-2">
                   <Label>Matriz de acessos</Label>
                   {accessTemplates.length ? (
                     <Select value={selectedAccessTemplateId} onValueChange={applyAccessTemplate}>
@@ -399,7 +435,7 @@ export default function UsersPage() {
                 <Button onClick={closeDrawer} variant="ghost">
                   Cancelar
                 </Button>
-                <Button disabled={!currentWard || !form.name.trim() || !form.email.trim() || !canManageUsers} onClick={saveCurrentUser}>
+                <Button disabled={!currentWard || !form.name.trim() || !form.email.trim() || !canManageUsers || !assignableAccessLevels.includes(form.accessLevel)} onClick={saveCurrentUser}>
                   {editingId ? "Salvar alterações" : "Criar usuário"}
                 </Button>
               </div>

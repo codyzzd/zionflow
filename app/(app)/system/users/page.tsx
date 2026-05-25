@@ -5,6 +5,7 @@ import { ChevronsUpDown } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { AccessMatrixEditor } from "@/components/features/access/access-matrix-editor";
+import { UserAccessLevelSelect } from "@/components/features/access/user-access-level-select";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
@@ -18,18 +19,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { ACCESS_MATRIX_AREAS, accessLevelFromPermissions } from "@/lib/access-control";
+import { ACCESS_MATRIX_AREAS, USER_ACCESS_LEVEL_LABELS, USER_ACCESS_LEVELS, accessLevelFromPermissions } from "@/lib/access-control";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { cn } from "@/lib/utils";
-import type { PermissionKey, Stake, User, UserStatus, Ward } from "@/types/domain";
+import type { PermissionKey, Stake, User, UserAccessLevel, UserStatus, Ward } from "@/types/domain";
 
 type UserForm = {
   wardId: string;
   name: string;
   email: string;
   phone: string;
+  accessLevel: UserAccessLevel;
   roleId: string;
   memberId: string;
   status: UserStatus;
@@ -41,6 +44,7 @@ const emptyUserForm: UserForm = {
   name: "",
   email: "",
   phone: "",
+  accessLevel: "member",
   roleId: SYSTEM_ROLE_IDS.viewer,
   memberId: "",
   status: "active",
@@ -231,6 +235,7 @@ export default function SystemUsersPage() {
       name: user.name,
       email: user.email,
       phone: user.phone,
+      accessLevel: user.accessLevel,
       roleId: user.roleId || SYSTEM_ROLE_IDS.viewer,
       memberId: user.memberId ?? "",
       status: user.status,
@@ -272,6 +277,7 @@ export default function SystemUsersPage() {
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
+      accessLevel: form.accessLevel,
       roleId: form.roleId || SYSTEM_ROLE_IDS.viewer,
       memberId: form.memberId || undefined,
       status: form.status,
@@ -352,6 +358,14 @@ export default function SystemUsersPage() {
         },
         sortingFn: (rowA, rowB) =>
           (wardsById.get(rowA.original.wardId)?.name ?? "").localeCompare(wardsById.get(rowB.original.wardId)?.name ?? "", "pt-BR"),
+      },
+      {
+        id: "accessLevel",
+        meta: { label: "Nível" },
+        header: "Nível",
+        cell: ({ row }) => USER_ACCESS_LEVEL_LABELS[row.original.accessLevel],
+        sortingFn: (rowA, rowB) =>
+          USER_ACCESS_LEVEL_LABELS[rowA.original.accessLevel].localeCompare(USER_ACCESS_LEVEL_LABELS[rowB.original.accessLevel], "pt-BR"),
       },
       {
         id: "access",
@@ -477,8 +491,8 @@ export default function SystemUsersPage() {
             </DrawerHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-4">
-              <div className="space-y-4">
-                <div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
                   <Label>Ala</Label>
                   <WardCombobox disabled={!wardOptions.length} onChange={updateWard} options={wardOptions} stakesById={stakesById} value={form.wardId} />
                 </div>
@@ -515,18 +529,27 @@ export default function SystemUsersPage() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Status</Label>
-                  <Select value={form.status} onValueChange={(value) => value && setForm((current) => ({ ...current, status: value as UserStatus }))}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Ativo</SelectItem>
-                      <SelectItem value="inactive">Inativo</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Nível de liderança</Label>
+                  <UserAccessLevelSelect
+                    levels={USER_ACCESS_LEVELS}
+                    value={form.accessLevel}
+                    onValueChange={(value) => setForm((current) => ({ ...current, accessLevel: value }))}
+                  />
                 </div>
-                <div className="space-y-3">
+                <div className="rounded-lg border bg-card px-3 py-2.5">
+                  <div className="flex min-h-8 items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <Label className="mb-0">Status</Label>
+                      <p className="text-sm text-muted-foreground">{statusLabels[form.status]}</p>
+                    </div>
+                    <Switch
+                      aria-label="Status do usuário"
+                      checked={form.status === "active"}
+                      onCheckedChange={(checked) => setForm((current) => ({ ...current, status: checked ? "active" : "inactive" }))}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-3 md:col-span-2">
                   <Label>Matriz de acessos</Label>
                   {accessTemplates.length ? (
                     <Select value={selectedAccessTemplateId} onValueChange={applyAccessTemplate}>
