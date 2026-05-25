@@ -11,6 +11,7 @@ export type PermissionKey =
   | "members.manage"
   | "minutes.view"
   | "minutes.manage"
+  | "hymns.view"
   | "frequency.view"
   | "frequency.manage"
   | "missionary.view"

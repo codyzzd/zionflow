@@ -3,7 +3,6 @@
 import {
   Building2,
   BusFront,
-  ChartColumnIncreasing,
   ChevronRight,
   Cog,
   FileText,
@@ -14,7 +13,6 @@ import {
   LayoutDashboard,
   LogOut,
   MoreHorizontal,
-  RotateCcw,
   Settings,
   ShieldCheck,
   Utensils,
@@ -72,8 +70,16 @@ type NavItem = {
 const mainItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, viewPermission: "dashboard.view" },
   { href: "/members", label: "Membros", icon: Users, viewPermission: "members.view" },
-  { href: "/meetings", label: "Atas Sacramentais", icon: FileText, viewPermission: "minutes.view" },
-  { href: "/frequency", label: "Frequência", icon: ChartColumnIncreasing, viewPermission: "frequency.view" },
+  {
+    href: "/meetings",
+    label: "Atas Sacramentais",
+    icon: FileText,
+    children: [
+      { href: "/meetings", label: "Atas", viewPermission: "minutes.view" },
+      { href: "/meetings/hymns", label: "Hinos", viewPermission: "hymns.view" },
+      { href: "/frequency", label: "Frequência", viewPermission: "frequency.view" },
+    ],
+  },
   { href: "/missionaries", label: "Missionários", icon: Handshake, viewPermission: "missionary.view" },
   {
     href: "/caravans",
@@ -104,6 +110,7 @@ const secondaryItems: NavItem[] = [
       { href: "/system/hymn-books", label: "Livros de hinos", systemOnly: true },
       { href: "/system/hymns", label: "Hinos", systemOnly: true },
       { href: "/system/users", label: "Usuários", systemOnly: true },
+      { href: "/system/access-templates", label: "Templates de acesso", systemOnly: true },
     ],
   },
   { href: "/users", label: "Usuários e acessos", icon: KeyRound, viewPermission: "users.view" },
@@ -115,7 +122,6 @@ type SidebarNavProps = {
   currentUser: User;
   hasPermission: (permission: PermissionKey) => boolean;
   onLogout: () => void;
-  onResetDemo: () => void;
   wardName: string;
 };
 
@@ -187,10 +193,12 @@ function NavMenuItem({
   hasPermission: (permission: PermissionKey) => boolean;
 }) {
   const href = item.viewPermission && !hasPermission(item.viewPermission) && visibleChildren.length ? visibleChildren[0].href : item.href;
-  const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
+  const hasActiveChild = visibleChildren.some((child) => (child.href === item.href ? currentPath === child.href : currentPath === child.href || currentPath.startsWith(`${child.href}/`)));
+  const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`) || hasActiveChild;
   const Icon = item.icon;
   const hasChildren = visibleChildren.length > 0;
   const [isOpen, setIsOpen] = useState(isActive);
+  const open = isActive || isOpen;
 
   if (!hasChildren) {
     return (
@@ -216,7 +224,7 @@ function NavMenuItem({
   }
 
   return (
-    <Collapsible asChild open={isOpen} onOpenChange={setIsOpen} className="group/collapsible">
+    <Collapsible asChild open={open} onOpenChange={setIsOpen} className="group/collapsible">
       <SidebarMenuItem>
         <CollapsibleTrigger asChild>
           <SidebarMenuButton
@@ -261,7 +269,6 @@ export function SidebarNav({
   currentUser,
   hasPermission,
   onLogout,
-  onResetDemo,
   wardName,
 }: SidebarNavProps) {
   const { isMobile, setOpenMobile } = useSidebar();
@@ -329,10 +336,6 @@ export function SidebarNav({
                 <span className="block truncate">{currentUser.email}</span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onResetDemo}>
-                <RotateCcw className="size-3.5" />
-                Resetar demo
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={onLogout}>
                 <LogOut className="size-3.5" />
                 Sair

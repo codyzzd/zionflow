@@ -12,7 +12,7 @@ import { createClient } from "@/lib/supabase/client";
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { currentUser, currentWard, hasPermission, logout, ready, resetDemoData, resolveAuthenticatedUser } = useAppContext();
+  const { currentUser, currentWard, hasPermission, logout, ready, resolveAuthenticatedUser } = useAppContext();
 
   useEffect(() => {
     if (!ready) {
@@ -95,7 +95,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           currentUser={currentUser}
           hasPermission={hasPermission}
           onLogout={handleLogout}
-          onResetDemo={resetDemoData}
           wardName={currentWard.name}
         />
       </Sidebar>

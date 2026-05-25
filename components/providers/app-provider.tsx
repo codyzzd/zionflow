@@ -7,9 +7,9 @@ import { toast } from "sonner";
 import { normalizePermissionSet } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
-import { createEmptyDatabase, loadDatabase, normalizeHymnTags, resetDatabase, saveDatabase } from "@/lib/storage";
+import { createEmptyDatabase, loadDatabase, normalizeHymnTags, saveDatabase } from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
-import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
+import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
 import type {
   AuditLog,
@@ -128,7 +128,6 @@ type AppContextValue = {
   joinExistingWard: (email: string, wardId: string, authUserId?: string) => boolean;
   logout: () => void;
   switchWard: (wardId: string) => void;
-  resetDemoData: () => void;
   changeCurrentUserRole: (roleId: string) => void;
   hasPermission: (permission: PermissionKey) => boolean;
   saveStake: (input: SaveStakeInput) => void;
@@ -145,6 +144,8 @@ type AppContextValue = {
   importMembers: (input: ImportMembersInput) => void;
   addMemberNote: (memberId: string, text: string) => void;
   saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) => void;
+  saveAccessTemplate: (input: Omit<Role, "id"> & { id?: string }) => void;
+  deleteAccessTemplate: (templateId: string) => void;
   toggleUserStatus: (userId: string) => void;
   saveMinute: (input: SaveMinuteInput) => string;
   saveHymnBook: (input: Omit<HymnBook, "id"> & { id?: string }) => void;
@@ -185,6 +186,7 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "members.manage",
   "minutes.view",
   "minutes.manage",
+  "hymns.view",
   "frequency.view",
   "frequency.manage",
   "missionary.view",
@@ -1177,10 +1179,6 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       }));
     }
 
-    function resetDemoData() {
-      setDb(resetDatabase());
-    }
-
     function changeCurrentUserRole(roleId: string) {
       const selectedRole = db.roles.find((role) => role.id === roleId);
       if (!selectedRole || !currentUser || currentUser.roleId === roleId) return;
@@ -1724,6 +1722,75 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
 
       toast.success(exists ? "Usuário atualizado." : "Usuário cadastrado.");
+    }
+
+    function saveAccessTemplate(input: Omit<Role, "id"> & { id?: string }) {
+      if (input.id && isSystemRoleId(input.id)) {
+        toast.error("Templates internos do sistema não podem ser editados.");
+        return;
+      }
+
+      const exists = input.id ? db.roles.some((role) => role.id === input.id) : false;
+
+      setDb((currentDb) => {
+        const id = input.id ?? uid("role");
+        if (isSystemRoleId(id)) return currentDb;
+
+        const existing = currentDb.roles.find((role) => role.id === id);
+        const template: Role = {
+          id,
+          name: input.name.trim(),
+          description: input.description.trim(),
+          permissions: normalizePermissionSet(input.permissions),
+        };
+
+        const nextDb = {
+          ...currentDb,
+          roles: existing
+            ? currentDb.roles.map((role) => (role.id === id ? template : role))
+            : [template, ...currentDb.roles],
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: existing ? "UPDATE_ACCESS_TEMPLATE" : "CREATE_ACCESS_TEMPLATE",
+          module: "templates_acesso",
+          itemLabel: template.name,
+          summary: existing ? "Atualizou template de acesso." : "Criou template de acesso.",
+        });
+      });
+
+      toast.success(exists ? "Template atualizado." : "Template cadastrado.");
+    }
+
+    function deleteAccessTemplate(templateId: string) {
+      if (isSystemRoleId(templateId)) {
+        toast.error("Templates internos do sistema não podem ser apagados.");
+        return;
+      }
+
+      const template = db.roles.find((role) => role.id === templateId);
+      if (!template) return;
+
+      setDb((currentDb) => {
+        const currentTemplate = currentDb.roles.find((role) => role.id === templateId);
+        if (!currentTemplate || isSystemRoleId(currentTemplate.id)) return currentDb;
+
+        const nextDb = {
+          ...currentDb,
+          roles: currentDb.roles.filter((role) => role.id !== templateId),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: currentDb.session.currentWardId ?? "",
+          action: "DELETE_ACCESS_TEMPLATE",
+          module: "templates_acesso",
+          itemLabel: currentTemplate.name,
+          summary: "Apagou template de acesso.",
+        });
+      });
+
+      toast.success("Template apagado.");
     }
 
     function toggleUserStatus(userId: string) {
@@ -2513,7 +2580,6 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       joinExistingWard,
       logout,
       switchWard,
-      resetDemoData,
       changeCurrentUserRole,
       hasPermission,
       saveStake,
@@ -2530,6 +2596,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       importMembers,
       addMemberNote,
       saveUser,
+      saveAccessTemplate,
+      deleteAccessTemplate,
       toggleUserStatus,
       saveMinute,
       saveHymnBook,

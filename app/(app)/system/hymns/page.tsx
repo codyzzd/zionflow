@@ -26,7 +26,8 @@ import type { Hymn } from "@/types/domain";
 type HymnForm = Omit<Hymn, "id">;
 type DrawerMode = "create" | "view" | "edit";
 
-const ALL_HYMN_BOOKS_FILTER = "all";
+const ALL_HYMN_BOOKS_FILTER = "__all_hymn_books__";
+const ALL_CATEGORIES_FILTER = "__all_categories__";
 
 const emptyHymnForm: HymnForm = {
   hymnBookId: "",
@@ -229,6 +230,8 @@ export default function SystemHymnsPage() {
 
   const [search, setSearch] = useState("");
   const [hymnBookFilter, setHymnBookFilter] = useState(ALL_HYMN_BOOKS_FILTER);
+  const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES_FILTER);
+  const [tagFilter, setTagFilter] = useState("");
   const [selectedHymn, setSelectedHymn] = useState<Hymn | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -237,6 +240,7 @@ export default function SystemHymnsPage() {
   const isReadOnly = drawerMode === "view";
   const canManageHymns = isSystemAdmin(currentUser);
   const defaultHymnBookId = hymnBookOptions[0]?.id ?? "";
+  const hasActiveFilters = Boolean(search.trim() || tagFilter.trim() || hymnBookFilter !== ALL_HYMN_BOOKS_FILTER || categoryFilter !== ALL_CATEGORIES_FILTER);
   const currentDuplicate = Boolean(
     form.hymnBookId &&
       form.number !== "" &&
@@ -248,15 +252,15 @@ export default function SystemHymnsPage() {
       db.hymns
         .filter((hymn) => {
           if (hymnBookFilter !== ALL_HYMN_BOOKS_FILTER && hymn.hymnBookId !== hymnBookFilter) return false;
+          if (categoryFilter !== ALL_CATEGORIES_FILTER && hymn.category !== categoryFilter) return false;
 
           const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
-          if (!normalizedSearch) return true;
+          if (normalizedSearch && ![hymn.number, hymn.title].some((field) => field.toLocaleLowerCase("pt-BR").includes(normalizedSearch))) return false;
 
-          const hymnBook = hymnBooksById.get(hymn.hymnBookId);
+          const normalizedTagFilter = tagFilter.trim().toLocaleLowerCase("pt-BR");
+          if (normalizedTagFilter && !hymn.tags.some((tag) => tag.toLocaleLowerCase("pt-BR").includes(normalizedTagFilter))) return false;
 
-          return [String(hymn.number), hymn.title, hymn.category, hymnBook?.name ?? "", hymnBook?.emoji ?? "", ...hymn.tags].some((field) =>
-            field.toLocaleLowerCase("pt-BR").includes(normalizedSearch),
-          );
+          return true;
         })
         .sort((a, b) => {
           const bookSort = (hymnBooksById.get(a.hymnBookId)?.name ?? "").localeCompare(hymnBooksById.get(b.hymnBookId)?.name ?? "", "pt-BR");
@@ -266,8 +270,15 @@ export default function SystemHymnsPage() {
 
           return bookSort || numberSort || a.title.localeCompare(b.title, "pt-BR");
         }),
-    [db.hymns, hymnBookFilter, hymnBooksById, search],
+    [categoryFilter, db.hymns, hymnBookFilter, hymnBooksById, search, tagFilter],
   );
+
+  function clearFilters() {
+    setSearch("");
+    setHymnBookFilter(ALL_HYMN_BOOKS_FILTER);
+    setCategoryFilter(ALL_CATEGORIES_FILTER);
+    setTagFilter("");
+  }
 
   function resetDrawer() {
     setSelectedHymn(null);
@@ -469,8 +480,8 @@ export default function SystemHymnsPage() {
           enableRowSelection={canManageHymns}
           getRowId={(hymn) => hymn.id}
           toolbar={
-            <div className="flex flex-col gap-3 md:max-w-3xl md:flex-row md:items-center">
-              <Input className="md:max-w-lg" placeholder="Buscar por número, título ou hinário" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+              <Input className="md:max-w-sm" placeholder="Buscar por número ou título" value={search} onChange={(event) => setSearch(event.target.value)} />
               <div className="md:w-64">
                 <Label className="sr-only">Filtrar por hinário</Label>
                 <Select value={hymnBookFilter} onValueChange={setHymnBookFilter}>
@@ -487,6 +498,28 @@ export default function SystemHymnsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="md:w-56">
+                <Label className="sr-only">Filtrar por categoria</Label>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Todas as categorias" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_CATEGORIES_FILTER}>Todas as categorias</SelectItem>
+                    {categoryOptions.map((category) => (
+                      <SelectItem key={category.value} value={category.value}>
+                        {category.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Input className="md:max-w-48" placeholder="Filtrar por tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} />
+              {hasActiveFilters ? (
+                <Button className="self-start xl:self-auto" onClick={clearFilters} type="button" variant="outline">
+                  Limpar filtros
+                </Button>
+              ) : null}
             </div>
           }
           renderSelectedActions={

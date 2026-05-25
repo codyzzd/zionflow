@@ -801,10 +801,6 @@ export async function saveDatabase(db: Database): Promise<void> {
   }
 }
 
-export function resetDatabase() {
-  return withLocalPreferences(createEmptyDatabase());
-}
-
 export function createEmptyDatabase(): Database {
   return createSeedDatabase();
 }

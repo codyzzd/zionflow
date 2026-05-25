@@ -1,9 +1,9 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, EyeOff, Pencil } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
+import { AccessMatrixEditor } from "@/components/features/access/access-matrix-editor";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
@@ -15,18 +15,10 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import {
-  ACCESS_LEVEL_LABELS,
-  ACCESS_MATRIX_AREAS,
-  accessLevelFromPermissions,
-  permissionsForAccessLevel,
-  type AccessArea,
-  type AccessLevel,
-} from "@/lib/access-control";
+import { ACCESS_MATRIX_AREAS, accessLevelFromPermissions } from "@/lib/access-control";
 import { isSystemAdmin } from "@/lib/system-access";
-import { cn } from "@/lib/utils";
+import { isSystemRoleId } from "@/lib/system-ids";
 import type { PermissionKey, User, UserStatus } from "@/types/domain";
 
 type UserForm = {
@@ -38,9 +30,6 @@ type UserForm = {
   status: UserStatus;
   permissionOverrides: PermissionKey[];
 };
-
-const readOnlyAccessLevels: AccessLevel[] = ["hidden", "view"];
-const editableAccessLevels: AccessLevel[] = ["hidden", "view", "edit"];
 
 const emptyUserForm: UserForm = {
   name: "",
@@ -57,19 +46,6 @@ const statusLabels: Record<UserStatus, string> = {
   inactive: "Inativo",
 };
 
-const accessLevelIcons = {
-  hidden: EyeOff,
-  view: Eye,
-  edit: Pencil,
-};
-
-function updateAreaAccess(permissions: PermissionKey[], area: AccessArea, level: AccessLevel) {
-  const areaPermissions = [area.viewPermission, area.managePermission].filter(Boolean) as PermissionKey[];
-  const nextPermissions = permissions.filter((permission) => !areaPermissions.includes(permission));
-
-  return Array.from(new Set([...nextPermissions, ...permissionsForAccessLevel(area, level)]));
-}
-
 function getAccessSummary(permissions: PermissionKey[]) {
   const editable = ACCESS_MATRIX_AREAS.filter((area) => accessLevelFromPermissions(area, permissions) === "edit").length;
   const visibleOnly = ACCESS_MATRIX_AREAS.filter((area) => accessLevelFromPermissions(area, permissions) === "view").length;
@@ -78,58 +54,17 @@ function getAccessSummary(permissions: PermissionKey[]) {
   return { editable, visibleOnly, hidden };
 }
 
-function AccessLevelButtonGroup({
-  level,
-  levels,
-  onChange,
-}: {
-  level: AccessLevel;
-  levels: AccessLevel[];
-  onChange: (level: AccessLevel) => void;
-}) {
-  return (
-    <div aria-label="Nível de acesso" className="inline-flex w-fit rounded-md border bg-card p-0.5" role="group">
-      {levels.map((accessLevel) => {
-        const Icon = accessLevelIcons[accessLevel];
-        const isActive = level === accessLevel;
-
-        return (
-          <Tooltip key={accessLevel}>
-            <TooltipTrigger asChild>
-              <Button
-                aria-label={ACCESS_LEVEL_LABELS[accessLevel]}
-                aria-pressed={isActive}
-                className={cn(
-                  "size-8 rounded-sm",
-                  isActive
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-                onClick={() => onChange(accessLevel)}
-                size="icon"
-                type="button"
-                variant="ghost"
-              >
-                <Icon className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{ACCESS_LEVEL_LABELS[accessLevel]}</TooltipContent>
-          </Tooltip>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function UsersPage() {
-  const { currentUser, currentWard, hasPermission, membersByWard, toggleUserStatus, usersByWard, saveUser } = useAppContext();
+  const { currentUser, currentWard, hasPermission, membersByWard, roles, toggleUserStatus, usersByWard, saveUser } = useAppContext();
   const { formatDateTime } = useDateFormatter();
   const canManageUsers = hasPermission("users.manage");
+  const accessTemplates = useMemo(() => roles.filter((role) => !isSystemRoleId(role.id)).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [roles]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [editingId, setEditingId] = useState<string>();
   const [form, setForm] = useState<UserForm>(emptyUserForm);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedAccessTemplateId, setSelectedAccessTemplateId] = useState<string>();
 
   const filteredUsers = useMemo(
     () =>
@@ -152,6 +87,7 @@ export default function UsersPage() {
   function resetForm() {
     setEditingId(undefined);
     setForm(emptyUserForm);
+    setSelectedAccessTemplateId(undefined);
   }
 
   function handleDrawerOpenChange(open: boolean) {
@@ -182,8 +118,20 @@ export default function UsersPage() {
       status: user.status,
       permissionOverrides: user.permissionOverrides,
     });
+    setSelectedAccessTemplateId(undefined);
     setDrawerOpen(true);
   }, [canManageUsers, currentUser?.id]);
+
+  function applyAccessTemplate(templateId: string) {
+    const template = accessTemplates.find((role) => role.id === templateId);
+    if (!template) return;
+
+    setSelectedAccessTemplateId(templateId);
+    setForm((current) => ({
+      ...current,
+      permissionOverrides: template.permissions,
+    }));
+  }
 
   function closeDrawer() {
     handleDrawerOpenChange(false);
@@ -422,33 +370,26 @@ export default function UsersPage() {
                 </div>
                 <div className="space-y-3">
                   <Label>Matriz de acessos</Label>
-                  <div className="divide-y rounded-lg border">
-                    {ACCESS_MATRIX_AREAS.map((area) => {
-                      const level = accessLevelFromPermissions(area, form.permissionOverrides);
-                      const availableAccessLevels = area.managePermission ? editableAccessLevels : readOnlyAccessLevels;
-
-                      return (
-	                        <div className="grid gap-3 p-3 sm:grid-cols-[1fr_auto] sm:items-center" key={area.id}>
-	                          <div>
-	                            <p className="font-medium">{area.label}</p>
-	                            <p className="text-xs text-muted-foreground">
-	                              {area.managePermission ? "Visualizar permite consultar; editar libera ações." : "Sem edição separada por enquanto."}
-	                            </p>
-	                          </div>
-	                          <AccessLevelButtonGroup
-	                            level={level}
-	                            levels={availableAccessLevels}
-	                            onChange={(accessLevel) =>
-	                              setForm((current) => ({
-	                                ...current,
-	                                permissionOverrides: updateAreaAccess(current.permissionOverrides, area, accessLevel),
-	                              }))
-	                            }
-	                          />
-	                        </div>
-                      );
-                    })}
-                  </div>
+                  {accessTemplates.length ? (
+                    <Select value={selectedAccessTemplateId} onValueChange={applyAccessTemplate}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Aplicar template de acesso" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {accessTemplates.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            {template.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">Nenhum template cadastrado.</div>
+                  )}
+                  <AccessMatrixEditor
+                    permissions={form.permissionOverrides}
+                    onChange={(permissionOverrides) => setForm((current) => ({ ...current, permissionOverrides }))}
+                  />
                 </div>
               </div>
             </div>
