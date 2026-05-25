@@ -13,6 +13,7 @@ import type {
   Member,
   MissionaryCompanionship,
   HostHouse,
+  HybridField,
   Hymn,
   HymnBook,
   LunchSchedule,
@@ -367,8 +368,32 @@ function normalizeHostHouse(hostHouse: HostHouse): HostHouse {
   return normalizeSimpleRecord(hostHouse);
 }
 
+function normalizeHybridField(value: unknown, fallbackLinkedId = ""): HybridField {
+  const field = value && typeof value === "object" && !Array.isArray(value) ? (value as Partial<HybridField>) : {};
+  const mode = field.mode === "manual" ? "manual" : "linked";
+  const linkedId = typeof field.linkedId === "string" ? field.linkedId : fallbackLinkedId;
+  const manualValue = typeof field.manualValue === "string" ? field.manualValue : "";
+
+  return {
+    mode,
+    linkedId: mode === "linked" ? linkedId : "",
+    manualValue: mode === "manual" ? manualValue : "",
+  };
+}
+
 function normalizeLunchSchedule(lunchSchedule: LunchSchedule): LunchSchedule {
-  return normalizeSimpleRecord(lunchSchedule);
+  const legacyLunchSchedule = lunchSchedule as LunchSchedule & {
+    host?: unknown;
+    hostMemberId?: unknown;
+  };
+  const hostMemberId = typeof legacyLunchSchedule.hostMemberId === "string" ? legacyLunchSchedule.hostMemberId : "";
+  const host = normalizeHybridField(legacyLunchSchedule.host, hostMemberId);
+
+  return normalizeSimpleRecord({
+    ...lunchSchedule,
+    host,
+    hostMemberId: host.mode === "linked" ? host.linkedId ?? "" : "",
+  });
 }
 
 function normalizePatrolMember(patrolMember: PatrolMember): PatrolMember {
@@ -579,7 +604,11 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
     case "lunchSchedules":
       return {
         ward_id: optionalUuid(record.wardId),
-        host_member_id: optionalUuid(record.hostMemberId),
+        host_member_id: optionalUuid(
+          record.host && typeof record.host === "object" && !Array.isArray(record.host) && (record.host as HybridField).mode === "linked"
+            ? (record.host as HybridField).linkedId
+            : record.hostMemberId,
+        ),
       };
     case "caravans":
       return { ward_id: optionalUuid(record.wardId) };

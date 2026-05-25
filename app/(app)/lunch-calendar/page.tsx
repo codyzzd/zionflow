@@ -5,6 +5,7 @@ import { type KeyboardEvent, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
+import { HybridSelector } from "@/components/shared/hybrid-selector";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
@@ -20,14 +21,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { cn, todayDate } from "@/lib/utils";
-import type { CalendarWeekStartsOn, ConfirmationStatus, LunchSchedule, MissionaryCompanionship, Weekday } from "@/types/domain";
+import type { CalendarWeekStartsOn, ConfirmationStatus, HybridField, LunchSchedule, MissionaryCompanionship, Weekday } from "@/types/domain";
 
 type LunchForm = {
   id?: string;
   date: string;
   time: string;
   companionshipIds: string[];
-  hostMemberId: string;
+  host: HybridField;
   notes: string;
   confirmationStatus: ConfirmationStatus;
 };
@@ -60,7 +61,7 @@ const emptyLunchForm: LunchForm = {
   date: todayDate(),
   time: "12:00",
   companionshipIds: [],
-  hostMemberId: "",
+  host: { mode: "linked", linkedId: "", manualValue: "" },
   notes: "",
   confirmationStatus: "not_viewed",
 };
@@ -135,6 +136,10 @@ function buildMonthCells(monthDate: Date, weekStartsOn: CalendarWeekStartsOn) {
 
 function isCompanionship(value: MissionaryCompanionship | undefined): value is MissionaryCompanionship {
   return value !== undefined;
+}
+
+function isHostFilled(host: HybridField) {
+  return host.mode === "manual" ? Boolean(host.manualValue?.trim()) : Boolean(host.linkedId);
 }
 
 function CompanionshipIcon({ type, className }: { type: MissionaryCompanionship["type"]; className?: string }) {
@@ -261,6 +266,15 @@ export default function LunchCalendarPage() {
   const pDayLabel = weekdayOptions.find((option) => option.value === lunchPDayWeekday)?.label ?? "Segunda-feira";
   const selectedLunches = lunchesByDate.get(selectedDate) ?? [];
   const selectedDateLabel = formatDate(selectedDate);
+  const hostMemberOptions = useMemo(
+    () =>
+      membersByWard.map((member) => ({
+        value: member.id,
+        label: `${member.name} • ${member.organization}`,
+        searchValue: member.name,
+      })),
+    [membersByWard],
+  );
   const coverageSummary = useMemo(() => {
     if (!activeCompanionships.length) {
       return "Nenhuma dupla ativa cadastrada";
@@ -297,14 +311,28 @@ export default function LunchCalendarPage() {
     return legacyHouse?.hostMemberId ?? "";
   }
 
+  function getLunchHostField(lunch: LegacyLunchSchedule): HybridField {
+    if (lunch.host) return lunch.host;
+
+    return {
+      mode: "linked",
+      linkedId: getLegacyHostMemberId(lunch),
+      manualValue: "",
+    };
+  }
+
   function getHostMemberLabel(hostMemberId: string) {
     return membersByWard.find((member) => member.id === hostMemberId)?.name ?? "Anfitrião não definido";
   }
 
   function getLunchHostLabel(lunch: LegacyLunchSchedule) {
-    const hostMemberId = getLegacyHostMemberId(lunch);
+    const host = getLunchHostField(lunch);
 
-    return hostMemberId ? getHostMemberLabel(hostMemberId) : "Anfitrião não definido";
+    if (host.mode === "manual") {
+      return host.manualValue?.trim() || "Anfitrião não definido";
+    }
+
+    return host.linkedId ? getHostMemberLabel(host.linkedId) : "Anfitrião não definido";
   }
 
   function getLunchCompanionships(companionshipIds: string[]) {
@@ -355,7 +383,7 @@ export default function LunchCalendarPage() {
       date: lunch.date,
       time: lunch.time,
       companionshipIds: lunch.companionshipIds,
-      hostMemberId: getLegacyHostMemberId(lunch),
+      host: getLunchHostField(lunch),
       notes: lunch.notes,
       confirmationStatus: lunch.confirmationStatus,
     });
@@ -372,7 +400,7 @@ export default function LunchCalendarPage() {
   function saveCurrentLunch() {
     setError("");
 
-    if (!currentWard || !lunchForm.date || !lunchForm.time || !lunchForm.hostMemberId || !lunchForm.companionshipIds.length) {
+    if (!currentWard || !lunchForm.date || !lunchForm.time || !isHostFilled(lunchForm.host) || !lunchForm.companionshipIds.length) {
       setError("Preencha data, horário, anfitrião e pelo menos uma dupla.");
       return;
     }
@@ -383,7 +411,8 @@ export default function LunchCalendarPage() {
       date: lunchForm.date,
       time: lunchForm.time,
       companionshipIds: lunchForm.companionshipIds,
-      hostMemberId: lunchForm.hostMemberId,
+      host: lunchForm.host,
+      hostMemberId: lunchForm.host.mode === "linked" ? lunchForm.host.linkedId ?? "" : "",
       notes: lunchForm.notes.trim(),
       confirmationStatus: lunchForm.confirmationStatus,
     });
@@ -726,21 +755,14 @@ export default function LunchCalendarPage() {
                   </div>
                 </div>
 
-                <div>
-                  <Label>Anfitrião</Label>
-                  <Select value={lunchForm.hostMemberId} onValueChange={(value) => setLunchForm((current) => ({ ...current, hostMemberId: value ?? "" }))}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o membro" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {membersByWard.map((member) => (
-                        <SelectItem key={member.id} value={member.id}>
-                          {member.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <HybridSelector
+                  label="Anfitrião"
+                  value={lunchForm.host}
+                  options={hostMemberOptions}
+                  manualPlaceholder="Digite ou selecione o anfitrião"
+                  manualOptionLabel="Manual"
+                  onChange={(value) => setLunchForm((current) => ({ ...current, host: value }))}
+                />
 
                 <CompanionshipSelect
                   companionships={activeCompanionships}
@@ -785,7 +807,7 @@ export default function LunchCalendarPage() {
                   Cancelar
                 </Button>
                 <Button
-                  disabled={!currentWard || !lunchForm.date || !lunchForm.time || !lunchForm.hostMemberId || !lunchForm.companionshipIds.length}
+                  disabled={!currentWard || !lunchForm.date || !lunchForm.time || !isHostFilled(lunchForm.host) || !lunchForm.companionshipIds.length}
                   onClick={saveCurrentLunch}
                 >
                   {lunchForm.id ? "Salvar alterações" : "Cadastrar almoço"}

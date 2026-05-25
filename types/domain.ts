@@ -226,6 +226,7 @@ export interface LunchSchedule extends RecordMetadata {
   date: string;
   time: string;
   companionshipIds: string[];
+  host: HybridField;
   hostMemberId: string;
   notes: string;
   confirmationStatus: ConfirmationStatus;

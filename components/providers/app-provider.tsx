@@ -474,9 +474,13 @@ function clearDeletedMemberReferences(db: Database, memberIds: Set<string>, acto
     hostHouses: db.hostHouses.map((house) =>
       house.hostMemberId && memberIds.has(house.hostMemberId) ? withRecordMetadata({ ...house, hostMemberId: undefined }, house, actorUserId) : house,
     ),
-    lunchSchedules: db.lunchSchedules.map((lunch) =>
-      memberIds.has(lunch.hostMemberId) ? withRecordMetadata({ ...lunch, hostMemberId: "" }, lunch, actorUserId) : lunch,
-    ),
+    lunchSchedules: db.lunchSchedules.map((lunch) => {
+      const host = clearHybridField(lunch.host);
+
+      return memberIds.has(lunch.hostMemberId) || host !== lunch.host
+        ? withRecordMetadata({ ...lunch, host, hostMemberId: host.mode === "linked" ? host.linkedId ?? "" : "" }, lunch, actorUserId)
+        : lunch;
+    }),
     patrolMembers: db.patrolMembers.map((member) =>
       member.memberId && memberIds.has(member.memberId) ? withRecordMetadata({ ...member, memberId: undefined }, member, actorUserId) : member,
     ),
