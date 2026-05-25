@@ -25,6 +25,7 @@ import {
   type AccessArea,
   type AccessLevel,
 } from "@/lib/access-control";
+import { isSystemAdmin } from "@/lib/system-access";
 import { cn } from "@/lib/utils";
 import type { PermissionKey, User, UserStatus } from "@/types/domain";
 
@@ -121,7 +122,7 @@ function AccessLevelButtonGroup({
 }
 
 export default function UsersPage() {
-  const { currentWard, hasPermission, membersByWard, toggleUserStatus, usersByWard, saveUser } = useAppContext();
+  const { currentUser, currentWard, hasPermission, membersByWard, toggleUserStatus, usersByWard, saveUser } = useAppContext();
   const { formatDateTime } = useDateFormatter();
   const canManageUsers = hasPermission("users.manage");
   const [search, setSearch] = useState("");
@@ -169,6 +170,8 @@ export default function UsersPage() {
 
   const openEditDrawer = useCallback((user: User) => {
     if (!canManageUsers) return;
+    if (isSystemAdmin(user) && user.id !== currentUser?.id) return;
+
     setEditingId(user.id);
     setForm({
       name: user.name,
@@ -180,7 +183,7 @@ export default function UsersPage() {
       permissionOverrides: user.permissionOverrides,
     });
     setDrawerOpen(true);
-  }, [canManageUsers]);
+  }, [canManageUsers, currentUser?.id]);
 
   function closeDrawer() {
     handleDrawerOpenChange(false);
@@ -300,10 +303,11 @@ export default function UsersPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => {
           const user = row.original;
+          const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
 
           return (
             <div className="flex justify-end gap-2">
-              {canManageUsers ? (
+              {canManageUsers && !isProtectedSystemUser ? (
                 <>
                   <Button onClick={() => openEditDrawer(user)} size="sm" variant="outline">
                     Editar
@@ -318,7 +322,7 @@ export default function UsersPage() {
         },
       },
     ],
-    [canManageUsers, formatDateTime, membersByWard, openEditDrawer, toggleUserStatus],
+    [canManageUsers, currentUser?.id, formatDateTime, membersByWard, openEditDrawer, toggleUserStatus],
   );
 
   return (

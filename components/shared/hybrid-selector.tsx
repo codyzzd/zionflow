@@ -23,6 +23,7 @@ export function HybridSelector({
   onChange,
   manualPlaceholder,
   manualOptionLabel = "Manual",
+  disabled = false,
 }: {
   label: string;
   value: HybridField;
@@ -30,6 +31,7 @@ export function HybridSelector({
   onChange: (value: HybridField) => void;
   manualPlaceholder: string;
   manualOptionLabel?: string;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftQuery, setDraftQuery] = useState("");
@@ -37,6 +39,16 @@ export function HybridSelector({
   const selectedOption = useMemo(() => options.find((option) => option.value === value.linkedId), [options, value.linkedId]);
   const displayValue = value.mode === "manual" ? value.manualValue ?? "" : selectedOption?.label ?? "";
   const trimmedQuery = draftQuery.trim();
+
+  const matchingOption = useMemo(() => {
+    const normalizedQuery = trimmedQuery.toLocaleLowerCase("pt-BR");
+    if (!normalizedQuery) return undefined;
+
+    return options.find((option) => {
+      const values = [option.label, option.searchValue ?? ""].map((item) => item.trim().toLocaleLowerCase("pt-BR"));
+      return values.some((item) => item === normalizedQuery);
+    });
+  }, [options, trimmedQuery]);
 
   const filteredOptions = useMemo(() => {
     const normalizedQuery = trimmedQuery.toLocaleLowerCase("pt-BR");
@@ -46,7 +58,7 @@ export function HybridSelector({
     }
 
     return options
-      .filter((option) => (option.searchValue ?? option.label).toLocaleLowerCase("pt-BR").includes(normalizedQuery))
+      .filter((option) => `${option.label} ${option.searchValue ?? ""}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery))
       .slice(0, 8);
   }, [options, trimmedQuery]);
 
@@ -97,7 +109,7 @@ export function HybridSelector({
         }}
       >
         <PopoverTrigger asChild>
-          <Button className="w-full justify-between" variant="outline">
+          <Button className="w-full justify-between" disabled={disabled} variant="outline">
             <span className={cn("truncate", !displayValue && "text-muted-foreground")}>{displayValue || manualPlaceholder}</span>
             <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </Button>
@@ -127,7 +139,7 @@ export function HybridSelector({
                 </CommandGroup>
               ) : null}
 
-              {trimmedQuery ? (
+              {trimmedQuery && !matchingOption ? (
                 <>
                   <CommandSeparator />
                   <CommandGroup heading="Manual">

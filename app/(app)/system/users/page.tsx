@@ -27,6 +27,7 @@ import {
   type AccessArea,
   type AccessLevel,
 } from "@/lib/access-control";
+import { isSystemAdmin } from "@/lib/system-access";
 import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { cn } from "@/lib/utils";
 import type { PermissionKey, Stake, User, UserStatus, Ward } from "@/types/domain";
@@ -223,7 +224,7 @@ function WardCombobox({
 }
 
 export default function SystemUsersPage() {
-  const { db, saveUser, toggleUserStatus } = useAppContext();
+  const { currentUser, db, saveUser, toggleUserStatus } = useAppContext();
   const { formatDateTime } = useDateFormatter();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -445,6 +446,11 @@ export default function SystemUsersPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => {
           const user = row.original;
+          const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
+
+          if (isProtectedSystemUser) {
+            return null;
+          }
 
           return (
             <div className="flex justify-end gap-2">
@@ -459,7 +465,7 @@ export default function SystemUsersPage() {
         },
       },
     ],
-    [formatDateTime, membersById, openEditDrawer, stakesById, toggleUserStatus, wardsById],
+    [currentUser?.id, formatDateTime, membersById, openEditDrawer, stakesById, toggleUserStatus, wardsById],
   );
 
   return (

@@ -7,7 +7,8 @@ import { toast } from "sonner";
 import { normalizePermissionSet } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
-import { createEmptyDatabase, loadDatabase, resetDatabase, saveDatabase } from "@/lib/storage";
+import { createEmptyDatabase, loadDatabase, normalizeHymnTags, resetDatabase, saveDatabase } from "@/lib/storage";
+import { isSystemAdmin } from "@/lib/system-access";
 import { SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
 import type {
@@ -38,6 +39,7 @@ import type {
   SessionState,
   Stake,
   User,
+  UserAccountType,
   Ward,
 } from "@/types/domain";
 
@@ -53,7 +55,7 @@ type ImportMembersInput = {
 
 type ImportHymnsInput = {
   hymnBookId: string;
-  hymns: Array<{ number: number; title: string; active?: boolean }>;
+  hymns: Array<{ number: string; title: string; category: string; tags: string[] }>;
   removeMissing: boolean;
 };
 
@@ -142,7 +144,7 @@ type AppContextValue = {
   deleteMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
   addMemberNote: (memberId: string, text: string) => void;
-  saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt"> & { id?: string }) => void;
+  saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) => void;
   toggleUserStatus: (userId: string) => void;
   saveMinute: (input: SaveMinuteInput) => string;
   saveHymnBook: (input: Omit<HymnBook, "id"> & { id?: string }) => void;
@@ -233,6 +235,16 @@ function getActorUserId(db: Database) {
   return db.session.currentUserId;
 }
 
+function canMutateUser(db: Database, user: User) {
+  return !isSystemAdmin(user) || db.session.currentUserId === user.id;
+}
+
+function canAssignSystemAccountType(db: Database) {
+  const actor = db.users.find((user) => user.id === db.session.currentUserId);
+
+  return isSystemAdmin(actor);
+}
+
 function normalizeEmail(email: string) {
   return email.trim().toLocaleLowerCase("pt-BR");
 }
@@ -320,6 +332,7 @@ function buildOnboardingUser(email: string, wardId: string, role: Role, timestam
     email,
     phone: "",
     status: "active",
+    accountType: "regular",
     roleId: role.id,
     permissionOverrides: normalizePermissionSet(role.permissions),
     permissionsConfigured: true,
@@ -1659,17 +1672,32 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success("Anotação adicionada.");
     }
 
-    function saveUser(input: Omit<User, "id" | "createdAt" | "lastAccessAt"> & { id?: string }) {
+    function saveUser(input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) {
       const exists = input.id ? db.users.some((user) => user.id === input.id) : false;
+      const targetUser = input.id ? db.users.find((user) => user.id === input.id) : undefined;
+
+      if (targetUser && !canMutateUser(db, targetUser)) {
+        toast.error("Somente o super usuário pode alterar a própria conta de sistema.");
+        return;
+      }
+
+      if (input.accountType === "system_super_user" && !canAssignSystemAccountType(db)) {
+        toast.error("Somente o super usuário pode criar contas de sistema.");
+        return;
+      }
 
       setDb((currentDb) => {
         const id = input.id ?? uid("user");
         const existing = currentDb.users.find((user) => user.id === id);
+        if (existing && !canMutateUser(currentDb, existing)) return currentDb;
+        if (input.accountType === "system_super_user" && !canAssignSystemAccountType(currentDb)) return currentDb;
+
         const actorUserId = getActorUserId(currentDb);
         const user: User = withRecordMetadata(
           {
             ...input,
             id,
+            accountType: input.accountType ?? existing?.accountType ?? "regular",
             permissionOverrides: normalizePermissionSet(input.permissionOverrides),
             permissionsConfigured: true,
             createdAt: existing?.createdAt ?? nowIso(),
@@ -1701,11 +1729,18 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function toggleUserStatus(userId: string) {
       const targetUser = db.users.find((user) => user.id === userId);
       if (!targetUser) return;
+
+      if (!canMutateUser(db, targetUser)) {
+        toast.error("Somente o super usuário pode alterar o status da própria conta de sistema.");
+        return;
+      }
+
       const nextStatus: User["status"] = targetUser.status === "active" ? "inactive" : "active";
 
       setDb((currentDb) => {
         const target = currentDb.users.find((user) => user.id === userId);
         if (!target) return currentDb;
+        if (!canMutateUser(currentDb, target)) return currentDb;
 
         const nextStatus: User["status"] = target.status === "active" ? "inactive" : "active";
         const actorUserId = getActorUserId(currentDb);
@@ -1807,6 +1842,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             hymnBookId: input.hymnBookId,
             number: input.number,
             title: input.title.trim(),
+            category: input.category.trim(),
+            tags: normalizeHymnTags(input.tags),
             active: input.active !== false,
           },
           currentExisting,
@@ -1830,7 +1867,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     }
 
     function importHymns(input: ImportHymnsInput) {
-      const importedHymns = input.hymns.filter((hymn) => Number.isFinite(hymn.number) && hymn.number > 0 && hymn.title.trim());
+      const importedHymns = input.hymns.filter((hymn) => hymn.number.trim() && hymn.title.trim());
       if (!input.hymnBookId || !importedHymns.length) return;
 
       setDb((currentDb) => {
@@ -1838,19 +1875,20 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         if (!hymnBook) return currentDb;
 
         const actorUserId = getActorUserId(currentDb);
-        const hymnsByNumber = new Map<number, Hymn>();
+        const hymnsByNumber = new Map<string, Hymn>();
         currentDb.hymns
           .filter((hymn) => hymn.hymnBookId === input.hymnBookId)
           .forEach((hymn) => {
             hymnsByNumber.set(hymn.number, hymn);
           });
 
-        const importByNumber = new Map<number, { number: number; title: string; active?: boolean }>();
+        const importByNumber = new Map<string, { number: string; title: string; category: string; tags: string[] }>();
         importedHymns.forEach((hymn) => {
           importByNumber.set(hymn.number, {
             number: hymn.number,
             title: hymn.title.trim(),
-            active: hymn.active !== false,
+            category: hymn.category.trim(),
+            tags: hymn.tags,
           });
         });
 
@@ -1874,7 +1912,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
                   hymnBookId: input.hymnBookId,
                   number: hymn.number,
                   title: hymn.title,
-                  active: hymn.active !== false,
+                  category: hymn.category,
+                  tags: normalizeHymnTags(hymn.tags),
+                  active: existing.active,
                 },
                 existing,
                 actorUserId,
@@ -1891,7 +1931,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
               hymnBookId: input.hymnBookId,
               number: hymn.number,
               title: hymn.title,
-              active: hymn.active !== false,
+              category: hymn.category,
+              tags: normalizeHymnTags(hymn.tags),
+              active: true,
             },
             undefined,
             actorUserId,

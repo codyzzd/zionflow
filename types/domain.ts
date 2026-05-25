@@ -32,6 +32,7 @@ export type PermissionKey =
   | "audit.view";
 
 export type UserStatus = "active" | "inactive";
+export type UserAccountType = "regular" | "system_super_user";
 export type MinuteStatus = "draft" | "published";
 export type LunchStatus = "pending" | "confirmed" | "cancelled";
 export type ConfirmationStatus = "not_viewed" | "viewed" | "accepted" | "declined";
@@ -93,6 +94,7 @@ export interface User extends RecordMetadata {
   email: string;
   phone: string;
   status: UserStatus;
+  accountType: UserAccountType;
   roleId: string;
   permissionOverrides: PermissionKey[];
   permissionsConfigured?: boolean;
@@ -179,8 +181,10 @@ export interface SacramentMinute extends RecordMetadata {
 export interface Hymn extends RecordMetadata {
   id: string;
   hymnBookId: string;
-  number: number;
+  number: string;
   title: string;
+  category: string;
+  tags: string[];
   active: boolean;
 }
 

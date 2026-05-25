@@ -61,6 +61,7 @@ type RemoteRecord = {
   number?: number | string | null;
   title?: string | null;
   active?: boolean | null;
+  category?: string | null;
   name?: string | null;
   emoji?: string | null;
   hymn_book_id?: string | null;
@@ -154,6 +155,7 @@ function normalizeUser(user: User, roles: Role[]): User {
 
   return {
     ...normalizedUser,
+    accountType: normalizedUser.accountType === "system_super_user" ? "system_super_user" : "regular",
     roleId: normalizedUser.roleId || SYSTEM_ROLE_IDS.viewer,
     permissionOverrides: permissionsConfigured
       ? normalizePermissionSet(directPermissions)
@@ -255,11 +257,38 @@ function normalizeHymn(hymn: Hymn): Hymn {
   return {
     id: hymn.id,
     hymnBookId: String(hymn.hymnBookId ?? DEFAULT_HYMN_BOOK_IDS.new),
-    number: normalizeNumber(hymn.number, 0),
+    number: normalizeHymnNumber(hymn.number),
     title: String(hymn.title ?? ""),
+    category: String(hymn.category ?? ""),
+    tags: normalizeHymnTags(hymn.tags),
     active: hymn.active !== false,
     ...normalizeRecordMetadata(hymn),
   };
+}
+
+function normalizeHymnNumber(value: unknown) {
+  return String(value ?? "")
+    .replace(/[^0-9a-z]/gi, "")
+    .toLocaleLowerCase("pt-BR");
+}
+
+export function normalizeHymnTags(value: unknown) {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\n,;]+/) : [];
+  const tags: string[] = [];
+  const seen = new Set<string>();
+
+  values
+    .map((tag) => String(tag ?? "").trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .forEach((tag) => {
+      const key = tag.toLocaleLowerCase("pt-BR");
+      if (seen.has(key)) return;
+
+      seen.add(key);
+      tags.push(tag);
+    });
+
+  return tags;
 }
 
 function normalizeHymnBook(hymnBook: HymnBook): HymnBook {
@@ -269,16 +298,6 @@ function normalizeHymnBook(hymnBook: HymnBook): HymnBook {
     emoji: String(hymnBook.emoji ?? ""),
     ...normalizeRecordMetadata(hymnBook),
   };
-}
-
-function normalizeNumber(value: unknown, fallback: number) {
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.trunc(parsed);
 }
 
 function normalizeSeatCount(value: unknown) {
@@ -484,6 +503,7 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         email: asOptionalString(record.email),
         phone: asOptionalString(record.phone),
         status: record.status === "inactive" ? "inactive" : "active",
+        account_type: record.accountType === "system_super_user" ? "system_super_user" : "regular",
         permission_overrides: Array.isArray(record.permissionOverrides) ? record.permissionOverrides : [],
         permissions_configured: record.permissionsConfigured !== false,
         last_access_at: optionalText(record.lastAccessAt),
@@ -515,8 +535,10 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
     case "hymns":
       return {
         hymn_book_id: optionalUuid(record.hymnBookId),
-        number: normalizeNumber(record.number, 0),
+        number: normalizeHymnNumber(record.number),
         title: optionalText(record.title),
+        category: optionalText(record.category),
+        tags: normalizeHymnTags(record.tags),
         active: typeof record.active === "boolean" ? record.active : true,
       };
     case "missionaryCompanionships":
@@ -586,6 +608,7 @@ function remoteSelectColumns(key: RemoteCollectionKey) {
         "email",
         "phone",
         "status",
+        "account_type",
         "permission_overrides",
         "permissions_configured",
         "last_access_at",
@@ -599,7 +622,7 @@ function remoteSelectColumns(key: RemoteCollectionKey) {
     case "hymnBooks":
       return "id,data,name,emoji,created_at,updated_at";
     case "hymns":
-      return "id,data,hymn_book_id,number,title,active";
+      return "id,data,hymn_book_id,number,title,category,tags,active";
     default:
       return "id,data";
   }
@@ -652,6 +675,7 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         email: rowString(row, "email", "email"),
         phone: rowString(row, "phone", "phone"),
         status: rowString(row, "status", "status", "active") === "inactive" ? "inactive" : "active",
+        accountType: rowString(row, "account_type", "accountType", "regular") === "system_super_user" ? "system_super_user" : "regular",
         permissionOverrides: rowStringArray(row, "permission_overrides", "permissionOverrides"),
         permissionsConfigured: rowBoolean(row, "permissions_configured", "permissionsConfigured", true),
         createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
@@ -679,8 +703,10 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         ...asDataObject(row),
         id: row.id,
         hymnBookId: rowOptionalString(row, "hymn_book_id", "hymnBookId") ?? DEFAULT_HYMN_BOOK_IDS.new,
-        number: normalizeNumber(row.number ?? asDataObject(row).number, 0),
+        number: normalizeHymnNumber(row.number ?? asDataObject(row).number),
         title: rowString(row, "title", "title"),
+        category: rowString(row, "category", "category"),
+        tags: normalizeHymnTags(row.tags ?? asDataObject(row).tags),
         active: row.active !== false,
       };
 

@@ -1,34 +1,63 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Trash2 } from "lucide-react";
+import { ChevronsUpDown, Trash2, X } from "lucide-react";
+import type { ClipboardEvent, KeyboardEvent } from "react";
 import { useMemo, useState } from "react";
 
 import { HymnImportDialog } from "@/components/features/hymns/hymn-import-dialog";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { isSystemAdmin } from "@/lib/system-access";
+import { cn } from "@/lib/utils";
 import type { Hymn } from "@/types/domain";
 
-type HymnForm = Omit<Hymn, "id" | "number"> & { number: number | "" };
+type HymnForm = Omit<Hymn, "id">;
 type DrawerMode = "create" | "view" | "edit";
+
+const ALL_HYMN_BOOKS_FILTER = "all";
 
 const emptyHymnForm: HymnForm = {
   hymnBookId: "",
   number: "",
   title: "",
+  category: "",
+  tags: [],
   active: true,
 };
 
-function normalizeHymnNumberInput(value: string): number | "" {
-  const digits = value.replace(/\D/g, "");
-  return digits ? Number(digits) : "";
+function normalizeHymnNumberInput(value: string) {
+  return value.replace(/[^0-9a-z]/gi, "").toLocaleLowerCase("pt-BR");
+}
+
+function normalizeHymnTagsInput(value: string | string[]) {
+  const values = Array.isArray(value) ? value : value.split(/[\n,;]+/);
+  const tags: string[] = [];
+  const seen = new Set<string>();
+
+  values
+    .map((tag) => tag.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .forEach((tag) => {
+      const key = tag.toLocaleLowerCase("pt-BR");
+      if (seen.has(key)) return;
+
+      seen.add(key);
+      tags.push(tag);
+    });
+
+  return tags;
 }
 
 function hymnToForm(hymn: Hymn): HymnForm {
@@ -36,6 +65,8 @@ function hymnToForm(hymn: Hymn): HymnForm {
     hymnBookId: hymn.hymnBookId,
     number: hymn.number,
     title: hymn.title,
+    category: hymn.category,
+    tags: hymn.tags,
     active: hymn.active,
     createdAt: hymn.createdAt,
     createdByUserId: hymn.createdByUserId,
@@ -46,22 +77,165 @@ function hymnToForm(hymn: Hymn): HymnForm {
   };
 }
 
-function hymnSortValue(number: number) {
-  return Number.isFinite(number) ? number : Number.MAX_SAFE_INTEGER;
+function HymnTagInput({ disabled, onChange, tags }: { disabled: boolean; onChange: (tags: string[]) => void; tags: string[] }) {
+  const [draft, setDraft] = useState("");
+
+  function addTags(value: string) {
+    if (!value.trim()) {
+      setDraft("");
+      return;
+    }
+
+    const nextTags = normalizeHymnTagsInput([...tags, ...normalizeHymnTagsInput(value)]);
+    onChange(nextTags);
+    setDraft("");
+  }
+
+  function removeTag(tag: string) {
+    onChange(tags.filter((current) => current !== tag));
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" || event.key === "," || event.key === ";") {
+      event.preventDefault();
+      addTags(draft);
+      return;
+    }
+
+    if (event.key === "Backspace" && !draft && tags.length) {
+      onChange(tags.slice(0, -1));
+    }
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
+    const text = event.clipboardData.getData("text");
+    if (!/[\n,;]/.test(text)) return;
+
+    event.preventDefault();
+    addTags(text);
+  }
+
+  return (
+    <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border bg-white px-3 py-2 shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+      {tags.map((tag) => (
+        <Badge key={tag} className="border border-border bg-muted/70 px-2 py-1 text-foreground" variant="outline">
+          {tag}
+          {!disabled ? (
+            <button aria-label={`Remover ${tag}`} className="ml-1 rounded-full hover:text-destructive" onClick={() => removeTag(tag)} type="button">
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </Badge>
+      ))}
+      {!disabled ? (
+        <Input
+          className="h-6 min-w-28 flex-1 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+          value={draft}
+          onBlur={() => addTags(draft)}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          placeholder={tags.length ? "" : "Adicionar tag"}
+        />
+      ) : tags.length ? null : (
+        <span className="text-sm text-muted-foreground">Sem tags</span>
+      )}
+    </div>
+  );
+}
+
+function HymnCategoryInput({ disabled, onChange, options, value }: { disabled: boolean; onChange: (value: string) => void; options: Array<{ value: string; label: string }>; value: string }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const trimmedDraft = draft.trim();
+  const normalizedDraft = trimmedDraft.toLocaleLowerCase("pt-BR");
+  const filteredOptions = useMemo(
+    () => options.filter((option) => option.label.toLocaleLowerCase("pt-BR").includes(normalizedDraft)).slice(0, 8),
+    [normalizedDraft, options],
+  );
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setDraft(value);
+    }
+  }
+
+  function handleDraftChange(nextValue: string) {
+    setDraft(nextValue);
+    onChange(nextValue);
+  }
+
+  function selectCategory(category: string) {
+    setDraft(category);
+    onChange(category);
+    setOpen(false);
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>Categoria</Label>
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <PopoverTrigger asChild>
+          <Button className="w-full justify-between" disabled={disabled} variant="outline">
+            <span className={cn("truncate", !value && "text-muted-foreground")}>{value || "Digite a categoria"}</span>
+            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-(--anchor-width) p-0">
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="Digite a categoria" value={draft} onValueChange={handleDraftChange} />
+            <CommandList>
+              {filteredOptions.length ? (
+                <CommandGroup heading="Categorias">
+                  {filteredOptions.map((option) => (
+                    <CommandItem key={option.value} data-checked={option.value === value} value={option.label} onSelect={() => selectCategory(option.label)}>
+                      <span className="flex-1">{option.label}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ) : (
+                <CommandEmpty>{trimmedDraft ? "Nova categoria será criada ao salvar." : "Nenhuma categoria cadastrada."}</CommandEmpty>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+function hymnSortValue(number: string) {
+  const match = number.match(/^(\d+)([a-z]*)$/i);
+
+  return {
+    numeric: match ? Number(match[1]) : Number.MAX_SAFE_INTEGER,
+    suffix: match?.[2] ?? "",
+    raw: number,
+  };
 }
 
 export default function SystemHymnsPage() {
-  const { db, deleteHymn, saveHymn } = useAppContext();
+  const { currentUser, db, deleteHymn, saveHymn } = useAppContext();
   const hymnBooksById = useMemo(() => new Map(db.hymnBooks.map((hymnBook) => [hymnBook.id, hymnBook])), [db.hymnBooks]);
   const hymnBookOptions = useMemo(() => db.hymnBooks.slice().sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.hymnBooks]);
+  const categoryOptions = useMemo(
+    () =>
+      Array.from(new Set(db.hymns.map((hymn) => hymn.category.trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b, "pt-BR"))
+        .map((category) => ({ value: category, label: category })),
+    [db.hymns],
+  );
 
   const [search, setSearch] = useState("");
+  const [hymnBookFilter, setHymnBookFilter] = useState(ALL_HYMN_BOOKS_FILTER);
   const [selectedHymn, setSelectedHymn] = useState<Hymn | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [form, setForm] = useState<HymnForm>(emptyHymnForm);
 
   const isReadOnly = drawerMode === "view";
+  const canManageHymns = isSystemAdmin(currentUser);
   const defaultHymnBookId = hymnBookOptions[0]?.id ?? "";
   const currentDuplicate = Boolean(
     form.hymnBookId &&
@@ -73,20 +247,26 @@ export default function SystemHymnsPage() {
     () =>
       db.hymns
         .filter((hymn) => {
+          if (hymnBookFilter !== ALL_HYMN_BOOKS_FILTER && hymn.hymnBookId !== hymnBookFilter) return false;
+
           const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
           if (!normalizedSearch) return true;
 
           const hymnBook = hymnBooksById.get(hymn.hymnBookId);
 
-          return [String(hymn.number), hymn.title, hymnBook?.name ?? "", hymnBook?.emoji ?? ""].some((field) =>
+          return [String(hymn.number), hymn.title, hymn.category, hymnBook?.name ?? "", hymnBook?.emoji ?? "", ...hymn.tags].some((field) =>
             field.toLocaleLowerCase("pt-BR").includes(normalizedSearch),
           );
         })
         .sort((a, b) => {
           const bookSort = (hymnBooksById.get(a.hymnBookId)?.name ?? "").localeCompare(hymnBooksById.get(b.hymnBookId)?.name ?? "", "pt-BR");
-          return bookSort || hymnSortValue(a.number) - hymnSortValue(b.number) || a.title.localeCompare(b.title, "pt-BR");
+          const numberA = hymnSortValue(a.number);
+          const numberB = hymnSortValue(b.number);
+          const numberSort = numberA.numeric - numberB.numeric || numberA.suffix.localeCompare(numberB.suffix, "pt-BR") || numberA.raw.localeCompare(numberB.raw, "pt-BR");
+
+          return bookSort || numberSort || a.title.localeCompare(b.title, "pt-BR");
         }),
-    [db.hymns, hymnBooksById, search],
+    [db.hymns, hymnBookFilter, hymnBooksById, search],
   );
 
   function resetDrawer() {
@@ -126,28 +306,63 @@ export default function SystemHymnsPage() {
   }
 
   function saveCurrentHymn() {
-    if (!form.hymnBookId || form.number === "" || !form.title.trim() || currentDuplicate) return;
+    const number = normalizeHymnNumberInput(form.number);
+    if (!form.hymnBookId || !number || !form.title.trim() || currentDuplicate) return;
 
     saveHymn({
       id: selectedHymn?.id,
-      ...form,
       hymnBookId: form.hymnBookId,
-      number: form.number,
+      number,
       title: form.title.trim(),
+      category: form.category.trim(),
+      tags: normalizeHymnTagsInput(form.tags),
       active: true,
     });
     closeDrawer();
   }
 
   function deleteSelectedHymn() {
-    if (!selectedHymn) return;
+    if (!canManageHymns || !selectedHymn) return;
 
     deleteHymn(selectedHymn.id);
     closeDrawer();
   }
 
+  function deleteSelectedHymns(hymns: Hymn[]) {
+    if (!canManageHymns || !hymns.length) return;
+
+    hymns.forEach((hymn) => deleteHymn(hymn.id));
+  }
+
   const columns = useMemo<ColumnDef<Hymn>[]>(
     () => [
+      ...(canManageHymns
+        ? [
+            {
+              id: "select",
+              header: ({ table }) => (
+                <div className="flex items-center justify-center">
+                  <Checkbox
+                    aria-label="Selecionar todos os hinos da página"
+                    checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && "indeterminate")}
+                    onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+                  />
+                </div>
+              ),
+              cell: ({ row }) => (
+                <div className="flex items-center justify-center">
+                  <Checkbox
+                    aria-label={`Selecionar hino ${row.original.number}`}
+                    checked={row.getIsSelected()}
+                    onCheckedChange={(value) => row.toggleSelected(!!value)}
+                  />
+                </div>
+              ),
+              enableSorting: false,
+              enableHiding: false,
+            } satisfies ColumnDef<Hymn>,
+          ]
+        : []),
       {
         id: "hymnBookId",
         meta: { label: "Hinário" },
@@ -168,7 +383,12 @@ export default function SystemHymnsPage() {
           </Button>
         ),
         cell: ({ row }) => <span className="font-medium tabular-nums">{row.original.number}</span>,
-        sortingFn: (rowA, rowB) => hymnSortValue(rowA.original.number) - hymnSortValue(rowB.original.number),
+        sortingFn: (rowA, rowB) => {
+          const numberA = hymnSortValue(rowA.original.number);
+          const numberB = hymnSortValue(rowB.original.number);
+
+          return numberA.numeric - numberB.numeric || numberA.suffix.localeCompare(numberB.suffix, "pt-BR") || numberA.raw.localeCompare(numberB.raw, "pt-BR");
+        },
       },
       {
         accessorKey: "title",
@@ -180,19 +400,48 @@ export default function SystemHymnsPage() {
         ),
       },
       {
+        accessorKey: "category",
+        meta: { label: "Categoria" },
+        header: "Categoria",
+        cell: ({ row }) => (row.original.category ? <Badge variant="outline">{row.original.category}</Badge> : <span className="text-muted-foreground">-</span>),
+        sortingFn: (rowA, rowB) => rowA.original.category.localeCompare(rowB.original.category, "pt-BR"),
+      },
+      {
+        accessorKey: "tags",
+        meta: { label: "Tags" },
+        header: "Tags",
+        cell: ({ row }) => (
+          <div className="flex max-w-md flex-wrap gap-1">
+            {row.original.tags.slice(0, 4).map((tag) => (
+              <Badge key={tag} variant="secondary">
+                {tag}
+              </Badge>
+            ))}
+            {row.original.tags.length > 4 ? <Badge variant="outline">+{row.original.tags.length - 4}</Badge> : null}
+          </div>
+        ),
+        sortingFn: (rowA, rowB) => rowA.original.tags.join(" ").localeCompare(rowB.original.tags.join(" "), "pt-BR"),
+      },
+      {
         id: "actions",
         enableHiding: false,
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
             <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
               Visualizar
             </Button>
+            {canManageHymns ? (
+              <Button onClick={() => deleteHymn(row.original.id)} size="sm" variant="ghost">
+                <Trash2 />
+                Apagar
+              </Button>
+            ) : null}
           </div>
         ),
       },
     ],
-    [hymnBooksById],
+    [canManageHymns, deleteHymn, hymnBooksById],
   );
 
   return (
@@ -217,7 +466,39 @@ export default function SystemHymnsPage() {
           data={filteredHymns}
           emptyMessage="Nenhum hino encontrado com os filtros atuais."
           enableColumnVisibility
-          toolbar={<Input className="md:max-w-lg" placeholder="Buscar por número, título ou hinário" value={search} onChange={(event) => setSearch(event.target.value)} />}
+          enableRowSelection={canManageHymns}
+          getRowId={(hymn) => hymn.id}
+          toolbar={
+            <div className="flex flex-col gap-3 md:max-w-3xl md:flex-row md:items-center">
+              <Input className="md:max-w-lg" placeholder="Buscar por número, título ou hinário" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <div className="md:w-64">
+                <Label className="sr-only">Filtrar por hinário</Label>
+                <Select value={hymnBookFilter} onValueChange={setHymnBookFilter}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Todos os hinários" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_HYMN_BOOKS_FILTER}>Todos os hinários</SelectItem>
+                    {hymnBookOptions.map((hymnBook) => (
+                      <SelectItem key={hymnBook.id} value={hymnBook.id}>
+                        {hymnBook.emoji} {hymnBook.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          }
+          renderSelectedActions={
+            canManageHymns
+              ? (selectedHymns) => (
+                  <Button disabled={!selectedHymns.length} onClick={() => deleteSelectedHymns(selectedHymns)} size="sm" variant="destructive">
+                    <Trash2 />
+                    Apagar selecionados
+                  </Button>
+                )
+              : undefined
+          }
         />
 
         <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerOpenChange}>
@@ -248,8 +529,8 @@ export default function SystemHymnsPage() {
                   <Label>Número</Label>
                   <Input
                     disabled={isReadOnly}
-                    inputMode="numeric"
-                    pattern="[0-9]*"
+                    inputMode="text"
+                    pattern="[0-9A-Za-z]*"
                     value={form.number}
                     onChange={(event) => setForm((current) => ({ ...current, number: normalizeHymnNumberInput(event.target.value) }))}
                   />
@@ -258,13 +539,30 @@ export default function SystemHymnsPage() {
                   <Label>Título</Label>
                   <Input disabled={isReadOnly} value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
                 </div>
+                <div>
+                  <HymnCategoryInput
+                    disabled={isReadOnly}
+                    options={categoryOptions}
+                    value={form.category}
+                    onChange={(category) => setForm((current) => ({ ...current, category }))}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Label>Tags</Label>
+                  <HymnTagInput
+                    disabled={isReadOnly}
+                    key={`${drawerMode}-${selectedHymn?.id ?? "new"}`}
+                    tags={form.tags}
+                    onChange={(tags) => setForm((current) => ({ ...current, tags }))}
+                  />
+                </div>
                 {currentDuplicate ? <p className="text-sm text-destructive">Já existe um hino com esse número nesse hinário.</p> : null}
               </div>
             </div>
 
             <DrawerFooter className="border-t bg-background">
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
-                <div>{isReadOnly && selectedHymn ? <Button onClick={deleteSelectedHymn} variant="destructive"><Trash2 />Apagar hino</Button> : null}</div>
+                <div>{isReadOnly && canManageHymns && selectedHymn ? <Button onClick={deleteSelectedHymn} variant="destructive"><Trash2 />Apagar hino</Button> : null}</div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                   <Button onClick={closeDrawer} variant="ghost">
                     {isReadOnly ? "Fechar" : "Cancelar"}
