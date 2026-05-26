@@ -51,29 +51,29 @@ function stakeFormFromWard(ward?: Ward): StakeRegistrationForm {
 function UnlinkedStakeRegistration({
   currentUser,
   currentWard,
-  onClaim,
+  onRequest,
 }: {
   currentUser?: User;
   currentWard?: Ward;
-  onClaim: (input: StakeRegistrationForm) => void;
+  onRequest: (input: StakeRegistrationForm) => void;
 }) {
   const [stakeForm, setStakeForm] = useState<StakeRegistrationForm>(() => stakeFormFromWard(currentWard));
-  const canClaimStakeOwnership = Boolean(currentUser && currentUser.status === "active" && currentWard && !currentWard.stakeId && stakeForm.name.trim());
+  const canRequestStakeOwnership = Boolean(currentUser && currentUser.status === "active" && currentWard && !currentWard.stakeId && stakeForm.name.trim());
 
   function updateStakeField(field: keyof StakeRegistrationForm, value: string) {
     setStakeForm((current) => ({ ...current, [field]: value }));
   }
 
-  function handleClaimStakeOwnership() {
-    if (!canClaimStakeOwnership) return;
-    onClaim(stakeForm);
+  function handleRequestStakeOwnership() {
+    if (!canRequestStakeOwnership) return;
+    onRequest(stakeForm);
   }
 
   return (
     <div className="space-y-5">
       <div>
         <p className="font-medium">Esta ala ainda não está atrelada a uma estaca.</p>
-        <p className="mt-1 text-sm text-muted-foreground">Cadastre a estaca desta ala para assumir como responsável e liberar a organização da estaca.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Cadastre a estaca desta ala para enviar sua solicitação de responsável da estaca.</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -98,7 +98,7 @@ function UnlinkedStakeRegistration({
         </div>
       </div>
 
-      <Button disabled={!canClaimStakeOwnership} onClick={handleClaimStakeOwnership}>
+      <Button disabled={!canRequestStakeOwnership} onClick={handleRequestStakeOwnership}>
         Solicitar ser responsável da estaca
       </Button>
     </div>
@@ -108,7 +108,6 @@ function UnlinkedStakeRegistration({
 export default function WardPage() {
   const {
     approveStakeOwnershipRequest,
-    claimStakeOwnershipForCurrentWard,
     currentUser,
     currentWard,
     db,
@@ -243,7 +242,7 @@ export default function WardPage() {
                 key={currentWard?.id ?? "empty-ward"}
                 currentUser={currentUser}
                 currentWard={currentWard}
-                onClaim={claimStakeOwnershipForCurrentWard}
+                onRequest={requestStakeOwnership}
               />
             )}
           </CardContent>
@@ -274,7 +273,7 @@ export default function WardPage() {
 
               {!activeStakeOwner ? (
                 <div className="space-y-4">
-                  <Button disabled={!canRequestStakeOwnership} onClick={requestStakeOwnership} variant={currentUserRequest ? "secondary" : "default"}>
+                  <Button disabled={!canRequestStakeOwnership} onClick={() => requestStakeOwnership()} variant={currentUserRequest ? "secondary" : "default"}>
                     {currentUserRequest ? "Solicitação pendente" : "Solicitar ser responsável da estaca"}
                   </Button>
 
@@ -284,7 +283,15 @@ export default function WardPage() {
                         const requester = usersById.get(request.requesterUserId);
                         const requesterWard = wardsById.get(request.wardId);
                         const alreadyApproved = Boolean(currentUser && request.approvals.some((approval) => approval.userId === currentUser.id));
-                        const canApprove = Boolean(currentUser && currentUser.id !== request.requesterUserId && !alreadyApproved);
+                        const currentUserStakeId = currentUser ? wardsById.get(currentUser.wardId)?.stakeId : undefined;
+                        const canApprove = Boolean(
+                          currentUser &&
+                            currentStake &&
+                            currentUser.status === "active" &&
+                            currentUserStakeId === currentStake.id &&
+                            currentUser.id !== request.requesterUserId &&
+                            !alreadyApproved,
+                        );
 
                         return (
                           <div key={request.id} className="rounded-lg border p-3">

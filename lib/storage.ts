@@ -22,6 +22,7 @@ import type {
   RecordMetadata,
   Role,
   SacramentMinute,
+  SacramentMinuteVersion,
   Stake,
   StakeOwnerRequest,
   StakeOwnerRequestApproval,
@@ -1035,6 +1036,41 @@ export async function saveDatabase(db: Database): Promise<void> {
     if (upsertError) {
       throw upsertError;
     }
+  }
+}
+
+export async function saveMinuteSnapshot(minute: SacramentMinute, version: SacramentMinuteVersion): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const supabase = createClient();
+  const normalizedMinute = normalizeSacramentMinute(minute);
+  const { error: minuteError } = await supabase.from("sacrament_minutes").upsert(
+    {
+      id: normalizedMinute.id,
+      data: normalizedMinute,
+      ward_id: optionalUuid(normalizedMinute.wardId),
+      responsible_user_id: optionalUuid(normalizedMinute.responsibleUserId),
+    },
+    { onConflict: "id" },
+  );
+
+  if (minuteError) {
+    throw minuteError;
+  }
+
+  const { error: versionError } = await supabase.from("minute_versions").upsert(
+    {
+      id: version.id,
+      data: version,
+      minute_id: optionalUuid(version.minuteId),
+    },
+    { onConflict: "id" },
+  );
+
+  if (versionError) {
+    throw versionError;
   }
 }
 
