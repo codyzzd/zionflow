@@ -22,7 +22,6 @@ import type {
   RecordMetadata,
   Role,
   SacramentMinute,
-  SacramentMinuteVersion,
   Stake,
   StakeOwnerRequest,
   StakeOwnerRequestApproval,
@@ -30,6 +29,24 @@ import type {
   User,
   Ward,
 } from "@/types/domain";
+
+export type MinuteLockInfo = {
+  acquired?: boolean;
+  renewed?: boolean;
+  minuteId: string;
+  lockedByUserId?: string;
+  lockedByName?: string;
+  lockedAt?: string;
+  lockExpiresAt?: string;
+  version: number;
+  updatedAt?: string;
+};
+
+export type LockedMinuteSaveResult = {
+  saved: boolean;
+  reason?: "lock_lost" | "not_found" | "version_conflict" | string;
+  minute?: SacramentMinute;
+};
 
 const APP_PREFERENCES_STORAGE_KEY = "superala-preferences-v1";
 const UNKNOWN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
@@ -61,6 +78,7 @@ const REMOTE_TABLES = [
   { key: "patrolSchedules", table: "patrol_schedules" },
   { key: "auditLogs", table: "audit_logs" },
 ] as const;
+const REMOTE_TABLES_FOR_GLOBAL_SAVE = REMOTE_TABLES.filter(({ key }) => key !== "sacramentMinutes");
 
 type RemoteRecord = {
   id: string;
@@ -98,6 +116,15 @@ function asOptionalString(value: unknown) {
 
 function asBoolean(value: unknown, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function asNumber(value: unknown, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
 }
 
 function asStringArray(value: unknown) {
@@ -439,6 +466,11 @@ function normalizeSacramentMinute(minute: SacramentMinute): SacramentMinute {
   return {
     ...normalizedMinute,
     form: normalizeMinuteFormData(normalizedMinute.form),
+    lockedByUserId: asString(normalizedMinute.lockedByUserId),
+    lockedAt: asString(normalizedMinute.lockedAt),
+    lockExpiresAt: asString(normalizedMinute.lockExpiresAt),
+    version: Math.max(1, asNumber(normalizedMinute.version, 1)),
+    versionIds: Array.isArray(normalizedMinute.versionIds) ? normalizedMinute.versionIds : [],
   };
 }
 
@@ -794,6 +826,8 @@ function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOpti
       return "id,data,name,emoji,created_at,updated_at";
     case "hymns":
       return "id,data,hymn_book_id,number,title,category,tags,active";
+    case "sacramentMinutes":
+      return "id,data,locked_by,locked_at,lock_expires_at,version,updated_at";
     default:
       return "id,data";
   }
@@ -913,6 +947,19 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         tags: normalizeHymnTags(row.tags ?? asDataObject(row).tags),
         active: row.active !== false,
       };
+    case "sacramentMinutes": {
+      const data = asDataObject(row);
+
+      return {
+        ...data,
+        id: row.id,
+        lockedByUserId: rowOptionalString(row, "locked_by", "lockedByUserId"),
+        lockedAt: rowOptionalString(row, "locked_at", "lockedAt"),
+        lockExpiresAt: rowOptionalString(row, "lock_expires_at", "lockExpiresAt"),
+        updatedAt: asString(row.updated_at) ?? asString(data.updatedAt) ?? UNKNOWN_TIMESTAMP,
+        version: asNumber(row.version ?? data.version, 1),
+      };
+    }
 
     default:
       return row.data;
@@ -971,7 +1018,7 @@ export async function saveDatabase(db: Database): Promise<void> {
   const remoteDb = normalizeDatabase(db);
   const existingIdsByTable = new Map<RemoteCollectionKey, Set<string>>();
 
-  for (const { key, table } of REMOTE_TABLES) {
+  for (const { key, table } of REMOTE_TABLES_FOR_GLOBAL_SAVE) {
     const { data: existingRows, error: selectError } = await supabase.from(table).select("id");
 
     if (selectError) {
@@ -981,7 +1028,7 @@ export async function saveDatabase(db: Database): Promise<void> {
     existingIdsByTable.set(key, new Set(((existingRows ?? []) as Array<{ id: string }>).map((row) => row.id)));
   }
 
-  for (const { key, table } of [...REMOTE_TABLES].reverse()) {
+  for (const { key, table } of [...REMOTE_TABLES_FOR_GLOBAL_SAVE].reverse()) {
     const records = remoteDb[key] as Array<{ id: string }>;
     const nextIds = new Set(records.map((record) => record.id));
     const staleIds = [...(existingIdsByTable.get(key) ?? new Set<string>())].filter((id) => !nextIds.has(id));
@@ -995,7 +1042,7 @@ export async function saveDatabase(db: Database): Promise<void> {
     }
   }
 
-  for (const { key, table } of REMOTE_TABLES) {
+  for (const { key, table } of REMOTE_TABLES_FOR_GLOBAL_SAVE) {
     const records = remoteDb[key] as Array<{ id: string }>;
 
     if (!records.length) {
@@ -1039,7 +1086,7 @@ export async function saveDatabase(db: Database): Promise<void> {
   }
 }
 
-export async function saveMinuteSnapshot(minute: SacramentMinute, version: SacramentMinuteVersion): Promise<void> {
+export async function saveMinuteSnapshot(minute: SacramentMinute): Promise<void> {
   if (typeof window === "undefined") {
     return;
   }
@@ -1052,6 +1099,10 @@ export async function saveMinuteSnapshot(minute: SacramentMinute, version: Sacra
       data: normalizedMinute,
       ward_id: optionalUuid(normalizedMinute.wardId),
       responsible_user_id: optionalUuid(normalizedMinute.responsibleUserId),
+      locked_by: optionalUuid(normalizedMinute.lockedByUserId),
+      locked_at: normalizedMinute.lockedAt ?? null,
+      lock_expires_at: normalizedMinute.lockExpiresAt ?? null,
+      version: normalizedMinute.version,
     },
     { onConflict: "id" },
   );
@@ -1059,19 +1110,102 @@ export async function saveMinuteSnapshot(minute: SacramentMinute, version: Sacra
   if (minuteError) {
     throw minuteError;
   }
+}
 
-  const { error: versionError } = await supabase.from("minute_versions").upsert(
-    {
-      id: version.id,
-      data: version,
-      minute_id: optionalUuid(version.minuteId),
-    },
-    { onConflict: "id" },
-  );
+function mapMinuteLockRow(row: RemoteRecord & { acquired?: boolean; renewed?: boolean }): MinuteLockInfo {
+  return {
+    acquired: row.acquired === true,
+    renewed: row.renewed === true,
+    minuteId: rowString(row, "minute_id", "minuteId"),
+    lockedByUserId: rowOptionalString(row, "locked_by", "lockedByUserId"),
+    lockedByName: rowOptionalString(row, "locked_by_name", "lockedByName"),
+    lockedAt: rowOptionalString(row, "locked_at", "lockedAt"),
+    lockExpiresAt: rowOptionalString(row, "lock_expires_at", "lockExpiresAt"),
+    version: Math.max(1, asNumber(row.version, 1)),
+    updatedAt: rowOptionalString(row, "updated_at", "updatedAt"),
+  };
+}
 
-  if (versionError) {
-    throw versionError;
+export async function acquireMinuteLock(minuteId: string, userId: string, ttlSeconds = 120): Promise<MinuteLockInfo> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("acquire_sacrament_minute_lock", {
+    p_minute_id: minuteId,
+    p_user_id: userId,
+    p_ttl_seconds: ttlSeconds,
+  });
+
+  if (error) throw error;
+  return mapMinuteLockRow(((data as RemoteRecord[]) ?? [])[0] ?? { id: minuteId, minute_id: minuteId });
+}
+
+export async function renewMinuteLock(minuteId: string, userId: string, ttlSeconds = 120): Promise<MinuteLockInfo> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("renew_sacrament_minute_lock", {
+    p_minute_id: minuteId,
+    p_user_id: userId,
+    p_ttl_seconds: ttlSeconds,
+  });
+
+  if (error) throw error;
+  return mapMinuteLockRow(((data as RemoteRecord[]) ?? [])[0] ?? { id: minuteId, minute_id: minuteId });
+}
+
+export async function releaseMinuteLock(minuteId: string, userId: string): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("release_sacrament_minute_lock", {
+    p_minute_id: minuteId,
+    p_user_id: userId,
+  });
+
+  if (error) throw error;
+  return data === true;
+}
+
+export async function fetchMinuteSnapshot(minuteId: string): Promise<SacramentMinute | undefined> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sacrament_minutes")
+    .select("id,data,locked_by,locked_at,lock_expires_at,version,updated_at")
+    .eq("id", minuteId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return undefined;
+
+  return normalizeSacramentMinute(remoteRowToRecord("sacramentMinutes", data as RemoteRecord) as unknown as SacramentMinute);
+}
+
+export async function saveLockedMinuteSnapshot(minute: SacramentMinute, userId: string, expectedVersion: number): Promise<LockedMinuteSaveResult> {
+  const supabase = createClient();
+  const normalizedMinute = normalizeSacramentMinute(minute);
+  const { data, error } = await supabase.rpc("save_sacrament_minute_with_lock", {
+    p_minute_id: normalizedMinute.id,
+    p_user_id: userId,
+    p_expected_version: expectedVersion,
+    p_data: normalizedMinute,
+    p_ward_id: optionalUuid(normalizedMinute.wardId),
+    p_responsible_user_id: optionalUuid(normalizedMinute.responsibleUserId),
+  });
+
+  if (error) throw error;
+
+  const row = ((data as RemoteRecord[]) ?? [])[0];
+  if (!row || row.saved !== true) {
+    return {
+      saved: false,
+      reason: rowOptionalString(row ?? { id: normalizedMinute.id }, "reason", "reason"),
+      minute: row?.data && typeof row.data === "object" ? normalizeSacramentMinute({ ...(row.data as unknown as SacramentMinute), id: normalizedMinute.id }) : undefined,
+    };
   }
+
+  const savedMinute = normalizeSacramentMinute({
+    ...(row.data as unknown as SacramentMinute),
+    id: rowString(row, "minute_id", "minuteId", normalizedMinute.id),
+    updatedAt: rowOptionalString(row, "updated_at", "updatedAt") ?? normalizedMinute.updatedAt,
+    version: asNumber(row.version, normalizedMinute.version + 1),
+  });
+
+  return { saved: true, minute: savedMinute };
 }
 
 export function createEmptyDatabase(): Database {

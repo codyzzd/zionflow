@@ -19,7 +19,7 @@ export default function MinuteDetailPage({ params }: { params: Promise<{ minuteI
   if (!minute) notFound();
 
   return (
-    <PermissionGuard permission="minutes.manage">
+    <PermissionGuard permission="minutes.view">
       <div className="mx-auto max-w-[800px]">
         <div className="mb-6">
           <div className="flex items-center gap-2">

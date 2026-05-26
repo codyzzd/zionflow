@@ -1,6 +1,6 @@
 "use client";
 
-import { Printer, Save } from "lucide-react";
+import { LockKeyhole, Printer, RefreshCcw, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
-import { createClient } from "@/lib/supabase/client";
+import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, renewMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
 import type { HybridField, MinuteFormData, SacramentMinute } from "@/types/domain";
 
 type MinutePrintItem = {
@@ -37,21 +37,14 @@ type MinutePrintSettings = {
 };
 
 type MinuteEditorStep = "edit" | "preview";
-type MinuteCollaborativeField = "date" | keyof MinuteFormData;
-type MinutePresencePayload = {
-  userId: string;
-  name: string;
-  activeField: MinuteCollaborativeField | null;
-  lastSeenAt: string;
-};
-type RemoteMinuteRow = {
-  id?: string;
-  data?: Partial<SacramentMinute> | null;
-};
+type ExistingMinuteEditorMode = "view" | "edit";
 
 const subscribeToPrintPortal = () => () => {};
 const getClientSnapshot = () => true;
 const getServerSnapshot = () => false;
+const LOCK_TTL_SECONDS = 120;
+const LOCK_RENEW_INTERVAL_MS = 45_000;
+const MINUTE_POLL_INTERVAL_MS = 15_000;
 const defaultPrintSettings: MinutePrintSettings = {
   fontSize: 11.5,
   sectionGap: 6,
@@ -66,7 +59,7 @@ export function MinuteEditor({
 }) {
   const router = useRouter();
   const { applyRemoteMinuteUpdate, currentUser, currentWard, db, hasPermission, membersByWard, saveMinute } = useAppContext();
-  const { formatDate, formatDateTime } = useDateFormatter();
+  const { formatDate } = useDateFormatter();
   const canManageMinutes = hasPermission("minutes.manage");
 
   function buildMinuteTitle(date: string) {
@@ -78,11 +71,25 @@ export function MinuteEditor({
   const [editorStep, setEditorStep] = useState<MinuteEditorStep>("edit");
   const previewViewportRef = useRef<HTMLDivElement>(null);
   const previewDocumentRef = useRef<HTMLDivElement>(null);
-  const realtimeChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
-  const activeFieldRef = useRef<MinuteCollaborativeField | null>(null);
   const savedMinuteRef = useRef<SacramentMinute | null>(minute ?? null);
-  const [activeField, setActiveField] = useState<MinuteCollaborativeField | null>(null);
-  const [presenceUsers, setPresenceUsers] = useState<MinutePresencePayload[]>([]);
+  const staleNoticeShownRef = useRef(false);
+  const [existingEditorMode, setExistingEditorMode] = useState<ExistingMinuteEditorMode>("view");
+  const [lockInfo, setLockInfo] = useState<MinuteLockInfo | null>(() =>
+    minute
+      ? {
+          minuteId: minute.id,
+          lockedByUserId: minute.lockedByUserId,
+          lockedAt: minute.lockedAt,
+          lockExpiresAt: minute.lockExpiresAt,
+          version: minute.version,
+          updatedAt: minute.updatedAt,
+        }
+      : null,
+  );
+  const [lockVersion, setLockVersion] = useState(minute?.version ?? 1);
+  const [staleMinute, setStaleMinute] = useState<SacramentMinute | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [form, setForm] = useState<SacramentMinute | null>(() => {
     if (minute) {
       return minute;
@@ -103,22 +110,10 @@ export function MinuteEditor({
       form: createEmptyMinuteForm(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      version: 1,
       versionIds: [],
     };
   });
-
-  const lockedFields = useMemo(() => {
-    const fields = new Map<MinuteCollaborativeField, MinutePresencePayload>();
-
-    presenceUsers.forEach((user) => {
-      if (user.userId === currentUser?.id || !user.activeField) return;
-      if (!fields.has(user.activeField)) {
-        fields.set(user.activeField, user);
-      }
-    });
-
-    return fields;
-  }, [currentUser?.id, presenceUsers]);
 
   const memberOptions = useMemo(
     () =>
@@ -243,103 +238,84 @@ export function MinuteEditor({
   }, [minute]);
 
   useEffect(() => {
-    if (mode !== "edit" || !minute?.id || !currentUser) return;
-
-    const supabase = createClient();
-    const channel = supabase
-      .channel(`minute:${minute.id}`, {
-        config: {
-          presence: {
-            key: currentUser.id,
-          },
-        },
-      })
-      .on("presence", { event: "sync" }, () => {
-        const presenceState = channel.presenceState() as Record<string, MinutePresencePayload[]>;
-        setPresenceUsers(Object.values(presenceState).flat().filter((item) => item.userId && item.name));
-      })
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "sacrament_minutes",
-          filter: `id=eq.${minute.id}`,
-        },
-        (payload) => {
-          const row = payload.new as RemoteMinuteRow;
-          const remoteMinute = row.data && typeof row.data === "object" ? ({ ...row.data, id: row.id ?? row.data.id } as SacramentMinute) : null;
-          if (!remoteMinute?.id) return;
-
-          savedMinuteRef.current = remoteMinute;
-          applyRemoteMinuteUpdate(remoteMinute);
-
-          setForm((current) => {
-            if (!current || current.id !== remoteMinute.id) return current;
-
-            const editingField = activeFieldRef.current;
-            const nextForm =
-              editingField && editingField !== "date"
-                ? {
-                    ...remoteMinute,
-                    form: {
-                      ...remoteMinute.form,
-                      [editingField]: current.form[editingField],
-                    },
-                  }
-                : editingField === "date"
-                  ? {
-                      ...remoteMinute,
-                      date: current.date,
-                      title: current.title,
-                    }
-                  : remoteMinute;
-
-            return nextForm;
-          });
-
-          if (remoteMinute.updatedByUserId && remoteMinute.updatedByUserId !== currentUser.id) {
-            const editor = db.users.find((user) => user.id === remoteMinute.updatedByUserId);
-            toast.info(`Ata atualizada por ${editor?.name ?? "outro usuário"}.`);
-          }
-        },
-      )
-      .subscribe(async (status) => {
-        if (status !== "SUBSCRIBED") return;
-        await channel.track({
-          userId: currentUser.id,
-          name: currentUser.name,
-          activeField: activeFieldRef.current,
-          lastSeenAt: new Date().toISOString(),
-        } satisfies MinutePresencePayload);
-      });
-
-    realtimeChannelRef.current = channel;
-
-    return () => {
-      realtimeChannelRef.current = null;
-      void channel.untrack();
-      void supabase.removeChannel(channel);
-    };
-  }, [applyRemoteMinuteUpdate, currentUser, db.users, minute?.id, mode]);
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 5_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
-    if (mode !== "edit" || !currentUser || !realtimeChannelRef.current) return;
+    if (mode !== "edit" || existingEditorMode !== "edit" || !minute?.id || !currentUser?.id) return;
 
-    void realtimeChannelRef.current.track({
-      userId: currentUser.id,
-      name: currentUser.name,
-      activeField,
-      lastSeenAt: new Date().toISOString(),
-    } satisfies MinutePresencePayload);
-  }, [activeField, currentUser, mode]);
+    const intervalId = window.setInterval(async () => {
+      try {
+        const renewed = await renewMinuteLock(minute.id, currentUser.id, LOCK_TTL_SECONDS);
+        setLockInfo(renewed);
+        if (!renewed.renewed) {
+          setExistingEditorMode("view");
+          toast.error("Seu tempo de edição expirou. Atualize a ata antes de continuar.");
+        }
+      } catch (error) {
+        console.error("Failed to renew minute lock.", error);
+      }
+    }, LOCK_RENEW_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, existingEditorMode, minute?.id, mode]);
+
+  useEffect(() => {
+    if (mode !== "edit" || !minute?.id) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const remoteMinute = await fetchMinuteSnapshot(minute.id);
+        if (!remoteMinute) return;
+
+        setLockInfo({
+          minuteId: remoteMinute.id,
+          lockedByUserId: remoteMinute.lockedByUserId,
+          lockedAt: remoteMinute.lockedAt,
+          lockExpiresAt: remoteMinute.lockExpiresAt,
+          version: remoteMinute.version,
+          updatedAt: remoteMinute.updatedAt,
+        });
+
+        if (remoteMinute.version > (savedMinuteRef.current?.version ?? 1)) {
+          setStaleMinute(remoteMinute);
+          if (!staleNoticeShownRef.current && remoteMinute.updatedByUserId !== currentUser?.id) {
+            staleNoticeShownRef.current = true;
+            const editor = db.users.find((user) => user.id === remoteMinute.updatedByUserId);
+            toast.info(`Nova versão disponível. ${editor?.name ?? "Outro usuário"} salvou alterações nesta ata.`);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to refresh minute state.", error);
+      }
+    }, MINUTE_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, db.users, minute?.id, mode]);
+
+  useEffect(() => {
+    if (mode !== "edit" || existingEditorMode !== "edit" || !minute?.id || !currentUser?.id) return;
+
+    return () => {
+      void releaseMinuteLock(minute.id, currentUser.id).catch((error) => {
+        console.error("Failed to release minute lock.", error);
+      });
+    };
+  }, [currentUser?.id, existingEditorMode, minute?.id, mode]);
 
   if (!form) {
     return <div className="text-sm text-muted-foreground">Carregando formulário...</div>;
   }
 
   const currentForm = form;
-  const versions = minute ? db.minuteVersions.filter((item) => item.minuteId === minute.id) : [];
+  const isExistingMinute = mode === "edit" && Boolean(form.id);
+  const lockExpiresAt = lockInfo?.lockExpiresAt ? Date.parse(lockInfo.lockExpiresAt) : 0;
+  const lockIsActive = Boolean(lockInfo?.lockedByUserId && Number.isFinite(lockExpiresAt) && lockExpiresAt > nowMs);
+  const lockedByMe = Boolean(isExistingMinute && lockIsActive && lockInfo?.lockedByUserId === currentUser?.id);
+  const lockedByOther = Boolean(isExistingMinute && lockIsActive && lockInfo?.lockedByUserId && lockInfo.lockedByUserId !== currentUser?.id);
+  const lockOwnerName = lockInfo?.lockedByName ?? db.users.find((user) => user.id === lockInfo?.lockedByUserId)?.name ?? "outro usuário";
+  const fieldsDisabled = mode === "edit" ? existingEditorMode !== "edit" || !lockedByMe || !canManageMinutes : !canManageMinutes;
 
   function formatHybridField(field: HybridField, options: { value: string; label: string }[]) {
     if (field.mode === "manual") {
@@ -349,8 +325,48 @@ export function MinuteEditor({
     return options.find((option) => option.value === field.linkedId)?.label ?? "-";
   }
 
-  function saveMinuteDraft(nextMinute: SacramentMinute, options: { redirect?: boolean; silent?: boolean } = {}) {
-    const savedId = saveMinute(
+  async function saveMinuteDraft(nextMinute: SacramentMinute, options: { redirect?: boolean; silent?: boolean } = {}) {
+    if (mode === "edit") {
+      if (!currentUser?.id || !lockedByMe) {
+        toast.error("Não foi possível editar. Esta ata está sendo editada por outro usuário.");
+        return nextMinute.id;
+      }
+
+      const nextPersistedMinute = {
+        ...nextMinute,
+        title: buildMinuteTitle(nextMinute.date),
+      };
+      const result = await saveLockedMinuteSnapshot(nextPersistedMinute, currentUser.id, lockVersion);
+
+      if (!result.saved || !result.minute) {
+        if (result.reason === "version_conflict") {
+          setStaleMinute(result.minute ?? null);
+          toast.error("Nova versão disponível. Atualize a ata antes de continuar.");
+        } else {
+          toast.error("Seu tempo de edição expirou. Atualize a ata antes de continuar.");
+        }
+        setExistingEditorMode("view");
+        return nextMinute.id;
+      }
+
+      savedMinuteRef.current = result.minute;
+      applyRemoteMinuteUpdate(result.minute);
+      setForm(result.minute);
+      setLockInfo({
+        minuteId: result.minute.id,
+        version: result.minute.version,
+        updatedAt: result.minute.updatedAt,
+      });
+      setLockVersion(result.minute.version);
+      setStaleMinute(null);
+      staleNoticeShownRef.current = false;
+      setExistingEditorMode("view");
+
+      if (!options.silent) toast.success("Ata salva.");
+      return result.minute.id;
+    }
+
+    const result = saveMinute(
       {
         id: nextMinute.id || undefined,
         wardId: nextMinute.wardId,
@@ -364,46 +380,24 @@ export function MinuteEditor({
       { silent: options.silent },
     );
 
-    savedMinuteRef.current = {
-      ...nextMinute,
-      id: savedId,
-      title: buildMinuteTitle(nextMinute.date),
-    };
+    savedMinuteRef.current = result.minute;
+
+    const persisted = await result.persisted;
+    if (!persisted) {
+      return result.id;
+    }
 
     if (options.redirect) {
-      router.push(`/meetings/${savedId}`);
+      router.push(`/meetings/${result.id}`);
     }
+
+    return result.id;
   }
 
   function saveCurrentMinute() {
     if (!form) return;
-    saveMinuteDraft(form, { redirect: true });
-  }
-
-  function activateField(field: MinuteCollaborativeField) {
-    if (!canManageMinutes || lockedFields.has(field)) return;
-    activeFieldRef.current = field;
-    setActiveField(field);
-  }
-
-  function clearActiveField(field: MinuteCollaborativeField) {
-    if (activeFieldRef.current !== field) return;
-    activeFieldRef.current = null;
-    setActiveField(null);
-  }
-
-  function isFieldChanged(field: MinuteCollaborativeField) {
-    const savedMinute = savedMinuteRef.current;
-    if (!savedMinute || !form) return true;
-    if (field === "date") return savedMinute.date !== form.date;
-
-    return JSON.stringify(savedMinute.form[field]) !== JSON.stringify(form.form[field]);
-  }
-
-  function finishFieldEdit(field: MinuteCollaborativeField) {
-    clearActiveField(field);
-    if (!form || mode !== "edit" || !form.id || lockedFields.has(field) || !isFieldChanged(field)) return;
-    saveMinuteDraft(form, { silent: true });
+    setIsBusy(true);
+    void saveMinuteDraft(form, { redirect: mode === "new" }).finally(() => setIsBusy(false));
   }
 
   function updateDate(value: string) {
@@ -411,10 +405,6 @@ export function MinuteEditor({
 
     const nextMinute = { ...form, date: value, title: buildMinuteTitle(value) };
     setForm(nextMinute);
-    if (mode === "edit" && form.id && !lockedFields.has("date")) {
-      clearActiveField("date");
-      saveMinuteDraft(nextMinute, { silent: true });
-    }
   }
 
   function updateHybridField(field: keyof MinuteFormData, value: HybridField) {
@@ -428,33 +418,169 @@ export function MinuteEditor({
       },
     };
     setForm(nextMinute);
+  }
 
-    if (mode === "edit" && form.id && !lockedFields.has(field)) {
-      clearActiveField(field);
-      saveMinuteDraft(nextMinute, { silent: true });
+  function renderMinuteField(children: (options: { disabled: boolean }) => ReactNode) {
+    return <div className="space-y-1">{children({ disabled: fieldsDisabled })}</div>;
+  }
+
+  async function startEditing(refreshFirst = true) {
+    if (!minute?.id || !currentUser?.id || !canManageMinutes) return;
+
+    setIsBusy(true);
+    try {
+      const acquired = await acquireMinuteLock(minute.id, currentUser.id, LOCK_TTL_SECONDS);
+      setLockInfo(acquired);
+
+      if (!acquired.acquired) {
+        toast.error(`Não foi possível editar. Esta ata está sendo editada por ${acquired.lockedByName ?? "outro usuário"}.`);
+        return;
+      }
+
+      const latestMinute = refreshFirst ? await fetchMinuteSnapshot(minute.id) : undefined;
+      const nextMinute = latestMinute ?? form;
+      if (nextMinute) {
+        savedMinuteRef.current = nextMinute;
+        applyRemoteMinuteUpdate(nextMinute);
+        setForm(nextMinute);
+        setLockVersion(nextMinute.version);
+      } else {
+        setLockVersion(acquired.version);
+      }
+      setStaleMinute(null);
+      staleNoticeShownRef.current = false;
+      setExistingEditorMode("edit");
+    } catch (error) {
+      console.error("Failed to acquire minute lock.", error);
+      toast.error("Não foi possível iniciar a edição da ata.");
+    } finally {
+      setIsBusy(false);
     }
   }
 
-  function renderCollaborativeField(
-    field: MinuteCollaborativeField,
-    children: (options: { disabled: boolean }) => ReactNode,
-  ) {
-    const lockedBy = lockedFields.get(field);
-    const disabled = !canManageMinutes || Boolean(lockedBy);
-    const isEditing = activeField === field && !lockedBy;
+  async function cancelEditing() {
+    if (!minute?.id || !currentUser?.id) return;
+
+    setIsBusy(true);
+    try {
+      await releaseMinuteLock(minute.id, currentUser.id);
+    } catch (error) {
+      console.error("Failed to release minute lock.", error);
+    } finally {
+      setForm(savedMinuteRef.current ?? minute);
+      setExistingEditorMode("view");
+      setLockInfo((current) => (current ? { ...current, lockedByUserId: undefined, lockedByName: undefined, lockedAt: undefined, lockExpiresAt: undefined } : current));
+      setIsBusy(false);
+    }
+  }
+
+  function applyStaleMinute() {
+    if (!staleMinute) return;
+    savedMinuteRef.current = staleMinute;
+    applyRemoteMinuteUpdate(staleMinute);
+    setForm(staleMinute);
+    setLockVersion(staleMinute.version);
+    setStaleMinute(null);
+    staleNoticeShownRef.current = false;
+  }
+
+  async function refreshAndEdit() {
+    applyStaleMinute();
+    await startEditing(false);
+  }
+
+  function formatLockTime(value?: string) {
+    if (!value) return "";
+    return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  }
+
+  function renderMinuteStatus() {
+    if (staleMinute) {
+      const editor = db.users.find((user) => user.id === staleMinute.updatedByUserId);
+      return (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="font-medium">Nova versão disponível.</p>
+          <p>{editor?.name ?? "Outro usuário"} salvou alterações nesta ata. Atualize para visualizar a versão mais recente.</p>
+        </div>
+      );
+    }
+
+    if (lockedByOther) {
+      return (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="font-medium">Ata em edição por {lockOwnerName}.</p>
+          <p>Esta ata está sendo editada desde {formatLockTime(lockInfo?.lockedAt)}. Você está visualizando a última versão salva.</p>
+        </div>
+      );
+    }
+
+    if (mode === "edit" && existingEditorMode === "edit") {
+      return (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+          <p className="font-medium">Você está editando esta ata.</p>
+          <p>As alterações só serão salvas quando você clicar em Salvar.</p>
+        </div>
+      );
+    }
+
+    return null;
+  }
+
+  function renderActionBar() {
+    if (editorStep === "preview") return null;
 
     return (
-      <div
-        className="space-y-1"
-        onBlurCapture={(event) => {
-          if (event.currentTarget.contains(event.relatedTarget)) return;
-          finishFieldEdit(field);
-        }}
-        onFocusCapture={() => activateField(field)}
-      >
-        {children({ disabled })}
-        {lockedBy ? <p className="text-xs text-amber-600">Em uso por {lockedBy.name}</p> : null}
-        {isEditing ? <p className="text-xs text-muted-foreground">Editando</p> : null}
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur supports-backdrop-filter:bg-background/85">
+        <div className="mx-auto flex max-w-[800px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 text-sm">
+            {mode === "new" ? <p className="font-medium">Nova ata</p> : null}
+            {mode === "edit" && existingEditorMode === "edit" ? <p className="font-medium">Editando</p> : null}
+            {mode === "edit" && existingEditorMode !== "edit" && !lockedByOther ? <p className="font-medium">Modo leitura</p> : null}
+            {lockedByOther ? (
+              <p className="flex items-center gap-2 font-medium">
+                <LockKeyhole className="size-4" />
+                Em edição por {lockOwnerName}
+              </p>
+            ) : null}
+            {staleMinute ? <p className="text-muted-foreground">Nova versão disponível.</p> : null}
+          </div>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            {staleMinute ? (
+              <Button disabled={isBusy} onClick={applyStaleMinute} type="button" variant="outline">
+                <RefreshCcw className="size-4" />
+                Atualizar ata
+              </Button>
+            ) : null}
+            {mode === "edit" && staleMinute && canManageMinutes ? (
+              <Button disabled={isBusy || lockedByOther} onClick={() => void refreshAndEdit()} type="button" variant="secondary">
+                Atualizar e editar
+              </Button>
+            ) : null}
+            {mode === "edit" && existingEditorMode === "view" && !staleMinute ? (
+              <Button disabled={isBusy || !canManageMinutes || lockedByOther} onClick={() => void startEditing()} type="button">
+                Editar
+              </Button>
+            ) : null}
+            {mode === "edit" && existingEditorMode === "edit" ? (
+              <>
+                <Button disabled={isBusy} onClick={cancelEditing} type="button" variant="outline">
+                  <X className="size-4" />
+                  Cancelar
+                </Button>
+                <Button disabled={isBusy} onClick={saveCurrentMinute} type="button">
+                  <Save className="size-4" />
+                  Salvar
+                </Button>
+              </>
+            ) : null}
+            {mode === "new" ? (
+              <Button disabled={isBusy} onClick={saveCurrentMinute} type="button">
+                <Save className="size-4" />
+                Criar ata
+              </Button>
+            ) : null}
+          </div>
+        </div>
       </div>
     );
   }
@@ -675,7 +801,8 @@ export function MinuteEditor({
   return (
     <>
       {isPrintPortalReady ? createPortal(printDocument, document.body) : null}
-      <div className="space-y-4">
+      <div className="space-y-4 pb-28">
+        {renderMinuteStatus()}
         {mode === "edit" && editorStep === "preview" ? (
           renderPrintPreview()
         ) : (
@@ -684,18 +811,8 @@ export function MinuteEditor({
               <CardHeader className="flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <CardTitle>{mode === "new" ? "Nova ata sacramental" : "Editar ata sacramental"}</CardTitle>
-                  <CardDescription>Campos híbridos aceitam seleção estruturada ou digitação manual, como definido no PRD.</CardDescription>
-                  {mode === "edit" && presenceUsers.length ? (
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Editando agora: {presenceUsers.map((user) => user.name).join(", ")}
-                    </p>
-                  ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={saveCurrentMinute}>
-                    <Save className="size-4" />
-                    Salvar
-                  </Button>
                   {mode === "edit" ? (
                     <Button onClick={() => setEditorStep("preview")} variant="secondary">
                       Prévia da impressão
@@ -704,7 +821,7 @@ export function MinuteEditor({
                 </div>
               </CardHeader>
               <CardContent className="section-grid">
-                {renderCollaborativeField("date", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <div>
                     <Label>Data</Label>
                     <DatePicker disabled={disabled} value={form.date} onChange={updateDate} />
@@ -719,7 +836,7 @@ export function MinuteEditor({
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="section-grid">
-                  {renderCollaborativeField("presiding", ({ disabled }) => (
+                  {renderMinuteField(({ disabled }) => (
                     <HybridSelector
                       disabled={disabled}
                       label="Presidida por"
@@ -730,7 +847,7 @@ export function MinuteEditor({
                       onChange={(value) => updateHybridField("presiding", value)}
                     />
                   ))}
-                  {renderCollaborativeField("conducting", ({ disabled }) => (
+                  {renderMinuteField(({ disabled }) => (
                     <HybridSelector
                       disabled={disabled}
                       label="Dirigida por"
@@ -743,7 +860,7 @@ export function MinuteEditor({
                   ))}
                 </div>
                 <div className="section-grid">
-                  {renderCollaborativeField("recognitions", ({ disabled }) => (
+                  {renderMinuteField(({ disabled }) => (
                     <div>
                       <Label>Reconhecimentos</Label>
                       <Textarea
@@ -755,7 +872,7 @@ export function MinuteEditor({
                       />
                     </div>
                   ))}
-                  {renderCollaborativeField("announcements", ({ disabled }) => (
+                  {renderMinuteField(({ disabled }) => (
                     <div>
                       <Label>Anúncios</Label>
                       <Textarea
@@ -768,7 +885,7 @@ export function MinuteEditor({
                     </div>
                   ))}
                 </div>
-                {renderCollaborativeField("attendance", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <div>
                     <Label>Frequência</Label>
                     <Input
@@ -791,7 +908,7 @@ export function MinuteEditor({
                 <CardTitle>Hino e oração</CardTitle>
               </CardHeader>
               <CardContent className="section-grid">
-                {renderCollaborativeField("conductor", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <HybridSelector
                     disabled={disabled}
                     label="Regente"
@@ -802,7 +919,7 @@ export function MinuteEditor({
                     onChange={(value) => updateHybridField("conductor", value)}
                   />
                 ))}
-                {renderCollaborativeField("accompanist", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <HybridSelector
                     disabled={disabled}
                     label="Instrumentista"
@@ -813,7 +930,7 @@ export function MinuteEditor({
                     onChange={(value) => updateHybridField("accompanist", value)}
                   />
                 ))}
-                {renderCollaborativeField("openingHymn", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <HybridSelector
                     disabled={disabled}
                     label="Hino inicial"
@@ -823,7 +940,7 @@ export function MinuteEditor({
                     onChange={(value) => updateHybridField("openingHymn", value)}
                   />
                 ))}
-                {renderCollaborativeField("openingPrayer", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <HybridSelector
                     disabled={disabled}
                     label="Oração inicial"
@@ -854,7 +971,7 @@ export function MinuteEditor({
 
                   return (
                     <div className="contents" key={key}>
-                      {renderCollaborativeField(field, ({ disabled }) => (
+                      {renderMinuteField(({ disabled }) => (
                         <div>
                           <Label>{label}</Label>
                           <Textarea
@@ -879,7 +996,7 @@ export function MinuteEditor({
                 <CardTitle>Sacramento e oradores</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {renderCollaborativeField("sacramentHymn", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <HybridSelector
                     disabled={disabled}
                     label="Hino sacramental"
@@ -891,7 +1008,7 @@ export function MinuteEditor({
                 ))}
                 <div className="space-y-4">
                   <div className="section-grid">
-                    {renderCollaborativeField("speaker1", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <HybridSelector
                         disabled={disabled}
                         label="Primeiro orador"
@@ -902,7 +1019,7 @@ export function MinuteEditor({
                         onChange={(value) => updateHybridField("speaker1", value)}
                       />
                     ))}
-                    {renderCollaborativeField("speaker1Theme", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <div className="space-y-2">
                         <Label>Tema 1</Label>
                         <Input
@@ -917,7 +1034,7 @@ export function MinuteEditor({
                   </div>
 
                   <div className="section-grid">
-                    {renderCollaborativeField("speaker2", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <HybridSelector
                         disabled={disabled}
                         label="Segundo orador"
@@ -928,7 +1045,7 @@ export function MinuteEditor({
                         onChange={(value) => updateHybridField("speaker2", value)}
                       />
                     ))}
-                    {renderCollaborativeField("speaker2Theme", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <div className="space-y-2">
                         <Label>Tema 2</Label>
                         <Input
@@ -942,7 +1059,7 @@ export function MinuteEditor({
                     ))}
                   </div>
 
-                  {renderCollaborativeField("intermediateHymn", ({ disabled }) => (
+                  {renderMinuteField(({ disabled }) => (
                     <HybridSelector
                       disabled={disabled}
                       label="Hino intermediário"
@@ -954,7 +1071,7 @@ export function MinuteEditor({
                   ))}
 
                   <div className="section-grid">
-                    {renderCollaborativeField("speaker3", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <HybridSelector
                         disabled={disabled}
                         label="Terceiro orador"
@@ -965,7 +1082,7 @@ export function MinuteEditor({
                         onChange={(value) => updateHybridField("speaker3", value)}
                       />
                     ))}
-                    {renderCollaborativeField("speaker3Theme", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <div className="space-y-2">
                         <Label>Tema 3</Label>
                         <Input
@@ -980,7 +1097,7 @@ export function MinuteEditor({
                   </div>
 
                   <div className="section-grid">
-                    {renderCollaborativeField("closingHymn", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <HybridSelector
                         disabled={disabled}
                         label="Hino final"
@@ -990,7 +1107,7 @@ export function MinuteEditor({
                         onChange={(value) => updateHybridField("closingHymn", value)}
                       />
                     ))}
-                    {renderCollaborativeField("closingPrayer", ({ disabled }) => (
+                    {renderMinuteField(({ disabled }) => (
                       <HybridSelector
                         disabled={disabled}
                         label="Última oração"
@@ -1003,7 +1120,7 @@ export function MinuteEditor({
                     ))}
                   </div>
                 </div>
-                {renderCollaborativeField("notes", ({ disabled }) => (
+                {renderMinuteField(({ disabled }) => (
                   <div>
                     <Label>Anotações gerais</Label>
                     <Textarea
@@ -1016,27 +1133,10 @@ export function MinuteEditor({
               </CardContent>
             </Card>
 
-            {mode === "edit" ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Histórico de versões</CardTitle>
-                  <CardDescription>Cada salvamento gera uma nova versão no log local.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {versions.map((version) => (
-                    <div key={version.id} className="rounded-lg border p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-medium">Salvo</p>
-                        <span className="text-xs text-muted-foreground">{formatDateTime(version.createdAt)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            ) : null}
           </>
         )}
       </div>
+      {renderActionBar()}
     </>
   );
 }

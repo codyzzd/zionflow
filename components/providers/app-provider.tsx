@@ -43,7 +43,6 @@ import type {
   RecordMetadata,
   Role,
   SacramentMinute,
-  SacramentMinuteVersion,
   SessionState,
   Stake,
   StakeOwnerRequest,
@@ -54,12 +53,18 @@ import type {
   Ward,
 } from "@/types/domain";
 
-type SaveMinuteInput = Omit<SacramentMinute, "id" | "createdAt" | "updatedAt" | "versionIds"> & {
+type SaveMinuteInput = Omit<SacramentMinute, "id" | "createdAt" | "updatedAt" | "lockedByUserId" | "lockedAt" | "lockExpiresAt" | "version" | "versionIds"> & {
   id?: string;
 };
 
 type SaveMinuteOptions = {
   silent?: boolean;
+};
+
+type SaveMinuteResult = {
+  id: string;
+  minute: SacramentMinute;
+  persisted: Promise<boolean>;
 };
 
 type ImportMembersInput = {
@@ -168,7 +173,7 @@ type AppContextValue = {
   saveAccessTemplate: (input: Omit<Role, "id"> & { id?: string }) => void;
   deleteAccessTemplate: (templateId: string) => void;
   toggleUserStatus: (userId: string) => void;
-  saveMinute: (input: SaveMinuteInput, options?: SaveMinuteOptions) => string;
+  saveMinute: (input: SaveMinuteInput, options?: SaveMinuteOptions) => SaveMinuteResult;
   applyRemoteMinuteUpdate: (minute: SacramentMinute) => void;
   saveHymnBook: (input: Omit<HymnBook, "id"> & { id?: string }) => void;
   deleteHymnBook: (hymnBookId: string) => void;
@@ -2286,72 +2291,51 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function saveMinute(input: SaveMinuteInput, options: SaveMinuteOptions = {}) {
       const id = input.id ?? uid("minute");
       const existing = db.sacramentMinutes.find((minute) => minute.id === id);
-      let minuteToPersist: SacramentMinute | undefined;
-      let versionToPersist: SacramentMinuteVersion | undefined;
+      const actorUserId = getActorUserId(db);
+      const timestamp = nowIso();
+      const minuteToPersist: SacramentMinute = withRecordMetadata(
+        {
+          ...input,
+          id,
+          createdAt: existing?.createdAt ?? timestamp,
+          updatedAt: timestamp,
+          lockedByUserId: input.id ? existing?.lockedByUserId : undefined,
+          lockedAt: input.id ? existing?.lockedAt : undefined,
+          lockExpiresAt: input.id ? existing?.lockExpiresAt : undefined,
+          version: existing?.version ?? 1,
+          versionIds: existing?.versionIds ?? [],
+        },
+        existing,
+        actorUserId,
+        timestamp,
+      );
 
       setDb((currentDb) => {
-        const existing = currentDb.sacramentMinutes.find((minute) => minute.id === id);
-        const actorUserId = getActorUserId(currentDb);
-        const nextVersionId = uid("version");
-        const minute: SacramentMinute = withRecordMetadata(
-          {
-            ...input,
-            id,
-            createdAt: existing?.createdAt ?? nowIso(),
-            updatedAt: nowIso(),
-            versionIds: [nextVersionId, ...(existing?.versionIds ?? [])],
-          },
-          existing,
-          actorUserId,
-        );
-
         const nextDb = {
           ...currentDb,
-          sacramentMinutes: existing
-            ? currentDb.sacramentMinutes.map((current) => (current.id === id ? minute : current))
-            : [minute, ...currentDb.sacramentMinutes],
-          minuteVersions: [
-            {
-              id: nextVersionId,
-              minuteId: id,
-              createdAt: nowIso(),
-              createdBy: actorUserId ?? "",
-              snapshot: minute.form,
-              status: minute.status,
-            },
-            ...currentDb.minuteVersions,
-          ],
+          sacramentMinutes: currentDb.sacramentMinutes.some((current) => current.id === id)
+            ? currentDb.sacramentMinutes.map((current) => (current.id === id ? minuteToPersist : current))
+            : [minuteToPersist, ...currentDb.sacramentMinutes],
         };
-        minuteToPersist = minute;
-        versionToPersist = nextDb.minuteVersions[0];
 
-        const audited = withAuditLog(nextDb, currentDb.session.currentUserId, {
-          wardId: minute.wardId,
-          action: existing ? "UPDATE_MINUTE" : "CREATE_MINUTE",
-          module: "atas",
-          itemLabel: minute.title,
-          summary: existing ? "Atualizou ata sacramental." : "Criou nova ata sacramental.",
-        });
-
-        return audited;
+        return nextDb;
       });
 
-      window.setTimeout(() => {
-        if (!minuteToPersist || !versionToPersist) return;
-
-        saveMinuteSnapshot(minuteToPersist, versionToPersist).catch((error) => {
+      const persisted = saveMinuteSnapshot(minuteToPersist)
+        .then(() => true)
+        .catch((error) => {
           console.error("Failed to save minute directly.", error);
           if (!saveErrorShownRef.current) {
             toast.error("Nao foi possivel salvar a ata no Supabase.");
             saveErrorShownRef.current = true;
           }
+          return false;
         });
-      }, 0);
 
       if (!options.silent) {
         toast.success(existing ? "Ata salva." : "Ata cadastrada.");
       }
-      return id;
+      return { id, minute: minuteToPersist, persisted };
     }
 
     function applyRemoteMinuteUpdate(minute: SacramentMinute) {

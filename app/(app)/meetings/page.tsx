@@ -1,9 +1,9 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Check, ChevronsUpDown, Clock3, List, SlidersHorizontal, Table2 } from "lucide-react";
+import { Check, ChevronsUpDown, Clock3, List, LockKeyhole, RefreshCcw, Save, SlidersHorizontal, Table2, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -29,6 +29,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
 
@@ -188,7 +189,7 @@ function InlineHybridCell({
 }
 
 export default function MinutesPage() {
-  const { currentUser, currentWard, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
+  const { applyRemoteMinuteUpdate, currentUser, currentWard, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMinutes = hasPermission("minutes.manage");
 
@@ -199,6 +200,11 @@ export default function MinutesPage() {
   const [visibleSheetColumns, setVisibleSheetColumns] = useState<Record<SheetColumnKey, boolean>>(() =>
     Object.fromEntries(SHEET_COLUMNS.map((column) => [column.key, true])) as Record<SheetColumnKey, boolean>,
   );
+  const [sheetDrafts, setSheetDrafts] = useState<Record<string, SacramentMinute>>({});
+  const [sheetLocks, setSheetLocks] = useState<Record<string, MinuteLockInfo>>({});
+  const [sheetStale, setSheetStale] = useState<Record<string, SacramentMinute>>({});
+  const [busyMinuteIds, setBusyMinuteIds] = useState<Set<string>>(() => new Set());
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   function createEmptyForm(): MinuteCreateForm {
     return {
@@ -208,6 +214,23 @@ export default function MinutesPage() {
   }
 
   const [form, setForm] = useState<MinuteCreateForm>(() => createEmptyForm());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 5_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  function setMinuteBusy(minuteId: string, busy: boolean) {
+    setBusyMinuteIds((current) => {
+      const next = new Set(current);
+      if (busy) {
+        next.add(minuteId);
+      } else {
+        next.delete(minuteId);
+      }
+      return next;
+    });
+  }
 
   const formatSpeakerField = useCallback(
     (field: HybridField) => {
@@ -236,6 +259,41 @@ export default function MinutesPage() {
         .sort((a, b) => b.date.localeCompare(a.date)),
     [formatDate, formatSpeakerField, minutesByWard, search],
   );
+
+  useEffect(() => {
+    if (view !== "sheet" || !items.length) return;
+
+    const intervalId = window.setInterval(async () => {
+      await Promise.all(
+        items.map(async (minute) => {
+          try {
+            const remoteMinute = await fetchMinuteSnapshot(minute.id);
+            if (!remoteMinute) return;
+
+            if (!sheetDrafts[minute.id] && remoteMinute.version > minute.version) {
+              setSheetStale((current) => ({ ...current, [minute.id]: remoteMinute }));
+            }
+
+            setSheetLocks((current) => ({
+              ...current,
+              [minute.id]: {
+                minuteId: remoteMinute.id,
+                lockedByUserId: remoteMinute.lockedByUserId,
+                lockedAt: remoteMinute.lockedAt,
+                lockExpiresAt: remoteMinute.lockExpiresAt,
+                version: remoteMinute.version,
+                updatedAt: remoteMinute.updatedAt,
+              },
+            }));
+          } catch (error) {
+            console.error("Failed to refresh sheet minute state.", error);
+          }
+        }),
+      );
+    }, 15_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [items, sheetDrafts, view]);
 
   const visibleColumns = useMemo(() => SHEET_COLUMNS.filter((column) => visibleSheetColumns[column.key]), [visibleSheetColumns]);
   const speakerMemberOptions = useMemo(
@@ -286,52 +344,130 @@ export default function MinutesPage() {
     closeDrawer();
   }
 
-  function saveSheetMinute(minute: SacramentMinute, patch: Partial<Pick<SacramentMinute, "date" | "form">>) {
-    const nextDate = patch.date ?? minute.date;
+  function getSheetLockState(minute: SacramentMinute) {
+    const localLock = sheetLocks[minute.id];
+    const lockedByUserId = localLock?.lockedByUserId ?? minute.lockedByUserId;
+    const lockExpiresAt = localLock?.lockExpiresAt ?? minute.lockExpiresAt;
+    const lockExpiresAtTime = lockExpiresAt ? Date.parse(lockExpiresAt) : 0;
+    const lockActive = Boolean(lockedByUserId && Number.isFinite(lockExpiresAtTime) && lockExpiresAtTime > nowMs);
 
-    saveMinute({
-      id: minute.id,
-      wardId: minute.wardId,
-      title: buildMinuteTitle(nextDate),
-      date: nextDate,
-      status: minute.status,
-      presidency: minute.presidency,
-      responsibleUserId: minute.responsibleUserId,
-      form: patch.form ?? minute.form,
+    if (sheetDrafts[minute.id] && lockActive && lockedByUserId === currentUser?.id) return "locked_by_me";
+    if (lockActive && lockedByUserId && lockedByUserId !== currentUser?.id) return "locked_by_other";
+    if (sheetStale[minute.id]) return "stale";
+    return "free";
+  }
+
+  async function beginSheetEdit(minute: SacramentMinute) {
+    if (!canManageMinutes || !currentUser?.id || busyMinuteIds.has(minute.id)) return false;
+    if (sheetDrafts[minute.id]) return true;
+
+    setMinuteBusy(minute.id, true);
+    try {
+      const lock = await acquireMinuteLock(minute.id, currentUser.id, 120);
+      setSheetLocks((current) => ({ ...current, [minute.id]: lock }));
+
+      if (!lock.acquired) {
+        return false;
+      }
+
+      const latestMinute = await fetchMinuteSnapshot(minute.id);
+      setSheetDrafts((current) => ({ ...current, [minute.id]: latestMinute ?? minute }));
+      return true;
+    } finally {
+      setMinuteBusy(minute.id, false);
+    }
+  }
+
+  function patchSheetDraft(minute: SacramentMinute, patch: Partial<Pick<SacramentMinute, "date" | "form">>) {
+    setSheetDrafts((current) => {
+      const draft = current[minute.id] ?? minute;
+      const nextDate = patch.date ?? draft.date;
+
+      return {
+        ...current,
+        [minute.id]: {
+          ...draft,
+          date: nextDate,
+          title: buildMinuteTitle(nextDate),
+          form: patch.form ?? draft.form,
+        },
+      };
     });
   }
 
-  function saveSheetDate(minute: SacramentMinute, value: string) {
-    if (!value || value === minute.date) return;
-    saveSheetMinute(minute, { date: value });
+  async function cancelSheetEdit(minute: SacramentMinute) {
+    if (currentUser?.id) {
+      await releaseMinuteLock(minute.id, currentUser.id).catch(() => false);
+    }
+    setSheetDrafts((current) => {
+      const next = { ...current };
+      delete next[minute.id];
+      return next;
+    });
+    setSheetLocks((current) => {
+      const next = { ...current };
+      delete next[minute.id];
+      return next;
+    });
   }
 
-  function saveSheetSpeaker(minute: SacramentMinute, key: SpeakerFieldKey, value: HybridField) {
-    const currentValue = minute.form[key];
+  async function saveSheetDraft(minute: SacramentMinute) {
+    const draft = sheetDrafts[minute.id];
+    const lock = sheetLocks[minute.id];
+    if (!draft || !currentUser?.id || !lock?.version) return;
+
+    setMinuteBusy(minute.id, true);
+    try {
+      const result = await saveLockedMinuteSnapshot(draft, currentUser.id, lock.version);
+      if (!result.saved || !result.minute) {
+        if (result.reason === "version_conflict" && result.minute) {
+          setSheetStale((current) => ({ ...current, [minute.id]: result.minute! }));
+        }
+        return;
+      }
+
+      applyRemoteMinuteUpdate(result.minute);
+      await cancelSheetEdit(minute);
+    } finally {
+      setMinuteBusy(minute.id, false);
+    }
+  }
+
+  function updateSheetDate(minute: SacramentMinute, value: string) {
+    if (!value || value === minute.date) return;
+    patchSheetDraft(minute, { date: value });
+  }
+
+  function updateSheetSpeaker(minute: SacramentMinute, key: SpeakerFieldKey, value: HybridField) {
+    const draft = sheetDrafts[minute.id] ?? minute;
+    const currentValue = draft.form[key];
     if (currentValue.mode === value.mode && currentValue.linkedId === value.linkedId && currentValue.manualValue === value.manualValue) return;
 
-    saveSheetMinute(minute, {
+    patchSheetDraft(minute, {
       form: {
-        ...minute.form,
+        ...draft.form,
         [key]: value,
       },
     });
   }
 
-  function saveSheetTheme(minute: SacramentMinute, key: SpeakerThemeFieldKey, value: string) {
+  function updateSheetTheme(minute: SacramentMinute, key: SpeakerThemeFieldKey, value: string) {
     const nextValue = value.trim();
-    if (nextValue === minute.form[key]) return;
+    const draft = sheetDrafts[minute.id] ?? minute;
+    if (nextValue === draft.form[key]) return;
 
-    saveSheetMinute(minute, {
+    patchSheetDraft(minute, {
       form: {
-        ...minute.form,
+        ...draft.form,
         [key]: nextValue,
       },
     });
   }
 
   function renderSheetCell(minute: SacramentMinute, column: SheetColumn) {
-    const editable = canManageMinutes;
+    const lockState = getSheetLockState(minute);
+    const editable = canManageMinutes && lockState === "locked_by_me";
+    const draft = sheetDrafts[minute.id] ?? minute;
 
     if (column.key === "date") {
       return (
@@ -340,9 +476,9 @@ export default function MinutesPage() {
           className="h-9 rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
           disabled={!editable}
           type="date"
-          defaultValue={minute.date}
-          onBlur={(event) => saveSheetDate(minute, event.currentTarget.value)}
-          key={`${minute.id}-${minute.date}`}
+          value={draft.date}
+          onChange={(event) => updateSheetDate(minute, event.currentTarget.value)}
+          key={`${minute.id}-${draft.date}`}
         />
       );
     }
@@ -355,8 +491,8 @@ export default function MinutesPage() {
           disabled={!editable}
           manualPlaceholder={column.label}
           options={speakerMemberOptions}
-          value={minute.form[speakerKey]}
-          onSave={(value) => saveSheetSpeaker(minute, speakerKey, value)}
+          value={draft.form[speakerKey]}
+          onSave={(value) => updateSheetSpeaker(minute, speakerKey, value)}
         />
       );
     }
@@ -365,13 +501,79 @@ export default function MinutesPage() {
 
     return (
       <Input
-        aria-label={`${column.label} da ata ${formatDate(minute.date)}`}
-        className="h-9 rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
-        disabled={!editable}
-        defaultValue={minute.form[themeKey]}
-        onBlur={(event) => saveSheetTheme(minute, themeKey, event.currentTarget.value)}
-        key={`${minute.id}-${themeKey}-${minute.form[themeKey]}`}
-      />
+      aria-label={`${column.label} da ata ${formatDate(minute.date)}`}
+      className="h-9 rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
+      disabled={!editable}
+      value={draft.form[themeKey]}
+      onChange={(event) => updateSheetTheme(minute, themeKey, event.currentTarget.value)}
+      key={`${minute.id}-${themeKey}`}
+    />
+  );
+}
+
+  function renderSheetRowActions(minute: SacramentMinute) {
+    const lockState = getSheetLockState(minute);
+    const lock = sheetLocks[minute.id];
+    const lockOwnerName = lock?.lockedByName ?? usersByWard.find((user) => user.id === (lock?.lockedByUserId ?? minute.lockedByUserId))?.name ?? "outro usuário";
+    const isBusy = busyMinuteIds.has(minute.id);
+
+    if (lockState === "locked_by_me") {
+      return (
+        <div className="flex items-center justify-end gap-2 px-2">
+          <span className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">Editando</span>
+          <Button disabled={isBusy} onClick={() => void cancelSheetEdit(minute)} size="sm" variant="ghost">
+            <X className="size-4" />
+            Cancelar
+          </Button>
+          <Button disabled={isBusy} onClick={() => void saveSheetDraft(minute)} size="sm">
+            <Save className="size-4" />
+            Salvar
+          </Button>
+        </div>
+      );
+    }
+
+    if (lockState === "locked_by_other") {
+      return (
+        <div className="flex items-center justify-end gap-2 px-2 text-xs text-muted-foreground">
+          <LockKeyhole className="size-4" />
+          <span>Em edição por {lockOwnerName}</span>
+        </div>
+      );
+    }
+
+    if (lockState === "stale") {
+      return (
+        <div className="flex items-center justify-end gap-2 px-2">
+          <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Nova versão disponível</span>
+          <Button
+            disabled={isBusy}
+            onClick={() => {
+              const staleMinute = sheetStale[minute.id];
+              if (!staleMinute) return;
+              applyRemoteMinuteUpdate(staleMinute);
+              setSheetStale((current) => {
+                const next = { ...current };
+                delete next[minute.id];
+                return next;
+              });
+            }}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCcw className="size-4" />
+            Atualizar linha
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex justify-end px-2">
+        <Button disabled={!canManageMinutes || isBusy} onClick={() => void beginSheetEdit(minute)} size="sm" variant="outline">
+          Editar linha
+        </Button>
+      </div>
     );
   }
 
@@ -557,22 +759,36 @@ export default function MinutesPage() {
                           {column.label}
                         </th>
                       ))}
+                      <th className="w-72 min-w-72 px-2 py-2 text-right font-medium text-muted-foreground">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.length ? (
-                      items.map((minute) => (
-                        <tr className="border-b last:border-b-0" key={minute.id}>
-                          {visibleColumns.map((column) => (
-                            <td className={cn("border-r p-0 align-middle last:border-r-0", column.className)} key={column.key}>
-                              {renderSheetCell(minute, column)}
-                            </td>
-                          ))}
-                        </tr>
-                      ))
+                      items.map((minute) => {
+                        const lockState = getSheetLockState(minute);
+
+                        return (
+                          <tr
+                            className={cn(
+                              "border-b last:border-b-0",
+                              lockState === "locked_by_other" && "bg-muted/35 text-muted-foreground",
+                              lockState === "locked_by_me" && "bg-emerald-50/40 dark:bg-emerald-950/10",
+                              lockState === "stale" && "bg-amber-50/40 dark:bg-amber-950/10",
+                            )}
+                            key={minute.id}
+                          >
+                            {visibleColumns.map((column) => (
+                              <td className={cn("border-r p-0 align-middle last:border-r-0", column.className)} key={column.key}>
+                                {renderSheetCell(minute, column)}
+                              </td>
+                            ))}
+                            <td className="p-0 align-middle">{renderSheetRowActions(minute)}</td>
+                          </tr>
+                        );
+                      })
                     ) : (
                       <tr>
-                        <td className="h-24 px-4 text-center text-muted-foreground" colSpan={Math.max(visibleColumns.length, 1)}>
+                        <td className="h-24 px-4 text-center text-muted-foreground" colSpan={Math.max(visibleColumns.length + 1, 1)}>
                           Nenhuma ata encontrada com os filtros atuais.
                         </td>
                       </tr>

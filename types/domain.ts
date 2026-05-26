@@ -200,6 +200,10 @@ export interface SacramentMinute extends RecordMetadata {
   form: MinuteFormData;
   createdAt: string;
   updatedAt: string;
+  lockedByUserId?: string;
+  lockedAt?: string;
+  lockExpiresAt?: string;
+  version: number;
   versionIds: string[];
 }
 
