@@ -17,7 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { cn, todayDate } from "@/lib/utils";
-import type { CalendarWeekStartsOn, ConfirmationStatus, PatrolMember, PatrolSchedule, PatrolStatus } from "@/types/domain";
+import type { CalendarWeekStartsOn, ConfirmationStatus, Member, PatrolSchedule, PatrolStatus } from "@/types/domain";
 
 type PatrolScheduleForm = {
   id?: string;
@@ -31,11 +31,13 @@ type PatrolScheduleForm = {
 
 type PatrolMemberSelectProps = {
   label: string;
-  members: PatrolMember[];
+  members: PatrolSelectableMember[];
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
   placeholder: string;
 };
+
+type PatrolSelectableMember = Pick<Member, "id" | "name">;
 
 const emptyScheduleForm: PatrolScheduleForm = {
   date: "",
@@ -106,7 +108,7 @@ function resolveClassMemberIds(schedule: PatrolSchedule) {
   return schedule.secondaryPatrolMemberId ? [schedule.secondaryPatrolMemberId] : [];
 }
 
-function MemberTagList({ ids, membersById }: { ids: string[]; membersById: Map<string, PatrolMember> }) {
+function MemberTagList({ ids, membersById }: { ids: string[]; membersById: Map<string, PatrolSelectableMember> }) {
   if (!ids.length) {
     return <span className="text-muted-foreground">Sem irmãos definidos</span>;
   }
@@ -123,7 +125,9 @@ function MemberTagList({ ids, membersById }: { ids: string[]; membersById: Map<s
 }
 
 function PatrolMemberSelect({ label, members, selectedIds, onSelectedIdsChange, placeholder }: PatrolMemberSelectProps) {
-  const selectedMembers = selectedIds.map((id) => members.find((member) => member.id === id)).filter((member): member is PatrolMember => Boolean(member));
+  const selectedMembers = selectedIds
+    .map((id) => members.find((member) => member.id === id))
+    .filter((member): member is PatrolSelectableMember => Boolean(member));
 
   function toggleMember(memberId: string) {
     onSelectedIdsChange(selectedIds.includes(memberId) ? selectedIds.filter((id) => id !== memberId) : [...selectedIds, memberId]);
@@ -191,7 +195,7 @@ function PatrolMemberSelect({ label, members, selectedIds, onSelectedIdsChange, 
   );
 }
 
-function PatrolScheduleSummary({ membersById, schedule }: { membersById: Map<string, PatrolMember>; schedule: PatrolSchedule }) {
+function PatrolScheduleSummary({ membersById, schedule }: { membersById: Map<string, PatrolSelectableMember>; schedule: PatrolSchedule }) {
   const sacramentalMemberIds = resolveSacramentalMemberIds(schedule);
   const classMemberIds = resolveClassMemberIds(schedule);
 
@@ -208,7 +212,7 @@ function PatrolScheduleSummary({ membersById, schedule }: { membersById: Map<str
 }
 
 export default function PatrolPage() {
-  const { appPreferences, currentWard, hasPermission, patrolMembersByWard, patrolSchedulesByWard, savePatrolSchedule } = useAppContext();
+  const { appPreferences, currentWard, hasPermission, membersByWard, patrolMembersByWard, patrolSchedulesByWard, savePatrolSchedule } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManagePatrol = hasPermission("patrol.manage");
   const initialSelectedDate = useMemo(() => todayDate(), []);
@@ -220,12 +224,41 @@ export default function PatrolPage() {
   const [scheduleForm, setScheduleForm] = useState<PatrolScheduleForm>({ ...emptyScheduleForm, date: initialSelectedDate });
   const [error, setError] = useState("");
 
-  const activePatrolMembers = useMemo(() => patrolMembersByWard.filter((member) => member.active), [patrolMembersByWard]);
+  const memberOptions = useMemo<PatrolSelectableMember[]>(() => {
+    const optionsById = new Map<string, PatrolSelectableMember>();
 
-  const patrolMembersById = useMemo(
-    () => new Map(patrolMembersByWard.map((member) => [member.id, member])),
-    [patrolMembersByWard],
-  );
+    membersByWard
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+      .forEach((member) => {
+        optionsById.set(member.id, { id: member.id, name: member.name });
+      });
+
+    patrolMembersByWard
+      .filter((member) => member.active && !member.memberId && !optionsById.has(member.id))
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+      .forEach((member) => {
+        optionsById.set(member.id, { id: member.id, name: member.name });
+      });
+
+    return Array.from(optionsById.values());
+  }, [membersByWard, patrolMembersByWard]);
+
+  const patrolMembersById = useMemo(() => new Map(patrolMembersByWard.map((member) => [member.id, member])), [patrolMembersByWard]);
+
+  const scheduleMembersById = useMemo(() => {
+    const membersById = new Map<string, PatrolSelectableMember>();
+
+    patrolMembersByWard.forEach((member) => {
+      membersById.set(member.id, { id: member.id, name: member.name });
+    });
+
+    membersByWard.forEach((member) => {
+      membersById.set(member.id, { id: member.id, name: member.name });
+    });
+
+    return membersById;
+  }, [membersByWard, patrolMembersByWard]);
 
   const schedulesByDate = useMemo(
     () =>
@@ -287,8 +320,8 @@ export default function PatrolPage() {
     setScheduleForm({
       id: schedule.id,
       date: schedule.date,
-      sacramentalMemberIds: resolveSacramentalMemberIds(schedule),
-      classMemberIds: resolveClassMemberIds(schedule),
+      sacramentalMemberIds: resolveSacramentalMemberIds(schedule).map((id) => patrolMembersById.get(id)?.memberId ?? id),
+      classMemberIds: resolveClassMemberIds(schedule).map((id) => patrolMembersById.get(id)?.memberId ?? id),
       notes: schedule.notes,
       status: schedule.status,
       confirmationStatus: schedule.confirmationStatus,
@@ -399,7 +432,7 @@ export default function PatrolPage() {
 
         <div className={cn(variant === "month" ? "hidden space-y-1 sm:block" : "space-y-2")}>
           {schedules.slice(0, 2).map((schedule) => (
-            <PatrolScheduleSummary key={schedule.id} membersById={patrolMembersById} schedule={schedule} />
+            <PatrolScheduleSummary key={schedule.id} membersById={scheduleMembersById} schedule={schedule} />
           ))}
           {schedules.length > 2 ? <p className="text-xs text-muted-foreground tabular-nums">+{schedules.length - 2} escala(s)</p> : null}
           {canManagePatrol && !schedules.length && cell.isCurrentMonth && isSelected ? (
@@ -506,11 +539,11 @@ export default function PatrolPage() {
                 <div className="mt-3 space-y-3">
                   <div>
                     <p className="mb-1 text-xs font-medium uppercase text-muted-foreground">Sacramental</p>
-                    <MemberTagList ids={resolveSacramentalMemberIds(schedule)} membersById={patrolMembersById} />
+                    <MemberTagList ids={resolveSacramentalMemberIds(schedule)} membersById={scheduleMembersById} />
                   </div>
                   <div>
                     <p className="mb-1 text-xs font-medium uppercase text-muted-foreground">Aulas</p>
-                    <MemberTagList ids={resolveClassMemberIds(schedule)} membersById={patrolMembersById} />
+                    <MemberTagList ids={resolveClassMemberIds(schedule)} membersById={scheduleMembersById} />
                   </div>
                 </div>
 
@@ -542,7 +575,7 @@ export default function PatrolPage() {
 
                 <PatrolMemberSelect
                   label="Sacramental"
-                  members={activePatrolMembers}
+                  members={memberOptions}
                   onSelectedIdsChange={(ids) => setScheduleForm((current) => ({ ...current, sacramentalMemberIds: ids }))}
                   placeholder="Digite e escolha irmãos"
                   selectedIds={scheduleForm.sacramentalMemberIds}
@@ -550,7 +583,7 @@ export default function PatrolPage() {
 
                 <PatrolMemberSelect
                   label="Aulas"
-                  members={activePatrolMembers}
+                  members={memberOptions}
                   onSelectedIdsChange={(ids) => setScheduleForm((current) => ({ ...current, classMemberIds: ids }))}
                   placeholder="Digite e escolha irmãos"
                   selectedIds={scheduleForm.classMemberIds}

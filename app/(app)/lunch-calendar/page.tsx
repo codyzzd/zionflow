@@ -277,20 +277,53 @@ export default function LunchCalendarPage() {
   );
   const coverageSummary = useMemo(() => {
     if (!activeCompanionships.length) {
-      return "Nenhuma dupla ativa cadastrada";
+      return {
+        eligibleDays: 0,
+        completeDays: 0,
+        incompleteDays: 0,
+        missingCompanionshipLunches: 0,
+        headerText: "Nenhuma dupla ativa cadastrada",
+        helperText: "Nenhuma dupla ativa cadastrada",
+        progressPercent: 0,
+      };
     }
 
-    const missingCount = visibleMonthDates.reduce((total, item) => {
-      if (weekdaysByIndex[item.date.getDay()] === lunchPDayWeekday) return total;
+    const totals = visibleMonthDates.reduce(
+      (current, item) => {
+        if (weekdaysByIndex[item.date.getDay()] === lunchPDayWeekday) return current;
 
-      const coveredIds = new Set(
-        (lunchesByDate.get(item.key) ?? []).flatMap((lunch) => lunch.companionshipIds).filter((id) => activeCompanionshipIds.has(id)),
-      );
+        const coveredIds = new Set(
+          (lunchesByDate.get(item.key) ?? []).flatMap((lunch) => lunch.companionshipIds).filter((id) => activeCompanionshipIds.has(id)),
+        );
+        const missingCount = activeCompanionships.filter((companionship) => !coveredIds.has(companionship.id)).length;
 
-      return total + activeCompanionships.filter((companionship) => !coveredIds.has(companionship.id)).length;
-    }, 0);
+        return {
+          eligibleDays: current.eligibleDays + 1,
+          completeDays: current.completeDays + (missingCount ? 0 : 1),
+          incompleteDays: current.incompleteDays + (missingCount ? 1 : 0),
+          missingCompanionshipLunches: current.missingCompanionshipLunches + missingCount,
+        };
+      },
+      {
+        eligibleDays: 0,
+        completeDays: 0,
+        incompleteDays: 0,
+        missingCompanionshipLunches: 0,
+      },
+    );
 
-    return missingCount ? `Faltam ${missingCount} almoços de duplas neste mês` : "Todas as duplas têm almoço nos dias disponíveis";
+    return {
+      ...totals,
+      headerText: totals.missingCompanionshipLunches
+        ? `Faltam ${totals.missingCompanionshipLunches} almoços de duplas neste mês`
+        : "Todas as duplas têm almoço nos dias disponíveis",
+      helperText: !totals.eligibleDays
+        ? "Nenhum dia disponível fora do P-DAY"
+        : totals.incompleteDays
+          ? `${totals.completeDays} de ${totals.eligibleDays} dias disponíveis estão completos`
+          : "Todos os dias disponíveis estão completos",
+      progressPercent: totals.eligibleDays ? Math.round((totals.completeDays / totals.eligibleDays) * 100) : 0,
+    };
   }, [activeCompanionshipIds, activeCompanionships, lunchPDayWeekday, lunchesByDate, visibleMonthDates]);
 
   function moveMonth(offset: number) {
@@ -499,7 +532,7 @@ export default function LunchCalendarPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle className="capitalize">{monthLabel(monthDate)}</CardTitle>
-                <CardDescription>{coverageSummary}</CardDescription>
+                <CardDescription>{coverageSummary.headerText}</CardDescription>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <div className="flex items-center gap-2">
@@ -661,73 +694,113 @@ export default function LunchCalendarPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Cobertura do mês</CardTitle>
+              <CardDescription>{coverageSummary.helperText}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <CardTitle>{selectedDateLabel}</CardTitle>
-                <CardDescription>{selectedLunches.length ? "Almoços agendados para o dia." : "Nenhum almoço agendado."}</CardDescription>
+                <p className="text-3xl font-semibold tabular-nums">{coverageSummary.incompleteDays}</p>
+                <p className="text-sm text-muted-foreground">
+                  {coverageSummary.incompleteDays === 1 ? "dia incompleto" : "dias incompletos"}
+                </p>
               </div>
-              {canManageLunches ? (
-                <Button aria-label="Cadastrar almoço neste dia" onClick={() => openCreateDrawer(selectedDate)} size="icon-sm" variant="outline">
-                  <Plus />
-                </Button>
-              ) : null}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {selectedLunches.map((lunch) => {
-              const companionships = getLunchCompanionships(lunch.companionshipIds);
 
-              return (
-                <div key={lunch.id} className="rounded-lg border p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-medium tabular-nums">{lunch.time}</p>
-                    <Badge variant={confirmationBadgeVariants[lunch.confirmationStatus]}>{confirmationLabels[lunch.confirmationStatus]}</Badge>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-sm">
-                    <p className="flex items-center gap-2">
-                      <Home className="size-4 text-muted-foreground" />
-                      {getLunchHostLabel(lunch)}
-                    </p>
-                    <div className="grid gap-1">
-                      {companionships.length ? (
-                        companionships.map((companionship) => {
-                          return (
-                            <p key={companionship.id} className="flex items-center gap-2">
-                              <CompanionshipIcon className="size-4 text-muted-foreground" type={companionship.type} />
-                              <span>{companionship.name}</span>
-                            </p>
-                          );
-                        })
-                      ) : (
-                        <p className="text-muted-foreground">Dupla não definida</p>
-                      )}
-                    </div>
-                  </div>
-                  {lunch.notes ? <p className="mt-3 text-sm text-muted-foreground">{lunch.notes}</p> : null}
-                  {canManageLunches ? (
-                    <div className="mt-3 flex flex-wrap justify-end gap-2">
-                      <Button onClick={() => openEditDrawer(lunch)} size="sm" variant="outline">
-                        <Pencil />
-                        Editar
-                      </Button>
-                      <Button onClick={() => removeLunch(lunch)} size="sm" variant="destructive">
-                        <Trash2 />
-                        Remover
-                      </Button>
-                    </div>
-                  ) : null}
+              <div className="grid gap-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Almoços de duplas faltando</span>
+                  <span className="font-medium tabular-nums">{coverageSummary.missingCompanionshipLunches}</span>
                 </div>
-              );
-            })}
-            {!selectedLunches.length ? (
-              <div className="rounded-lg border bg-secondary/35 p-4 text-sm text-muted-foreground">
-                Selecione outro dia do calendário para consultar os almoços.
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Dias completos</span>
+                  <span className="font-medium tabular-nums">
+                    {coverageSummary.completeDays}/{coverageSummary.eligibleDays}
+                  </span>
+                </div>
               </div>
-            ) : null}
-          </CardContent>
-        </Card>
+
+              <div className="space-y-2">
+                <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${coverageSummary.progressPercent}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground tabular-nums">{coverageSummary.progressPercent}% preenchido</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle>{selectedDateLabel}</CardTitle>
+                  <CardDescription>{selectedLunches.length ? "Almoços agendados para o dia." : "Nenhum almoço agendado."}</CardDescription>
+                </div>
+                {canManageLunches ? (
+                  <Button aria-label="Cadastrar almoço neste dia" onClick={() => openCreateDrawer(selectedDate)} size="icon-sm" variant="outline">
+                    <Plus />
+                  </Button>
+                ) : null}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {selectedLunches.map((lunch) => {
+                const companionships = getLunchCompanionships(lunch.companionshipIds);
+
+                return (
+                  <div key={lunch.id} className="rounded-lg border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="font-medium tabular-nums">{lunch.time}</p>
+                      <Badge variant={confirmationBadgeVariants[lunch.confirmationStatus]}>{confirmationLabels[lunch.confirmationStatus]}</Badge>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-sm">
+                      <p className="flex items-center gap-2">
+                        <Home className="size-4 text-muted-foreground" />
+                        {getLunchHostLabel(lunch)}
+                      </p>
+                      <div className="grid gap-1">
+                        {companionships.length ? (
+                          companionships.map((companionship) => {
+                            return (
+                              <p key={companionship.id} className="flex items-center gap-2">
+                                <CompanionshipIcon className="size-4 text-muted-foreground" type={companionship.type} />
+                                <span>{companionship.name}</span>
+                              </p>
+                            );
+                          })
+                        ) : (
+                          <p className="text-muted-foreground">Dupla não definida</p>
+                        )}
+                      </div>
+                    </div>
+                    {lunch.notes ? <p className="mt-3 text-sm text-muted-foreground">{lunch.notes}</p> : null}
+                    {canManageLunches ? (
+                      <div className="mt-3 flex flex-wrap justify-end gap-2">
+                        <Button onClick={() => openEditDrawer(lunch)} size="sm" variant="outline">
+                          <Pencil />
+                          Editar
+                        </Button>
+                        <Button onClick={() => removeLunch(lunch)} size="sm" variant="destructive">
+                          <Trash2 />
+                          Remover
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {!selectedLunches.length ? (
+                <div className="rounded-lg border bg-secondary/35 p-4 text-sm text-muted-foreground">
+                  Selecione outro dia do calendário para consultar os almoços.
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {canManageLunches ? (

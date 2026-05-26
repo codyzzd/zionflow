@@ -61,7 +61,9 @@ export default function DashboardPage() {
   const nextLunches = [...lunchSchedulesByWard].sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).slice(0, 3);
   const nextPatrols = [...patrolSchedulesByWard].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
   const recentMinutes = [...minutesByWard].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
-  const patrolMembersById = new Map(patrolMembersByWard.map((member) => [member.id, member]));
+  const patrolMembersById = new Map<string, { name: string }>();
+  patrolMembersByWard.forEach((member) => patrolMembersById.set(member.id, { name: member.name }));
+  membersByWard.forEach((member) => patrolMembersById.set(member.id, { name: member.name }));
   const alerts = [
     ...lunchSchedulesByWard
       .filter((item) => item.confirmationStatus !== "accepted")

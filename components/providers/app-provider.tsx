@@ -45,6 +45,8 @@ import type {
   SacramentMinute,
   SessionState,
   Stake,
+  StakeOwnerRequest,
+  StakeOwnerRequestApproval,
   User,
   UserAccessLevel,
   UserAccountType,
@@ -95,6 +97,8 @@ type SaveStakeInput = Omit<Stake, "id"> & {
   wardIds?: string[];
 };
 
+type ClaimStakeOwnershipInput = Pick<Stake, "name" | "city" | "state" | "country">;
+
 type ResolveAuthenticatedUserInput = {
   authUserId?: string;
   email: string;
@@ -128,6 +132,7 @@ type AppContextValue = {
   patrolMembersByWard: PatrolMember[];
   patrolSchedulesByWard: PatrolSchedule[];
   auditLogsByWard: AuditLog[];
+  stakeOwnerRequestsByStake: StakeOwnerRequest[];
   appPreferences: AppPreferences;
   loginAs: (userId: string) => void;
   resolveAuthenticatedUser: (input: ResolveAuthenticatedUserInput) => AuthenticatedUserResolution;
@@ -139,6 +144,7 @@ type AppContextValue = {
   changeCurrentUserRole: (roleId: string) => void;
   hasPermission: (permission: PermissionKey) => boolean;
   saveStake: (input: SaveStakeInput) => void;
+  claimStakeOwnershipForCurrentWard: (input: ClaimStakeOwnershipInput) => void;
   archiveStake: (stakeId: string) => void;
   unarchiveStake: (stakeId: string) => void;
   deleteStake: (stakeId: string) => void;
@@ -152,6 +158,9 @@ type AppContextValue = {
   importMembers: (input: ImportMembersInput) => void;
   addMemberNote: (memberId: string, text: string) => void;
   saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) => void;
+  requestStakeOwnership: () => void;
+  approveStakeOwnershipRequest: (requestId: string) => void;
+  transferStakeOwnership: (targetUserId: string) => void;
   saveAccessTemplate: (input: Omit<Role, "id"> & { id?: string }) => void;
   deleteAccessTemplate: (templateId: string) => void;
   toggleUserStatus: (userId: string) => void;
@@ -266,6 +275,32 @@ function canSaveUserAccessLevel(db: Database, targetWardId: string, targetAccess
   const targetWard = db.wards.find((ward) => ward.id === targetWardId);
 
   return canActorManageUsers(db, actor) && canAssignAccessLevel(actor, targetAccessLevel, targetWard, db.wards);
+}
+
+function getUserStakeId(user: User | undefined, wards: Ward[]) {
+  return user ? getWardStakeId(user.wardId, wards) : undefined;
+}
+
+function isActiveStakeMember(user: User | undefined, stakeId: string, wards: Ward[]) {
+  return Boolean(user && user.status === "active" && !user.archivedAt && getUserStakeId(user, wards) === stakeId);
+}
+
+function hasActiveStakeOwner(db: Database, stakeId: string) {
+  return db.users.some((user) => isActiveStakeMember(user, stakeId, db.wards) && user.accessLevel === "stake_owner");
+}
+
+function findPendingStakeOwnerRequest(db: Database, stakeId: string, requesterUserId: string) {
+  return db.stakeOwnerRequests.find(
+    (request) => request.stakeId === stakeId && request.requesterUserId === requesterUserId && request.status === "pending" && !request.archivedAt,
+  );
+}
+
+function invalidatePendingStakeOwnerRequests(requests: StakeOwnerRequest[], stakeId: string, exceptRequestId?: string, timestamp = nowIso()) {
+  return requests.map((request) =>
+    request.stakeId === stakeId && request.status === "pending" && request.id !== exceptRequestId
+      ? { ...request, status: "invalidated" as const, resolvedAt: timestamp, updatedAt: timestamp }
+      : request,
+  );
 }
 
 function isSoleActiveOwner(users: User[], owner: User, wards: Ward[]) {
@@ -625,6 +660,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     const patrolMembersByWard = db.patrolMembers.filter((member) => member.wardId === currentWardId && !member.archivedAt);
     const patrolSchedulesByWard = db.patrolSchedules.filter((schedule) => schedule.wardId === currentWardId && !schedule.archivedAt);
     const auditLogsByWard = db.auditLogs.filter((log) => log.wardId === currentWardId);
+    const currentStakeId = currentWard?.stakeId;
+    const stakeOwnerRequestsByStake = currentStakeId
+      ? db.stakeOwnerRequests.filter((request) => request.stakeId === currentStakeId && !request.archivedAt)
+      : [];
 
     function loginAs(userId: string) {
       setDb((currentDb) => {
@@ -1320,6 +1359,79 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success(existing ? "Estaca atualizada." : "Estaca cadastrada.");
     }
 
+    function claimStakeOwnershipForCurrentWard(input: ClaimStakeOwnershipInput) {
+      if (!currentUser || currentUser.status !== "active" || !currentWard || currentWard.stakeId || !input.name.trim()) {
+        toast.error("Seu usuário precisa estar ativo e a ala atual precisa estar sem estaca.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const actor = currentDb.users.find((user) => user.id === currentDb.session.currentUserId);
+        const ward = actor ? currentDb.wards.find((item) => item.id === (currentDb.session.currentWardId ?? actor.wardId)) : undefined;
+
+        if (!actor || actor.status !== "active" || !ward || ward.stakeId || !input.name.trim()) return currentDb;
+
+        const timestamp = nowIso();
+        const stakeAdminRole = createOnboardingRole("stake-admin");
+        const viewerRole = createOnboardingRole("viewer");
+        const stake = withRecordMetadata<Stake>(
+          {
+            id: uid("stake"),
+            name: input.name.trim(),
+            city: input.city.trim(),
+            state: input.state.trim(),
+            country: input.country.trim() || ward.country || "Brasil",
+          },
+          undefined,
+          actor.id,
+          timestamp,
+        );
+        const updatedWard = withRecordMetadata({ ...ward, stakeId: stake.id }, ward, actor.id, timestamp);
+        const updatedActor = withRecordMetadata(
+          {
+            ...actor,
+            wardId: ward.id,
+            accessLevel: "stake_owner" as UserAccessLevel,
+            roleId: stakeAdminRole.id,
+            permissionOverrides: normalizePermissionSet(stakeAdminRole.permissions),
+            permissionsConfigured: true,
+          },
+          actor,
+          actor.id,
+          timestamp,
+        );
+        const nextDb: Database = {
+          ...currentDb,
+          stakes: [stake, ...currentDb.stakes],
+          wards: currentDb.wards.map((item) => (item.id === ward.id ? updatedWard : item)),
+          roles: upsertRole(upsertRole(currentDb.roles, stakeAdminRole), viewerRole),
+          users: currentDb.users.map((user) => (user.id === actor.id ? updatedActor : user)),
+          session: {
+            ...currentDb.session,
+            currentWardId: ward.id,
+          },
+        };
+
+        const createdStakeDb = withAuditLog(nextDb, actor.id, {
+          wardId: ward.id,
+          action: "CREATE_STAKE",
+          module: "ala",
+          itemLabel: stake.name,
+          summary: "Criou estaca pela tela da ala e vinculou a ala atual.",
+        });
+
+        return withAuditLog(createdStakeDb, actor.id, {
+          wardId: ward.id,
+          action: "CLAIM_STAKE_OWNER",
+          module: "lideranca_estaca",
+          itemLabel: actor.name,
+          summary: "Assumiu como responsável da estaca criada pela tela da ala.",
+        });
+      });
+
+      toast.success("Estaca cadastrada e responsabilidade assumida.");
+    }
+
     function setStakeArchiveState(stakeId: string, archived: boolean) {
       const target = db.stakes.find((stake) => stake.id === stakeId);
       if (!target) return;
@@ -1819,6 +1931,250 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
 
       toast.success(exists ? "Usuário atualizado." : "Usuário cadastrado.");
+    }
+
+    function requestStakeOwnership() {
+      if (!currentUser || !currentWard?.stakeId || currentUser.status !== "active") {
+        toast.error("Seu usuário precisa estar ativo e vinculado a uma estaca.");
+        return;
+      }
+
+      if (hasActiveStakeOwner(db, currentWard.stakeId)) {
+        toast.error("Esta estaca já tem um responsável. Solicitações automáticas foram encerradas.");
+        return;
+      }
+
+      if (findPendingStakeOwnerRequest(db, currentWard.stakeId, currentUser.id)) {
+        toast.error("Você já tem uma solicitação pendente para esta estaca.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const actor = currentDb.users.find((user) => user.id === currentDb.session.currentUserId);
+        const actorWard = actor ? currentDb.wards.find((ward) => ward.id === actor.wardId) : undefined;
+        const stakeId = actorWard?.stakeId;
+
+        if (!actor || actor.status !== "active" || !stakeId || hasActiveStakeOwner(currentDb, stakeId)) return currentDb;
+        if (findPendingStakeOwnerRequest(currentDb, stakeId, actor.id)) return currentDb;
+
+        const timestamp = nowIso();
+        const request: StakeOwnerRequest = withRecordMetadata(
+          {
+            id: uid("stake-owner-request"),
+            stakeId,
+            wardId: actor.wardId,
+            requesterUserId: actor.id,
+            status: "pending",
+            approvals: [],
+            createdAt: timestamp,
+          },
+          undefined,
+          actor.id,
+          timestamp,
+        );
+
+        const nextDb = {
+          ...currentDb,
+          stakeOwnerRequests: [request, ...currentDb.stakeOwnerRequests],
+        };
+
+        return withAuditLog(nextDb, actor.id, {
+          wardId: actor.wardId,
+          action: "REQUEST_STAKE_OWNER",
+          module: "lideranca_estaca",
+          itemLabel: actor.name,
+          summary: "Solicitou ser responsável da estaca.",
+        });
+      });
+
+      toast.success("Solicitação enviada para aprovação.");
+    }
+
+    function approveStakeOwnershipRequest(requestId: string) {
+      const targetRequest = db.stakeOwnerRequests.find((request) => request.id === requestId);
+      if (!currentUser || !targetRequest || targetRequest.status !== "pending") return;
+
+      if (!isActiveStakeMember(currentUser, targetRequest.stakeId, db.wards) || currentUser.id === targetRequest.requesterUserId) {
+        toast.error("Seu usuário não pode aprovar esta solicitação.");
+        return;
+      }
+
+      if (hasActiveStakeOwner(db, targetRequest.stakeId)) {
+        toast.error("Esta estaca já tem um responsável. Solicitações automáticas foram encerradas.");
+        return;
+      }
+
+      if (targetRequest.approvals.some((approval) => approval.userId === currentUser.id)) {
+        toast.error("Sua aprovação já foi registrada.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const request = currentDb.stakeOwnerRequests.find((item) => item.id === requestId);
+        const actor = currentDb.users.find((user) => user.id === currentDb.session.currentUserId);
+        const requester = request ? currentDb.users.find((user) => user.id === request.requesterUserId) : undefined;
+
+        if (!request || request.status !== "pending" || !actor || !requester) return currentDb;
+        if (!isActiveStakeMember(actor, request.stakeId, currentDb.wards) || actor.id === request.requesterUserId) return currentDb;
+        if (!isActiveStakeMember(requester, request.stakeId, currentDb.wards) || hasActiveStakeOwner(currentDb, request.stakeId)) return currentDb;
+        if (request.approvals.some((approval) => approval.userId === actor.id)) return currentDb;
+
+        const timestamp = nowIso();
+        const approval: StakeOwnerRequestApproval = { userId: actor.id, wardId: actor.wardId, createdAt: timestamp };
+        const approvals = [...request.approvals, approval];
+        const approved = approvals.length >= 2;
+        const stakeAdminRole = createOnboardingRole("stake-admin");
+        const viewerRole = createOnboardingRole("viewer");
+        const nextRequest: StakeOwnerRequest = withRecordMetadata(
+          {
+            ...request,
+            approvals,
+            status: approved ? "approved" : "pending",
+            approvedAt: approved ? timestamp : request.approvedAt,
+            resolvedAt: approved ? timestamp : request.resolvedAt,
+          },
+          request,
+          actor.id,
+          timestamp,
+        );
+
+        const nextUsers: User[] = approved
+          ? currentDb.users.map((user) => {
+              if (user.id === requester.id) {
+                return withRecordMetadata(
+                  {
+                    ...user,
+                    accessLevel: "stake_owner" as UserAccessLevel,
+                    roleId: stakeAdminRole.id,
+                    permissionOverrides: normalizePermissionSet(stakeAdminRole.permissions),
+                    permissionsConfigured: true,
+                  },
+                  user,
+                  actor.id,
+                  timestamp,
+                );
+              }
+
+              if (isActiveStakeMember(user, request.stakeId, currentDb.wards) && user.accessLevel === "stake_owner") {
+                return withRecordMetadata(
+                  {
+                    ...user,
+                    accessLevel: "member" as UserAccessLevel,
+                    roleId: viewerRole.id,
+                    permissionOverrides: normalizePermissionSet(viewerRole.permissions),
+                    permissionsConfigured: true,
+                  },
+                  user,
+                  actor.id,
+                  timestamp,
+                );
+              }
+
+              return user;
+            })
+          : currentDb.users;
+
+        const updatedRequests = currentDb.stakeOwnerRequests.map((item) => (item.id === request.id ? nextRequest : item));
+        const nextDb: Database = {
+          ...currentDb,
+          roles: approved ? upsertRole(upsertRole(currentDb.roles, stakeAdminRole), viewerRole) : currentDb.roles,
+          users: nextUsers,
+          stakeOwnerRequests: approved ? invalidatePendingStakeOwnerRequests(updatedRequests, request.stakeId, request.id, timestamp) : updatedRequests,
+        };
+
+        return withAuditLog(nextDb, actor.id, {
+          wardId: request.wardId,
+          action: approved ? "APPROVE_STAKE_OWNER_REQUEST" : "CONFIRM_STAKE_OWNER_REQUEST",
+          module: "lideranca_estaca",
+          itemLabel: requester.name,
+          summary: approved
+            ? `Aprovou solicitação e tornou ${requester.name} responsável da estaca.`
+            : `Confirmou solicitação de responsável da estaca (${approvals.length}/2).`,
+        });
+      });
+
+      toast.success(targetRequest.approvals.length >= 1 ? "Solicitação aprovada. Responsável da estaca definido." : "Aprovação registrada.");
+    }
+
+    function transferStakeOwnership(targetUserId: string) {
+      if (!targetUserId) return;
+
+      const targetUser = db.users.find((user) => user.id === targetUserId);
+      const actor = currentUser;
+      const actorStakeId = getUserStakeId(actor, db.wards);
+
+      if (!actor || (!isSystemAdmin(actor) && actor.accessLevel !== "stake_owner")) {
+        toast.error("Somente o responsável da estaca pode transferir este poder.");
+        return;
+      }
+
+      if (!targetUser || !actorStakeId || !isActiveStakeMember(targetUser, actorStakeId, db.wards)) {
+        toast.error("Escolha um usuário ativo da mesma estaca.");
+        return;
+      }
+
+      setDb((currentDb) => {
+        const currentActor = currentDb.users.find((user) => user.id === currentDb.session.currentUserId);
+        const target = currentDb.users.find((user) => user.id === targetUserId);
+        const stakeId = getUserStakeId(currentActor, currentDb.wards);
+
+        if (!currentActor || !target || !stakeId) return currentDb;
+        if (!isSystemAdmin(currentActor) && currentActor.accessLevel !== "stake_owner") return currentDb;
+        if (!isActiveStakeMember(target, stakeId, currentDb.wards)) return currentDb;
+
+        const timestamp = nowIso();
+        const stakeAdminRole = createOnboardingRole("stake-admin");
+        const viewerRole = createOnboardingRole("viewer");
+        const nextUsers: User[] = currentDb.users.map((user) => {
+          if (user.id === target.id) {
+            return withRecordMetadata(
+              {
+                ...user,
+                accessLevel: "stake_owner" as UserAccessLevel,
+                roleId: stakeAdminRole.id,
+                permissionOverrides: normalizePermissionSet(stakeAdminRole.permissions),
+                permissionsConfigured: true,
+              },
+              user,
+              currentActor.id,
+              timestamp,
+            );
+          }
+
+          if (isActiveStakeMember(user, stakeId, currentDb.wards) && user.accessLevel === "stake_owner") {
+            return withRecordMetadata(
+              {
+                ...user,
+                accessLevel: "member" as UserAccessLevel,
+                roleId: viewerRole.id,
+                permissionOverrides: normalizePermissionSet(viewerRole.permissions),
+                permissionsConfigured: true,
+              },
+              user,
+              currentActor.id,
+              timestamp,
+            );
+          }
+
+          return user;
+        });
+
+        const nextDb: Database = {
+          ...currentDb,
+          roles: upsertRole(upsertRole(currentDb.roles, stakeAdminRole), viewerRole),
+          users: nextUsers,
+        };
+
+        return withAuditLog(nextDb, currentActor.id, {
+          wardId: target.wardId,
+          action: "TRANSFER_STAKE_OWNER",
+          module: "lideranca_estaca",
+          itemLabel: target.name,
+          summary: `Transferiu o cargo de responsável da estaca para ${target.name}.`,
+        });
+      });
+
+      toast.success("Responsável da estaca transferido.");
     }
 
     function saveAccessTemplate(input: Omit<Role, "id"> & { id?: string }) {
@@ -2676,6 +3032,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       patrolMembersByWard,
       patrolSchedulesByWard,
       auditLogsByWard,
+      stakeOwnerRequestsByStake,
       appPreferences: db.appPreferences,
       loginAs,
       resolveAuthenticatedUser,
@@ -2687,6 +3044,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       changeCurrentUserRole,
       hasPermission,
       saveStake,
+      claimStakeOwnershipForCurrentWard,
       archiveStake,
       unarchiveStake,
       deleteStake,
@@ -2700,6 +3058,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       importMembers,
       addMemberNote,
       saveUser,
+      requestStakeOwnership,
+      approveStakeOwnershipRequest,
+      transferStakeOwnership,
       saveAccessTemplate,
       deleteAccessTemplate,
       toggleUserStatus,

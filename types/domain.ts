@@ -35,6 +35,7 @@ export type PermissionKey =
 export type UserStatus = "active" | "inactive";
 export type UserAccountType = "regular" | "system_super_user";
 export type UserAccessLevel = "stake_owner" | "stake_leader" | "ward_owner" | "ward_leader" | "member";
+export type StakeOwnerRequestStatus = "pending" | "approved" | "cancelled" | "invalidated";
 export type MinuteStatus = "draft" | "published";
 export type ConfirmationStatus = "not_viewed" | "viewed" | "accepted" | "declined";
 export type PatrolStatus = "scheduled" | "confirmed" | "done" | "missed";
@@ -106,6 +107,23 @@ export interface User extends RecordMetadata {
   lastAccessAt?: string;
 }
 
+export interface StakeOwnerRequestApproval {
+  userId: string;
+  wardId: string;
+  createdAt: string;
+}
+
+export interface StakeOwnerRequest extends RecordMetadata {
+  id: string;
+  stakeId: string;
+  wardId: string;
+  requesterUserId: string;
+  status: StakeOwnerRequestStatus;
+  approvals: StakeOwnerRequestApproval[];
+  approvedAt?: string;
+  resolvedAt?: string;
+}
+
 export interface MemberNote {
   id: string;
   memberId: string;
@@ -151,9 +169,12 @@ export interface MinuteFormData {
   childBlessings: string;
   sacramentHymn: HybridField;
   speaker1: HybridField;
+  speaker1Theme: string;
   speaker2: HybridField;
+  speaker2Theme: string;
   intermediateHymn: HybridField;
   speaker3: HybridField;
+  speaker3Theme: string;
   closingHymn: HybridField;
   closingPrayer: HybridField;
   notes: string;
@@ -327,6 +348,7 @@ export interface Database {
   wards: Ward[];
   roles: Role[];
   users: User[];
+  stakeOwnerRequests: StakeOwnerRequest[];
   members: Member[];
   memberNotes: MemberNote[];
   sacramentMinutes: SacramentMinute[];

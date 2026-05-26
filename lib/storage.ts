@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
-import { createSeedDatabase } from "@/lib/demo-data";
+import { createEmptyMinuteForm, createSeedDatabase } from "@/lib/demo-data";
 import { normalizePermissionSet, normalizeUserAccessLevel, permissionsFromLegacyRole } from "@/lib/access-control";
 import { DEFAULT_HYMN_BOOK_IDS, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
@@ -21,7 +21,11 @@ import type {
   PatrolSchedule,
   RecordMetadata,
   Role,
+  SacramentMinute,
   Stake,
+  StakeOwnerRequest,
+  StakeOwnerRequestApproval,
+  StakeOwnerRequestStatus,
   User,
   Ward,
 } from "@/types/domain";
@@ -38,6 +42,7 @@ const REMOTE_TABLES = [
   { key: "wards", table: "wards" },
   { key: "roles", table: "roles" },
   { key: "users", table: "users" },
+  { key: "stakeOwnerRequests", table: "stake_owner_requests" },
   { key: "members", table: "members" },
   { key: "memberNotes", table: "member_notes" },
   { key: "sacramentMinutes", table: "sacrament_minutes" },
@@ -96,6 +101,25 @@ function asBoolean(value: unknown, fallback = false) {
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeStakeOwnerRequestStatus(value: unknown): StakeOwnerRequestStatus {
+  return value === "approved" || value === "cancelled" || value === "invalidated" ? value : "pending";
+}
+
+function normalizeStakeOwnerRequestApprovals(value: unknown): StakeOwnerRequestApproval[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+
+    const approval = item as Partial<Record<keyof StakeOwnerRequestApproval, unknown>>;
+    const userId = asString(approval.userId);
+    const wardId = asString(approval.wardId);
+    const createdAt = asString(approval.createdAt);
+
+    return userId && wardId && createdAt ? [{ userId, wardId, createdAt }] : [];
+  });
 }
 
 function normalizeWeekday(value: unknown) {
@@ -381,6 +405,42 @@ function normalizeHybridField(value: unknown, fallbackLinkedId = ""): HybridFiel
   };
 }
 
+function normalizeMinuteFormData(value: unknown) {
+  const emptyForm = createEmptyMinuteForm();
+  const form = value && typeof value === "object" && !Array.isArray(value) ? (value as Partial<ReturnType<typeof createEmptyMinuteForm>>) : {};
+
+  return {
+    ...emptyForm,
+    ...form,
+    presiding: normalizeHybridField(form.presiding),
+    conducting: normalizeHybridField(form.conducting),
+    attendance: typeof form.attendance === "number" && Number.isFinite(form.attendance) ? form.attendance : emptyForm.attendance,
+    conductor: normalizeHybridField(form.conductor),
+    accompanist: normalizeHybridField(form.accompanist),
+    openingHymn: normalizeHybridField(form.openingHymn),
+    openingPrayer: normalizeHybridField(form.openingPrayer),
+    sacramentHymn: normalizeHybridField(form.sacramentHymn),
+    speaker1: normalizeHybridField(form.speaker1),
+    speaker1Theme: asOptionalString(form.speaker1Theme),
+    speaker2: normalizeHybridField(form.speaker2),
+    speaker2Theme: asOptionalString(form.speaker2Theme),
+    intermediateHymn: normalizeHybridField(form.intermediateHymn),
+    speaker3: normalizeHybridField(form.speaker3),
+    speaker3Theme: asOptionalString(form.speaker3Theme),
+    closingHymn: normalizeHybridField(form.closingHymn),
+    closingPrayer: normalizeHybridField(form.closingPrayer),
+  };
+}
+
+function normalizeSacramentMinute(minute: SacramentMinute): SacramentMinute {
+  const normalizedMinute = normalizeSimpleRecord(minute);
+
+  return {
+    ...normalizedMinute,
+    form: normalizeMinuteFormData(normalizedMinute.form),
+  };
+}
+
 function normalizeLunchSchedule(lunchSchedule: LunchSchedule): LunchSchedule {
   const legacyLunchSchedule = lunchSchedule as LunchSchedule & {
     host?: unknown;
@@ -411,6 +471,14 @@ function normalizeRole(role: Role): Role {
   };
 }
 
+function normalizeStakeOwnerRequest(request: StakeOwnerRequest): StakeOwnerRequest {
+  return {
+    ...request,
+    status: normalizeStakeOwnerRequestStatus(request.status),
+    approvals: normalizeStakeOwnerRequestApprovals(request.approvals),
+  };
+}
+
 export function normalizeDatabase(db: Database): Database {
   const legacyDb = db as Partial<Database>;
   const roles = (legacyDb.roles ?? []).map((role) => normalizeRole(role));
@@ -424,9 +492,10 @@ export function normalizeDatabase(db: Database): Database {
       wards: (legacyDb.wards ?? []).map((ward) => normalizeWard(ward)),
     },
     users: (legacyDb.users ?? []).map((user) => normalizeUser(user, roles)),
+    stakeOwnerRequests: (legacyDb.stakeOwnerRequests ?? []).map((request) => normalizeStakeOwnerRequest(request)),
     members: (legacyDb.members ?? []).map((member) => normalizeMember(member)),
     memberNotes: legacyDb.memberNotes ?? [],
-    sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSimpleRecord(minute)),
+    sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSacramentMinute(minute)),
     minuteVersions: legacyDb.minuteVersions ?? [],
     hymnBooks: (legacyDb.hymnBooks ?? createEmptyDatabase().hymnBooks).map((hymnBook) => normalizeHymnBook(hymnBook)),
     hymns: (legacyDb.hymns ?? []).map((hymn) => normalizeHymn(hymn)),
@@ -567,6 +636,22 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         created_at: optionalText(record.createdAt),
         updated_at: optionalText(record.updatedAt),
       };
+    case "stakeOwnerRequests":
+      return {
+        stake_id: optionalUuid(record.stakeId),
+        ward_id: optionalUuid(record.wardId),
+        requester_user_id: optionalUuid(record.requesterUserId),
+        status: normalizeStakeOwnerRequestStatus(record.status),
+        approvals: normalizeStakeOwnerRequestApprovals(record.approvals),
+        approved_at: optionalText(record.approvedAt),
+        resolved_at: optionalText(record.resolvedAt),
+        created_by_user_id: optionalUuid(record.createdByUserId),
+        updated_by_user_id: optionalUuid(record.updatedByUserId),
+        archived_at: optionalText(record.archivedAt),
+        archived_by_user_id: optionalUuid(record.archivedByUserId),
+        created_at: optionalText(record.createdAt),
+        updated_at: optionalText(record.updatedAt),
+      };
     case "members":
       return { ward_id: optionalUuid(record.wardId) };
     case "memberNotes":
@@ -687,6 +772,23 @@ function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOpti
         "created_at",
         "updated_at",
       ].join(",");
+    case "stakeOwnerRequests":
+      return [
+        "id",
+        "stake_id",
+        "ward_id",
+        "requester_user_id",
+        "status",
+        "approvals",
+        "approved_at",
+        "resolved_at",
+        "created_by_user_id",
+        "updated_by_user_id",
+        "archived_at",
+        "archived_by_user_id",
+        "created_at",
+        "updated_at",
+      ].join(",");
     case "hymnBooks":
       return "id,data,name,emoji,created_at,updated_at";
     case "hymns":
@@ -697,7 +799,7 @@ function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOpti
 }
 
 function usesStructuredColumns(key: RemoteCollectionKey) {
-  return key === "stakes" || key === "wards" || key === "roles" || key === "users" || key === "hymnBooks";
+  return key === "stakes" || key === "wards" || key === "roles" || key === "users" || key === "stakeOwnerRequests" || key === "hymnBooks";
 }
 
 function isMissingRemoteColumn(error: unknown, columnName: string) {
@@ -766,6 +868,26 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         archivedAt: rowOptionalString(row, "archived_at", "archivedAt"),
         archivedByUserId: rowOptionalString(row, "archived_by_user_id", "archivedByUserId"),
         lastAccessAt: rowOptionalString(row, "last_access_at", "lastAccessAt"),
+      };
+    }
+    case "stakeOwnerRequests": {
+      const data = asDataObject(row);
+
+      return {
+        id: row.id,
+        stakeId: rowString(row, "stake_id", "stakeId"),
+        wardId: rowString(row, "ward_id", "wardId"),
+        requesterUserId: rowString(row, "requester_user_id", "requesterUserId"),
+        status: normalizeStakeOwnerRequestStatus(rowString(row, "status", "status", "pending")),
+        approvals: normalizeStakeOwnerRequestApprovals(row.approvals ?? data.approvals),
+        approvedAt: rowOptionalString(row, "approved_at", "approvedAt"),
+        resolvedAt: rowOptionalString(row, "resolved_at", "resolvedAt"),
+        createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
+        createdByUserId: rowOptionalString(row, "created_by_user_id", "createdByUserId"),
+        updatedAt: asString(row.updated_at) ?? asString(data.updatedAt) ?? UNKNOWN_TIMESTAMP,
+        updatedByUserId: rowOptionalString(row, "updated_by_user_id", "updatedByUserId"),
+        archivedAt: rowOptionalString(row, "archived_at", "archivedAt"),
+        archivedByUserId: rowOptionalString(row, "archived_by_user_id", "archivedByUserId"),
       };
     }
     case "hymnBooks": {

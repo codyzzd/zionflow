@@ -1,17 +1,18 @@
 "use client";
 
-import { Copy, Landmark, Save } from "lucide-react";
+import { Landmark, Save } from "lucide-react";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Ward } from "@/types/domain";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { Stake, User, Ward } from "@/types/domain";
 
 type WardForm = {
   name: string;
@@ -19,6 +20,8 @@ type WardForm = {
   state: string;
   country: string;
 };
+
+type StakeRegistrationForm = Pick<Stake, "name" | "city" | "state" | "country">;
 
 function formFromWard(ward: Ward): WardForm {
   return {
@@ -36,14 +39,109 @@ const emptyWardForm: WardForm = {
   country: "",
 };
 
+function stakeFormFromWard(ward?: Ward): StakeRegistrationForm {
+  return {
+    name: "",
+    city: ward?.city ?? "",
+    state: ward?.state ?? "",
+    country: ward?.country || "Brasil",
+  };
+}
+
+function UnlinkedStakeRegistration({
+  currentUser,
+  currentWard,
+  onClaim,
+}: {
+  currentUser?: User;
+  currentWard?: Ward;
+  onClaim: (input: StakeRegistrationForm) => void;
+}) {
+  const [stakeForm, setStakeForm] = useState<StakeRegistrationForm>(() => stakeFormFromWard(currentWard));
+  const canClaimStakeOwnership = Boolean(currentUser && currentUser.status === "active" && currentWard && !currentWard.stakeId && stakeForm.name.trim());
+
+  function updateStakeField(field: keyof StakeRegistrationForm, value: string) {
+    setStakeForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleClaimStakeOwnership() {
+    if (!canClaimStakeOwnership) return;
+    onClaim(stakeForm);
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <p className="font-medium">Esta ala ainda não está atrelada a uma estaca.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Cadastre a estaca desta ala para assumir como responsável e liberar a organização da estaca.</p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2 sm:col-span-2">
+          <Label htmlFor="stake-request-name">Nome da estaca</Label>
+          <Input id="stake-request-name" value={stakeForm.name} onChange={(event) => updateStakeField("name", event.target.value)} />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="stake-request-city">Cidade</Label>
+          <Input id="stake-request-city" value={stakeForm.city} onChange={(event) => updateStakeField("city", event.target.value)} />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="stake-request-state">Estado</Label>
+          <Input id="stake-request-state" value={stakeForm.state} onChange={(event) => updateStakeField("state", event.target.value)} />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="stake-request-country">País</Label>
+          <Input id="stake-request-country" value={stakeForm.country} onChange={(event) => updateStakeField("country", event.target.value)} />
+        </div>
+      </div>
+
+      <Button disabled={!canClaimStakeOwnership} onClick={handleClaimStakeOwnership}>
+        Solicitar ser responsável da estaca
+      </Button>
+    </div>
+  );
+}
+
 export default function WardPage() {
-  const { currentWard, db, hasPermission, saveWard } = useAppContext();
+  const {
+    approveStakeOwnershipRequest,
+    claimStakeOwnershipForCurrentWard,
+    currentUser,
+    currentWard,
+    db,
+    hasPermission,
+    requestStakeOwnership,
+    saveWard,
+    stakeOwnerRequestsByStake,
+    transferStakeOwnership,
+  } = useAppContext();
   const canManageWard = hasPermission("ward.manage");
   const currentStake = useMemo(
     () => (currentWard?.stakeId ? db.stakes.find((stake) => stake.id === currentWard.stakeId) : undefined),
     [currentWard, db.stakes],
   );
   const [form, setForm] = useState<WardForm>(() => (currentWard ? formFromWard(currentWard) : emptyWardForm));
+  const [transferTargetUserId, setTransferTargetUserId] = useState("");
+  const usersById = useMemo(() => new Map(db.users.map((user) => [user.id, user])), [db.users]);
+  const wardsById = useMemo(() => new Map(db.wards.map((ward) => [ward.id, ward])), [db.wards]);
+  const activeStakeUsers = useMemo(
+    () =>
+      currentStake
+        ? db.users
+            .filter((user) => user.status === "active" && !user.archivedAt && wardsById.get(user.wardId)?.stakeId === currentStake.id)
+            .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+        : [],
+    [currentStake, db.users, wardsById],
+  );
+  const activeStakeOwner = activeStakeUsers.find((user) => user.accessLevel === "stake_owner");
+  const pendingRequests = stakeOwnerRequestsByStake.filter((request) => request.status === "pending");
+  const currentUserRequest = currentUser ? pendingRequests.find((request) => request.requesterUserId === currentUser.id) : undefined;
+  const canRequestStakeOwnership = Boolean(currentUser && currentWard?.stakeId && currentUser.status === "active" && currentStake && !activeStakeOwner && !currentUserRequest);
+  const canTransferStakeOwnership = Boolean(currentUser && currentStake && currentUser.accessLevel === "stake_owner" && activeStakeOwner?.id === currentUser.id);
+  const transferTargets = activeStakeUsers.filter((user) => user.id !== currentUser?.id);
 
   const hasChanges = useMemo(() => {
     if (!currentWard) return false;
@@ -71,12 +169,10 @@ export default function WardPage() {
     setForm(formFromWard(nextWard));
   }
 
-  async function copyStakeRequest() {
-    if (!currentWard) return;
-
-    const message = `Olá, preciso que a ${currentWard.name} seja atrelada à estaca no Zionwise para fazer parte da organização da estaca.`;
-    await navigator.clipboard?.writeText(message);
-    toast.success("Mensagem de solicitação copiada.");
+  function handleTransferStakeOwnership() {
+    if (!transferTargetUserId) return;
+    transferStakeOwnership(transferTargetUserId);
+    setTransferTargetUserId("");
   }
 
   return (
@@ -129,7 +225,7 @@ export default function WardPage() {
           <CardHeader>
             <CardTitle>Estaca</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-5">
             {currentStake ? (
               <div className="flex items-start gap-3">
                 <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
@@ -143,21 +239,101 @@ export default function WardPage() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div>
-                  <p className="font-medium">Esta ala ainda não está atrelada a uma estaca.</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Solicite ao líder da estaca para atrelar esta ala à estaca para fazer parte da organização.
-                  </p>
-                </div>
-                <Button disabled={!currentWard} onClick={copyStakeRequest} variant="secondary">
-                  <Copy className="size-4" />
-                  Copiar solicitação
-                </Button>
-              </div>
+              <UnlinkedStakeRegistration
+                key={currentWard?.id ?? "empty-ward"}
+                currentUser={currentUser}
+                currentWard={currentWard}
+                onClaim={claimStakeOwnershipForCurrentWard}
+              />
             )}
           </CardContent>
         </Card>
+
+        {currentStake ? (
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>Responsável da estaca</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  {activeStakeOwner ? (
+                    <>
+                      <p className="font-medium">{activeStakeOwner.name}</p>
+                      <p className="text-sm text-muted-foreground">Responsável atual pela administração da estaca.</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-medium">Nenhum responsável definido</p>
+                      <p className="text-sm text-muted-foreground">Dois membros ativos da estaca podem aprovar a primeira definição.</p>
+                    </>
+                  )}
+                </div>
+                {activeStakeOwner ? <Badge variant="default">Definido</Badge> : <Badge variant="secondary">Pendente</Badge>}
+              </div>
+
+              {!activeStakeOwner ? (
+                <div className="space-y-4">
+                  <Button disabled={!canRequestStakeOwnership} onClick={requestStakeOwnership} variant={currentUserRequest ? "secondary" : "default"}>
+                    {currentUserRequest ? "Solicitação pendente" : "Solicitar ser responsável da estaca"}
+                  </Button>
+
+                  {pendingRequests.length ? (
+                    <div className="space-y-3">
+                      {pendingRequests.map((request) => {
+                        const requester = usersById.get(request.requesterUserId);
+                        const requesterWard = wardsById.get(request.wardId);
+                        const alreadyApproved = Boolean(currentUser && request.approvals.some((approval) => approval.userId === currentUser.id));
+                        const canApprove = Boolean(currentUser && currentUser.id !== request.requesterUserId && !alreadyApproved);
+
+                        return (
+                          <div key={request.id} className="rounded-lg border p-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="space-y-1">
+                                <p className="font-medium">{requester?.name ?? "Usuário não encontrado"}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {requesterWard?.name ?? "Ala não encontrada"} - {request.approvals.length}/2 aprovações
+                                </p>
+                              </div>
+                              <Button disabled={!canApprove} onClick={() => approveStakeOwnershipRequest(request.id)} size="sm" variant="secondary">
+                                {alreadyApproved ? "Aprovado por você" : "Aprovar"}
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Nenhuma solicitação pendente.</div>
+                  )}
+                </div>
+              ) : null}
+
+              {canTransferStakeOwnership ? (
+                <div className="grid gap-3 border-t pt-5 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <div className="space-y-2">
+                    <Label>Transferir responsabilidade</Label>
+                    <Select value={transferTargetUserId} onValueChange={setTransferTargetUserId}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Escolha um membro ativo da estaca" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {transferTargets.map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button disabled={!transferTargetUserId} onClick={handleTransferStakeOwnership}>
+                    Transferir
+                  </Button>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </PermissionGuard>
   );

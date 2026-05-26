@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { createEmptyMinuteForm } from "@/lib/demo-data";
 import type { HybridField, SacramentMinute } from "@/types/domain";
 
 type MinutePrintItem = {
@@ -80,31 +81,7 @@ export function MinuteEditor({
       status: "draft",
       presidency: "Bispado",
       responsibleUserId: currentUser.id,
-      form: {
-        presiding: { mode: "linked", linkedId: "", manualValue: "" },
-        conducting: { mode: "linked", linkedId: "", manualValue: "" },
-        recognitions: "",
-        announcements: "",
-        attendance: 0,
-        conductor: { mode: "linked", linkedId: "", manualValue: "" },
-        accompanist: { mode: "linked", linkedId: "", manualValue: "" },
-        openingHymn: { mode: "linked", linkedId: "", manualValue: "" },
-        openingPrayer: { mode: "linked", linkedId: "", manualValue: "" },
-        releases: "",
-        sustainings: "",
-        priesthoodAdvancements: "",
-        certificates: "",
-        confirmations: "",
-        childBlessings: "",
-        sacramentHymn: { mode: "linked", linkedId: "", manualValue: "" },
-        speaker1: { mode: "linked", linkedId: "", manualValue: "" },
-        speaker2: { mode: "linked", linkedId: "", manualValue: "" },
-        intermediateHymn: { mode: "linked", linkedId: "", manualValue: "" },
-        speaker3: { mode: "linked", linkedId: "", manualValue: "" },
-        closingHymn: { mode: "linked", linkedId: "", manualValue: "" },
-        closingPrayer: { mode: "linked", linkedId: "", manualValue: "" },
-        notes: "",
-      },
+      form: createEmptyMinuteForm(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       versionIds: [],
@@ -280,9 +257,12 @@ export function MinuteEditor({
       items: [
         { label: "Hino sacramental", value: formatHybridField(currentForm.form.sacramentHymn, hymnOptions), wide: true },
         { label: "Primeiro orador", value: formatHybridField(currentForm.form.speaker1, printMemberOptions) },
+        { label: "Tema 1", value: currentForm.form.speaker1Theme },
         { label: "Segundo orador", value: formatHybridField(currentForm.form.speaker2, printMemberOptions) },
+        { label: "Tema 2", value: currentForm.form.speaker2Theme },
         { label: "Hino intermediário", value: formatHybridField(currentForm.form.intermediateHymn, hymnOptions) },
         { label: "Terceiro orador", value: formatHybridField(currentForm.form.speaker3, printMemberOptions) },
+        { label: "Tema 3", value: currentForm.form.speaker3Theme },
         { label: "Hino final", value: formatHybridField(currentForm.form.closingHymn, hymnOptions) },
         { label: "Última oração", value: formatHybridField(currentForm.form.closingPrayer, printMemberOptions) },
         { label: "Anotações gerais", value: currentForm.form.notes, wide: true },
@@ -650,6 +630,15 @@ export function MinuteEditor({
                     manualOptionLabel="Temporário"
                     onChange={(value) => setForm((current) => (current ? { ...current, form: { ...current.form, speaker1: value } } : current))}
                   />
+                  <div className="space-y-2">
+                    <Label>Tema 1</Label>
+                    <Input
+                      value={form.form.speaker1Theme}
+                      onChange={(event) =>
+                        setForm((current) => (current ? { ...current, form: { ...current.form, speaker1Theme: event.target.value } } : current))
+                      }
+                    />
+                  </div>
                   <HybridSelector
                     label="Segundo orador"
                     value={form.form.speaker2}
@@ -658,6 +647,15 @@ export function MinuteEditor({
                     manualOptionLabel="Temporário"
                     onChange={(value) => setForm((current) => (current ? { ...current, form: { ...current.form, speaker2: value } } : current))}
                   />
+                  <div className="space-y-2">
+                    <Label>Tema 2</Label>
+                    <Input
+                      value={form.form.speaker2Theme}
+                      onChange={(event) =>
+                        setForm((current) => (current ? { ...current, form: { ...current.form, speaker2Theme: event.target.value } } : current))
+                      }
+                    />
+                  </div>
                   <HybridSelector
                     label="Hino intermediário"
                     value={form.form.intermediateHymn}
@@ -675,6 +673,15 @@ export function MinuteEditor({
                     manualOptionLabel="Temporário"
                     onChange={(value) => setForm((current) => (current ? { ...current, form: { ...current.form, speaker3: value } } : current))}
                   />
+                  <div className="space-y-2">
+                    <Label>Tema 3</Label>
+                    <Input
+                      value={form.form.speaker3Theme}
+                      onChange={(event) =>
+                        setForm((current) => (current ? { ...current, form: { ...current.form, speaker3Theme: event.target.value } } : current))
+                      }
+                    />
+                  </div>
                   <HybridSelector
                     label="Hino final"
                     value={form.form.closingHymn}
