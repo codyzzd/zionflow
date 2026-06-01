@@ -104,8 +104,7 @@ function InlineHybridCell({
     if (!normalizedQuery) return options.slice(0, 8);
 
     return options
-      .filter((option) => normalizeSearchValue(`${option.label} ${option.searchValue ?? ""}`).includes(normalizedQuery))
-      .slice(0, 8);
+      .filter((option) => normalizeSearchValue(`${option.label} ${option.searchValue ?? ""}`).includes(normalizedQuery));
   }, [normalizedQuery, options]);
   const hasExactMatch = useMemo(
     () => options.some((option) => normalizeSearchValue(option.label) === normalizedQuery || normalizeSearchValue(option.searchValue ?? "") === normalizedQuery),

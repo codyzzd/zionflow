@@ -7,6 +7,7 @@ export type PermissionKey =
   | "users.view"
   | "users.manage"
   | "roles.manage"
+  | "map.view"
   | "members.view"
   | "members.manage"
   | "minutes.view"
@@ -45,6 +46,7 @@ export type CaravanSeatMode = "quantity" | "vehicle";
 export type Weekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
 export type CalendarWeekStartsOn = "sunday" | "monday";
 export type DateFormat = "short" | "medium" | "long";
+export type ChurchActivityStatus = "attending" | "not_attending";
 
 export const MEMBER_ORGANIZATION_OPTIONS = [
   "Quorum de Elderes",
@@ -136,6 +138,11 @@ export interface Member extends RecordMetadata {
   id: string;
   wardId: string;
   name: string;
+  phone: string;
+  address: string;
+  latitude?: number;
+  longitude?: number;
+  churchActivityStatus: ChurchActivityStatus;
   birthDate: string;
   organization: string;
   sex: "M" | "F";

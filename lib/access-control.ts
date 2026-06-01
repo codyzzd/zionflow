@@ -13,7 +13,7 @@ export type AccessArea = {
 };
 
 export type AccessAreaCategory = "general" | "organization" | "minutes" | "support" | "caravan" | "admin";
-export type AccessAreaIcon = "building" | "bus" | "file-text" | "handshake" | "key" | "landmark" | "layout-dashboard" | "shield" | "utensils" | "users";
+export type AccessAreaIcon = "building" | "bus" | "file-text" | "handshake" | "key" | "landmark" | "layout-dashboard" | "map" | "shield" | "utensils" | "users";
 
 export const ACCESS_LEVEL_LABELS: Record<AccessLevel, string> = {
   hidden: "Não pode visualizar",
@@ -74,6 +74,14 @@ export const ACCESS_MATRIX_AREAS: AccessArea[] = [
     label: "Membros",
     viewPermission: "members.view",
     managePermission: "members.manage",
+  },
+  {
+    category: "organization",
+    description: "Visualização territorial dos membros da ala por endereço e condição de frequência.",
+    icon: "map",
+    id: "map",
+    label: "Mapa",
+    viewPermission: "map.view",
   },
   {
     category: "minutes",
@@ -327,11 +335,11 @@ export function permissionsFromLegacyRole(roleId: string, permissions: Permissio
   }
 
   if (permissions.includes("users.manage")) {
-    permissions.push("users.view");
+    permissions.push("users.view", "map.view");
   }
 
   if (roleId === "role_admin" || roleId === "role_bishopric") {
-    permissions.push("ward.view", "ward.manage", "stake.view", "stake.manage", "users.view", "users.manage", "roles.manage");
+    permissions.push("ward.view", "ward.manage", "stake.view", "stake.manage", "users.view", "users.manage", "roles.manage", "map.view");
   }
 
   return normalizePermissionSet(permissions);

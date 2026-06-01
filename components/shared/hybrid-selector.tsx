@@ -105,8 +105,7 @@ export function HybridSelector({
         const labelSort = SEARCH_COLLATOR.compare(a.option.label, b.option.label);
         return labelSort || a.index - b.index;
       })
-      .map((item) => item.option)
-      .slice(0, 8);
+      .map((item) => item.option);
   }, [options, trimmedQuery]);
 
   function selectLinkedOption(option: Option) {

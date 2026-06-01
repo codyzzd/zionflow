@@ -69,7 +69,7 @@ function getAccessSummary(permissions: PermissionKey[]) {
 }
 
 export default function UsersPage() {
-  const { currentUser, currentWard, hasPermission, membersByWard, roles, toggleUserStatus, usersByWard, saveUser, wards } = useAppContext();
+  const { currentUser, currentWard, hasPermission, roles, toggleUserStatus, usersByWard, saveUser, wards } = useAppContext();
   const { formatDateTime } = useDateFormatter();
   const canManageUsers = hasPermission("users.manage");
   const canCreateUser = Boolean(canManageUsers && currentWard && canAssignAccessLevel(currentUser, "member", currentWard, wards));
@@ -88,19 +88,17 @@ export default function UsersPage() {
   const filteredUsers = useMemo(
     () =>
       usersByWard.filter((user) => {
-        const linkedMember = membersByWard.find((member) => member.id === user.memberId);
         const normalizedSearch = search.trim().toLowerCase();
         const matchesSearch =
           !normalizedSearch ||
           user.name.toLowerCase().includes(normalizedSearch) ||
           user.email.toLowerCase().includes(normalizedSearch) ||
-          user.phone.toLowerCase().includes(normalizedSearch) ||
-          linkedMember?.name.toLowerCase().includes(normalizedSearch);
+          user.phone.toLowerCase().includes(normalizedSearch);
         const matchesStatus = statusFilter === "all" || user.status === statusFilter;
 
         return matchesSearch && matchesStatus;
       }),
-    [membersByWard, search, statusFilter, usersByWard],
+    [search, statusFilter, usersByWard],
   );
 
   function resetForm() {
@@ -212,7 +210,6 @@ export default function UsersPage() {
         ),
         cell: ({ row }) => {
           const user = row.original;
-          const linkedMember = membersByWard.find((member) => member.id === user.memberId);
           const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
           const canEditTarget = canManageUsers && !isProtectedSystemUser && canManageUser(currentUser, user, wards);
 
@@ -222,7 +219,6 @@ export default function UsersPage() {
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{user.email}</span>
                 <span>{user.phone || "Telefone não informado"}</span>
-                <span>{linkedMember ? `Membro: ${linkedMember.name}` : "Sem membro vinculado"}</span>
               </div>
             </div>
           );
@@ -302,7 +298,7 @@ export default function UsersPage() {
         },
       },
     ],
-    [canManageUsers, currentUser, formatDateTime, membersByWard, openEditDrawer, toggleUserStatus, wards],
+    [canManageUsers, currentUser, formatDateTime, openEditDrawer, toggleUserStatus, wards],
   );
 
   return (
@@ -368,25 +364,6 @@ export default function UsersPage() {
                 <div>
                   <Label>Telefone</Label>
                   <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
-                </div>
-                <div>
-                  <Label>Membro vinculado</Label>
-                  <Select
-                    value={form.memberId || "__none__"}
-                    onValueChange={(value) => setForm((current) => ({ ...current, memberId: !value || value === "__none__" ? "" : value }))}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o membro" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Sem vínculo</SelectItem>
-                      {membersByWard.map((member) => (
-                        <SelectItem key={member.id} value={member.id}>
-                          {member.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
                 <div>
                   <Label>Nível de liderança</Label>

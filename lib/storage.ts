@@ -8,6 +8,7 @@ import type {
   Caravan,
   CaravanPerson,
   CaravanRegistration,
+  ChurchActivityStatus,
   Database,
   DocumentType,
   Member,
@@ -130,6 +131,17 @@ function asNumber(value: unknown, fallback = 0) {
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function asOptionalNumber(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = asNumber(value, Number.NaN);
+
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeChurchActivityStatus(value: unknown): ChurchActivityStatus {
+  return value === "not_attending" ? "not_attending" : "attending";
 }
 
 function normalizeStakeOwnerRequestStatus(value: unknown): StakeOwnerRequestStatus {
@@ -255,6 +267,11 @@ function normalizeMember(member: Member): Member {
     id: member.id,
     wardId: member.wardId,
     name: member.name,
+    phone: asOptionalString(member.phone),
+    address: asOptionalString(member.address),
+    latitude: asOptionalNumber(member.latitude),
+    longitude: asOptionalNumber(member.longitude),
+    churchActivityStatus: normalizeChurchActivityStatus(member.churchActivityStatus),
     birthDate: normalizeDateInput(member.birthDate ?? ""),
     organization,
     sex: member.sex === "F" ? "F" : "M",

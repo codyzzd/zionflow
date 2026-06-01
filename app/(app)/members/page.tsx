@@ -1,12 +1,11 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, Trash2 } from "lucide-react";
+import { Eye, MapPin, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { MemberImportDialog } from "@/components/features/members/member-import-dialog";
-import { MemberOrganizationLabel } from "@/components/features/members/member-organization";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
@@ -24,7 +23,8 @@ import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
-import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
+import { normalizeDateInput } from "@/lib/utils";
+import type { Member } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
 type DrawerMode = "create" | "view" | "edit";
@@ -32,6 +32,11 @@ type DrawerTab = "data" | "talks";
 
 const emptyMemberForm: MemberForm = {
   name: "",
+  phone: "",
+  address: "",
+  latitude: undefined,
+  longitude: undefined,
+  churchActivityStatus: "attending",
   birthDate: "",
   organization: "",
   sex: "M",
@@ -52,9 +57,58 @@ const talkDurationLabels: Record<Member["sacramentTalkDuration"], string> = {
   "15": "15 min",
 };
 
+const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
+  attending: "Frequentando",
+  not_attending: "Não frequentando",
+};
+
+function calculateAge(birthDate: string) {
+  const normalizedDate = normalizeDateInput(birthDate);
+  if (!normalizedDate) return null;
+
+  const today = new Date();
+  const birth = new Date(`${normalizedDate}T12:00:00`);
+  let age = today.getFullYear() - birth.getFullYear();
+  const birthdayThisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+
+  if (today < birthdayThisYear) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
+function parseAgeFilterValue(value: string) {
+  if (!value.trim()) return null;
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function matchesAgeRange(age: number | null, minimum: number | null, maximum: number | null) {
+  if (minimum === null && maximum === null) return true;
+  if (age === null) return false;
+  if (minimum !== null && age < minimum) return false;
+  if (maximum !== null && age > maximum) return false;
+
+  return true;
+}
+
+function parseCoordinateInput(value: string) {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value.replace(",", "."));
+
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function memberToForm(member: Member): MemberForm {
   return {
     name: member.name,
+    phone: member.phone,
+    address: member.address,
+    latitude: member.latitude,
+    longitude: member.longitude,
+    churchActivityStatus: member.churchActivityStatus,
     birthDate: member.birthDate,
     organization: member.organization,
     sex: member.sex,
@@ -76,11 +130,17 @@ export default function MembersPage() {
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
+  const [sexFilter, setSexFilter] = useState<"all" | Member["sex"]>("all");
+  const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
+  const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
+  const [talkDurationFilter, setTalkDurationFilter] = useState<"all" | Member["sacramentTalkDuration"]>("all");
   const isReadOnly = drawerMode === "view";
   const talkHistoryByMemberId = useMemo(() => buildMemberTalkHistory(minutesByWard), [minutesByWard]);
   const talkOccurrencesByMemberId = useMemo(() => buildMemberTalkOccurrences(minutesByWard), [minutesByWard]);
   const selectedMemberTalkHistory = selectedMember ? talkHistoryByMemberId.get(selectedMember.id) : undefined;
   const selectedMemberTalkOccurrences = selectedMember ? (talkOccurrencesByMemberId.get(selectedMember.id) ?? []) : [];
+  const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
+  const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
 
   const filteredMembers = useMemo(
     () =>
@@ -89,11 +149,16 @@ export default function MembersPage() {
         const matchesSearch =
           !normalizedSearch ||
           member.name.toLowerCase().includes(normalizedSearch) ||
-          member.organization.toLowerCase().includes(normalizedSearch);
+          member.address.toLowerCase().includes(normalizedSearch) ||
+          member.phone.toLowerCase().includes(normalizedSearch);
+        const age = calculateAge(member.birthDate);
+        const matchesSex = sexFilter === "all" || member.sex === sexFilter;
+        const matchesAge = matchesAgeRange(age, minimumAge, maximumAge);
+        const matchesTalkDuration = talkDurationFilter === "all" || member.sacramentTalkDuration === talkDurationFilter;
 
-        return matchesSearch;
+        return matchesSearch && matchesSex && matchesAge && matchesTalkDuration;
       }),
-    [membersByWard, search],
+    [maximumAge, membersByWard, minimumAge, search, sexFilter, talkDurationFilter],
   );
 
   function handleDrawerOpenChange(open: boolean) {
@@ -115,13 +180,13 @@ export default function MembersPage() {
     setDrawerOpen(true);
   }
 
-  function openViewDrawer(member: Member) {
+  const openViewDrawer = useCallback((member: Member) => {
     setSelectedMember(member);
     setForm(memberToForm(member));
     setDrawerMode("view");
     setDrawerTab("data");
     setDrawerOpen(true);
-  }
+  }, []);
 
   function openEditDrawer(member: Member) {
     setSelectedMember(member);
@@ -142,9 +207,11 @@ export default function MembersPage() {
       id: selectedMember?.id,
       wardId: currentWard.id,
       ...form,
+      address: form.address.trim(),
       birthDate: form.birthDate.trim(),
       name: form.name.trim(),
       organization: form.organization.trim(),
+      phone: form.phone.trim(),
     });
 
     closeDrawer();
@@ -199,23 +266,39 @@ export default function MembersPage() {
               <TablePrimaryAction onClick={() => openViewDrawer(member)}>{member.name}</TablePrimaryAction>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{sexLabels[member.sex]}</span>
+                <span>{churchActivityStatusLabels[member.churchActivityStatus]}</span>
               </div>
             </div>
           );
         },
       },
       {
-        accessorKey: "organization",
-        meta: { label: "Organização" },
+        id: "phone",
+        accessorFn: (member) => member.phone,
+        meta: { label: "Telefone" },
         header: ({ column }) => (
           <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
-            Organização {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
+            Telefone {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
         cell: ({ row }) => {
-          const member = row.original;
+          const phone = row.original.phone;
 
-          return <MemberOrganizationLabel organization={member.organization} />;
+          return <span className="text-sm">{phone || "Telefone não informado"}</span>;
+        },
+      },
+      {
+        accessorKey: "address",
+        meta: { label: "Endereço" },
+        header: ({ column }) => (
+          <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
+            Endereço {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const address = row.original.address;
+
+          return <span className="block max-w-sm truncate text-sm">{address || "Endereço não informado"}</span>;
         },
       },
       {
@@ -228,8 +311,14 @@ export default function MembersPage() {
         ),
         cell: ({ row }) => {
           const birthDate = row.original.birthDate;
+          const age = calculateAge(birthDate);
 
-          return <span className="text-sm">{birthDate ? formatDate(birthDate) : "Não informada"}</span>;
+          return (
+            <div className="space-y-0.5">
+              <p className="font-medium tabular-nums">{age === null ? "Idade não informada" : `${age} anos`}</p>
+              <p className="text-xs text-muted-foreground">{birthDate ? formatDate(birthDate) : "Nascimento não informado"}</p>
+            </div>
+          );
         },
       },
       {
@@ -269,25 +358,6 @@ export default function MembersPage() {
         },
       },
       {
-        id: "sacramentPermissions",
-        meta: { label: "Ata sacramental" },
-        header: "Ata sacramental",
-        cell: ({ row }) => {
-          const member = row.original;
-
-          return (
-            <div className="flex flex-wrap gap-2">
-              {member.canSpeak ? <Badge>Orador</Badge> : null}
-              {member.canPreside ? <Badge variant="outline">Preside</Badge> : null}
-              {member.canConduct ? <Badge variant="outline">Dirige</Badge> : null}
-              {!member.canSpeak && !member.canPreside && !member.canConduct ? (
-                <span className="text-xs text-muted-foreground">Sem permissões na ata</span>
-              ) : null}
-            </div>
-          );
-        },
-      },
-      {
         id: "actions",
         enableHiding: false,
         header: () => <div className="text-right">Ações</div>,
@@ -304,7 +374,7 @@ export default function MembersPage() {
         },
       },
     ],
-    [canManageMembers, formatDate, talkHistoryByMemberId],
+    [canManageMembers, formatDate, openViewDrawer, talkHistoryByMemberId],
   );
 
   return (
@@ -317,6 +387,12 @@ export default function MembersPage() {
           actions={
             canManageMembers ? (
               <>
+                <Button asChild size="lg" variant="outline">
+                  <Link href="/members/geocoding">
+                    <MapPin />
+                    Mapear endereços
+                  </Link>
+                </Button>
                 <MemberImportDialog />
                 <Button onClick={openCreateDrawer} size="lg">
                   Novo membro
@@ -335,12 +411,58 @@ export default function MembersPage() {
             enableRowSelection={canManageMembers}
             getRowId={(member) => member.id}
             toolbar={
-              <Input
-                className="md:max-w-lg"
-                placeholder="Buscar por nome ou organização"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
+              <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+                <Input
+                  className="xl:w-80"
+                  placeholder="Buscar por nome, telefone ou endereço"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                <div className="grid gap-2 sm:grid-cols-4 xl:flex xl:items-center">
+                  <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
+                    <SelectTrigger className="w-full xl:w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os sexos</SelectItem>
+                      <SelectItem value="M">Masculino</SelectItem>
+                      <SelectItem value="F">Feminino</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    className="w-full xl:w-28"
+                    inputMode="numeric"
+                    min={0}
+                    placeholder="Idade mín."
+                    type="number"
+                    value={minimumAgeFilter}
+                    onChange={(event) => setMinimumAgeFilter(event.target.value)}
+                  />
+                  <Input
+                    className="w-full xl:w-28"
+                    inputMode="numeric"
+                    min={0}
+                    placeholder="Idade máx."
+                    type="number"
+                    value={maximumAgeFilter}
+                    onChange={(event) => setMaximumAgeFilter(event.target.value)}
+                  />
+                  <Select
+                    value={talkDurationFilter}
+                    onValueChange={(value) => setTalkDurationFilter(value as "all" | Member["sacramentTalkDuration"])}
+                  >
+                    <SelectTrigger className="w-full xl:w-44">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos discursos</SelectItem>
+                      <SelectItem value="5">5 min</SelectItem>
+                      <SelectItem value="10">10 min</SelectItem>
+                      <SelectItem value="15">15 min</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             }
             renderSelectedActions={
               canManageMembers
@@ -408,6 +530,61 @@ export default function MembersPage() {
                           />
                         </div>
                         <div>
+                          <Label>Telefone</Label>
+                          <Input
+                            disabled={isReadOnly}
+                            inputMode="tel"
+                            placeholder="(00) 00000-0000"
+                            value={form.phone}
+                            onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Condição na igreja</Label>
+                          <Select
+                            disabled={isReadOnly}
+                            value={form.churchActivityStatus}
+                            onValueChange={(value) => value && setForm((current) => ({ ...current, churchActivityStatus: value as Member["churchActivityStatus"] }))}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="attending">Frequentando</SelectItem>
+                              <SelectItem value="not_attending">Não frequentando</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <Label>Endereço</Label>
+                          <Input
+                            disabled={isReadOnly}
+                            placeholder="Rua, número, bairro, cidade"
+                            value={form.address}
+                            onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Latitude</Label>
+                          <Input
+                            disabled={isReadOnly}
+                            inputMode="decimal"
+                            placeholder="-3.7319"
+                            value={form.latitude ?? ""}
+                            onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Longitude</Label>
+                          <Input
+                            disabled={isReadOnly}
+                            inputMode="decimal"
+                            placeholder="-38.5267"
+                            value={form.longitude ?? ""}
+                            onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))}
+                          />
+                        </div>
+                        <div>
                           <Label>Data de nascimento</Label>
                           <DatePicker
                             disabled={isReadOnly}
@@ -424,25 +601,6 @@ export default function MembersPage() {
                             <SelectContent>
                               <SelectItem value="M">Masculino</SelectItem>
                               <SelectItem value="F">Feminino</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <Label>Organização</Label>
-                          <Select
-                            disabled={isReadOnly}
-                            value={form.organization}
-                            onValueChange={(value) => value && setForm((current) => ({ ...current, organization: value }))}
-                          >
-                            <SelectTrigger className="w-full">
-                              <MemberOrganizationLabel organization={form.organization} placeholder="Selecione a organização" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {MEMBER_ORGANIZATION_OPTIONS.map((organization) => (
-                                <SelectItem key={organization} value={organization}>
-                                  <MemberOrganizationLabel organization={organization} />
-                                </SelectItem>
-                              ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -482,32 +640,6 @@ export default function MembersPage() {
                         ) : null}
                       </div>
 
-                      <div className="grid gap-2 rounded-lg border bg-secondary/35 p-4 text-sm">
-                        <label className="flex items-center gap-2">
-                          <Checkbox
-                            disabled={isReadOnly}
-                            checked={form.canSpeak}
-                            onCheckedChange={(checked) => setForm((current) => ({ ...current, canSpeak: checked === true }))}
-                          />
-                          Pode ser orador
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <Checkbox
-                            disabled={isReadOnly}
-                            checked={form.canPreside}
-                            onCheckedChange={(checked) => setForm((current) => ({ ...current, canPreside: checked === true }))}
-                          />
-                          Pode presidir reunião
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <Checkbox
-                            disabled={isReadOnly}
-                            checked={form.canConduct}
-                            onCheckedChange={(checked) => setForm((current) => ({ ...current, canConduct: checked === true }))}
-                          />
-                          Pode dirigir reunião
-                        </label>
-                      </div>
                     </>
                   ) : (
                     <div className="rounded-lg border">

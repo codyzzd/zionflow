@@ -5,19 +5,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { use, useMemo, useState } from "react";
 
-import { MemberOrganizationLabel } from "@/components/features/members/member-organization";
 import { useAppContext } from "@/components/providers/app-provider";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { buildMemberTalkHistory } from "@/lib/member-talk-history";
-import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
+import { normalizeDateInput } from "@/lib/utils";
+import type { Member } from "@/types/domain";
 
 const sexLabels: Record<Member["sex"], string> = {
   M: "Masculino",
@@ -30,11 +28,44 @@ const talkDurationLabels: Record<Member["sacramentTalkDuration"], string> = {
   "15": "15 minutos",
 };
 
+const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
+  attending: "Frequentando",
+  not_attending: "Não frequentando",
+};
+
 type MemberForm = Omit<Member, "id" | "wardId">;
+
+function calculateAge(birthDate: string) {
+  const normalizedDate = normalizeDateInput(birthDate);
+  if (!normalizedDate) return null;
+
+  const today = new Date();
+  const birth = new Date(`${normalizedDate}T12:00:00`);
+  let age = today.getFullYear() - birth.getFullYear();
+  const birthdayThisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+
+  if (today < birthdayThisYear) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
+function parseCoordinateInput(value: string) {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value.replace(",", "."));
+
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 function memberToForm(member: Member): MemberForm {
   return {
     name: member.name,
+    phone: member.phone,
+    address: member.address,
+    latitude: member.latitude,
+    longitude: member.longitude,
+    churchActivityStatus: member.churchActivityStatus,
     birthDate: member.birthDate,
     organization: member.organization,
     sex: member.sex,
@@ -47,7 +78,7 @@ function memberToForm(member: Member): MemberForm {
 
 export default function MemberDetailPage({ params }: { params: Promise<{ memberId: string }> }) {
   const { memberId } = use(params);
-  const { currentWard, hasPermission, membersByWard, minutesByWard, saveMember, usersByWard } = useAppContext();
+  const { currentWard, hasPermission, membersByWard, minutesByWard, saveMember } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManage = hasPermission("members.manage");
 
@@ -58,9 +89,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
   const [isEditing, setIsEditing] = useState(false);
   const [form, setForm] = useState<MemberForm>(memberToForm(member));
 
-  const linkedUser = usersByWard.find((user) => user.memberId === member.id);
   const talkHistoryByMemberId = useMemo(() => buildMemberTalkHistory(minutesByWard), [minutesByWard]);
   const talkHistory = talkHistoryByMemberId.get(member.id);
+  const memberAge = calculateAge(member.birthDate);
 
   function handleEdit() {
     setForm(memberToForm(member));
@@ -78,9 +109,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
       id: member.id,
       wardId: currentWard.id,
       ...form,
+      address: form.address.trim(),
       birthDate: form.birthDate.trim(),
       name: form.name.trim(),
       organization: form.organization.trim(),
+      phone: form.phone.trim(),
     });
     setIsEditing(false);
   }
@@ -115,13 +148,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
       </div>
 
       <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2">
-          {member.canSpeak ? <Badge>Orador</Badge> : null}
-          {member.canPreside ? <Badge variant="outline">Preside reunião</Badge> : null}
-          {member.canConduct ? <Badge variant="outline">Dirige reunião</Badge> : null}
-          {linkedUser ? <Badge variant="outline">Usuário vinculado: {linkedUser.email}</Badge> : <Badge variant="secondary">Sem usuário vinculado</Badge>}
-        </div>
-
         <Card>
           <CardHeader>
             <CardTitle>Dados principais</CardTitle>
@@ -136,6 +162,56 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                     <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
                   </div>
                   <div>
+                    <Label>Telefone</Label>
+                    <Input
+                      inputMode="tel"
+                      placeholder="(00) 00000-0000"
+                      value={form.phone}
+                      onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label>Condição na igreja</Label>
+                    <Select
+                      value={form.churchActivityStatus}
+                      onValueChange={(v) => v && setForm((f) => ({ ...f, churchActivityStatus: v as Member["churchActivityStatus"] }))}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="attending">Frequentando</SelectItem>
+                        <SelectItem value="not_attending">Não frequentando</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label>Endereço</Label>
+                    <Input
+                      placeholder="Rua, número, bairro, cidade"
+                      value={form.address}
+                      onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label>Latitude</Label>
+                    <Input
+                      inputMode="decimal"
+                      placeholder="-3.7319"
+                      value={form.latitude ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, latitude: parseCoordinateInput(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
+                    <Label>Longitude</Label>
+                    <Input
+                      inputMode="decimal"
+                      placeholder="-38.5267"
+                      value={form.longitude ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, longitude: parseCoordinateInput(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
                     <Label>Data de nascimento</Label>
                     <DatePicker value={form.birthDate} onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))} />
                   </div>
@@ -148,21 +224,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                       <SelectContent>
                         <SelectItem value="M">Masculino</SelectItem>
                         <SelectItem value="F">Feminino</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Organização</Label>
-                    <Select value={form.organization} onValueChange={(v) => v && setForm((f) => ({ ...f, organization: v }))}>
-                      <SelectTrigger className="w-full">
-                        <MemberOrganizationLabel organization={form.organization} placeholder="Selecione a organização" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {MEMBER_ORGANIZATION_OPTIONS.map((organization) => (
-                          <SelectItem key={organization} value={organization}>
-                            <MemberOrganizationLabel organization={organization} />
-                          </SelectItem>
-                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -183,41 +244,36 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                     </Select>
                   </div>
                 </div>
-
-                <div className="grid gap-2 rounded-lg border bg-secondary/35 p-4 text-sm">
-                  <label className="flex items-center gap-2">
-                    <Checkbox
-                      checked={form.canSpeak}
-                      onCheckedChange={(checked) => setForm((f) => ({ ...f, canSpeak: checked === true }))}
-                    />
-                    Pode ser orador
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <Checkbox
-                      checked={form.canPreside}
-                      onCheckedChange={(checked) => setForm((f) => ({ ...f, canPreside: checked === true }))}
-                    />
-                    Pode presidir reunião
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <Checkbox
-                      checked={form.canConduct}
-                      onCheckedChange={(checked) => setForm((f) => ({ ...f, canConduct: checked === true }))}
-                    />
-                    Pode dirigir reunião
-                  </label>
-                </div>
               </div>
             ) : (
               <>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
+                    <p className="text-muted-foreground">Condição na igreja</p>
+                    <p className="font-medium">{churchActivityStatusLabels[member.churchActivityStatus]}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Telefone</p>
+                    <p className="font-medium">{member.phone || "Não informado"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Endereço</p>
+                    <p className="font-medium">{member.address || "Não informado"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Coordenadas</p>
+                    <p className="font-medium">
+                      {member.latitude !== undefined && member.longitude !== undefined ? `${member.latitude}, ${member.longitude}` : "Não mapeado"}
+                    </p>
+                  </div>
+                  <div>
                     <p className="text-muted-foreground">Sexo</p>
                     <p className="font-medium">{sexLabels[member.sex]}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Data de nascimento</p>
-                    <p className="font-medium">{member.birthDate ? formatDate(member.birthDate) : "Não informada"}</p>
+                    <p className="text-muted-foreground">Nascimento</p>
+                    <p className="text-lg font-semibold tabular-nums">{memberAge === null ? "Idade não informada" : `${memberAge} anos`}</p>
+                    <p className="text-xs text-muted-foreground">{member.birthDate ? formatDate(member.birthDate) : "Data não informada"}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Nível de discurso</p>
@@ -233,19 +289,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                     ) : (
                       <p className="font-medium text-muted-foreground">Sem discurso registrado</p>
                     )}
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Organização</p>
-                    <MemberOrganizationLabel className="mt-1 font-medium" organization={member.organization} placeholder="Não informada" />
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Ata sacramental</p>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {member.canSpeak ? <Badge>Orador</Badge> : null}
-                      {member.canPreside ? <Badge variant="outline">Preside</Badge> : null}
-                      {member.canConduct ? <Badge variant="outline">Dirige</Badge> : null}
-                      {!member.canSpeak && !member.canPreside && !member.canConduct ? <Badge variant="secondary">Sem permissões</Badge> : null}
-                    </div>
                   </div>
                 </div>
               </>

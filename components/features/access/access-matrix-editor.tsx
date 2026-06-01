@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, BusFront, Eye, EyeOff, FileText, Handshake, KeyRound, Landmark, LayoutDashboard, Pencil, ShieldCheck, Utensils, Users } from "lucide-react";
+import { Building2, BusFront, Eye, EyeOff, FileText, Handshake, KeyRound, Landmark, LayoutDashboard, Map, Pencil, ShieldCheck, Utensils, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ const accessAreaIcons: Record<AccessAreaIcon, LucideIcon> = {
   key: KeyRound,
   landmark: Landmark,
   "layout-dashboard": LayoutDashboard,
+  map: Map,
   shield: ShieldCheck,
   utensils: Utensils,
   users: Users,

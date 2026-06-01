@@ -71,6 +71,7 @@ type SaveMinuteResult = {
 type ImportMembersInput = {
   wardId: string;
   members: Array<Omit<Member, "id" | "wardId">>;
+  importedFields: Array<keyof Omit<Member, "id" | "wardId">>;
   removeMissing: boolean;
 };
 
@@ -214,6 +215,7 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "users.view",
   "users.manage",
   "roles.manage",
+  "map.view",
   "members.view",
   "members.manage",
   "minutes.view",
@@ -239,7 +241,7 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "exports.run",
   "audit.view",
 ];
-const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "ward.view", "stake.view", "missionary.view", "lunch.view", "patrol.view"];
+const VIEWER_PERMISSIONS: PermissionKey[] = ["dashboard.view", "ward.view", "stake.view", "map.view", "missionary.view", "lunch.view", "patrol.view"];
 
 let hydrationReady = false;
 
@@ -1666,41 +1668,97 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function importMembers(input: ImportMembersInput) {
       const importedMembers = input.members.filter((member) => member.name.trim());
       if (!importedMembers.length) return;
+      const importedFields = new Set(input.importedFields);
+
+      const buildMemberNameKey = (member: Pick<Member, "name"> | Omit<Member, "id" | "wardId">) => slugify(member.name);
+      const buildMemberIdentityKey = (member: Pick<Member, "name" | "birthDate"> | Omit<Member, "id" | "wardId">) => {
+        const birthDate = normalizeDateInput(member.birthDate);
+
+        return birthDate ? `${buildMemberNameKey(member)}::${birthDate}` : "";
+      };
+      const countBy = <T,>(items: T[], getKey: (item: T) => string) => {
+        const counts = new Map<string, number>();
+
+        items.forEach((item) => {
+          const key = getKey(item);
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        });
+
+        return counts;
+      };
+      const currentWardMembers = db.members.filter((member) => member.wardId === input.wardId);
+      const importedNameCounts = countBy(importedMembers, buildMemberNameKey);
+      const importedIdentityCounts = countBy(
+        importedMembers.filter((member) => normalizeDateInput(member.birthDate)),
+        buildMemberIdentityKey,
+      );
+      const currentMembersByName = new Map<string, Member[]>();
+      const currentMembersByIdentity = new Map<string, Member[]>();
+
+      currentWardMembers.forEach((member) => {
+        const nameKey = buildMemberNameKey(member);
+        currentMembersByName.set(nameKey, [...(currentMembersByName.get(nameKey) ?? []), member]);
+
+        const identityKey = buildMemberIdentityKey(member);
+        if (identityKey) {
+          currentMembersByIdentity.set(identityKey, [...(currentMembersByIdentity.get(identityKey) ?? []), member]);
+        }
+      });
+
+      const hasConflict = importedMembers.some((member) => {
+        const nameKey = buildMemberNameKey(member);
+        const identityKey = buildMemberIdentityKey(member);
+
+        if (!identityKey) {
+          return (importedNameCounts.get(nameKey) ?? 0) > 1 || (currentMembersByName.get(nameKey) ?? []).length > 0;
+        }
+
+        return (importedIdentityCounts.get(identityKey) ?? 0) > 1 || (currentMembersByIdentity.get(identityKey) ?? []).length > 1;
+      });
+
+      if (hasConflict) {
+        toast.error("Corrija os conflitos de nome e nascimento antes de importar membros.");
+        return;
+      }
 
       setDb((currentDb) => {
         const actorUserId = getActorUserId(currentDb);
-        const membersByKey = new Map<string, Member>();
+        const membersByIdentity = new Map<string, Member>();
         currentDb.members
           .filter((member) => member.wardId === input.wardId)
           .forEach((member) => {
-            membersByKey.set(slugify(member.name), member);
+            const identityKey = buildMemberIdentityKey(member);
+            if (identityKey) {
+              membersByIdentity.set(identityKey, member);
+            }
           });
 
-        const importByKey = new Map<string, Omit<Member, "id" | "wardId">>();
-        importedMembers.forEach((member) => {
-          importByKey.set(slugify(member.name), {
-            ...member,
-            birthDate: normalizeDateInput(member.birthDate),
-          });
-        });
+        const normalizedImportedMembers = importedMembers.map((member) => ({
+          ...member,
+          birthDate: normalizeDateInput(member.birthDate),
+        }));
 
         let createdCount = 0;
         let updatedCount = 0;
-        const importedKeys = new Set(importByKey.keys());
-        const untouchedMemberIds = new Set(
-          currentDb.members
-            .filter((member) => member.wardId === input.wardId && !importedKeys.has(slugify(member.name)))
-            .map((member) => member.id),
-        );
-        const importedRecords = Array.from(importByKey.entries()).map(([key, member]) => {
-          const existing = membersByKey.get(key);
+        const importedRecords = normalizedImportedMembers.map((member) => {
+          const existing = member.birthDate ? membersByIdentity.get(buildMemberIdentityKey(member)) : undefined;
 
           if (existing) {
+            const memberPatch = input.importedFields.reduce(
+              (patch, field) => ({
+                ...patch,
+                [field]: member[field],
+              }),
+              {} as Partial<Omit<Member, "id" | "wardId">>,
+            );
+
             updatedCount += 1;
             return {
               ...withRecordMetadata(
                 {
-                  ...member,
+                  ...existing,
+                  ...memberPatch,
+                  birthDate: importedFields.has("birthDate") ? normalizeDateInput(member.birthDate) : existing.birthDate,
                   id: existing.id,
                   wardId: input.wardId,
                 },
@@ -1725,6 +1783,11 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         });
 
         const importedRecordIds = new Set(importedRecords.map((member) => member.id));
+        const untouchedMemberIds = new Set(
+          currentDb.members
+            .filter((member) => member.wardId === input.wardId && !importedRecordIds.has(member.id))
+            .map((member) => member.id),
+        );
         const archivedMissingMemberIds = input.removeMissing ? untouchedMemberIds : new Set<string>();
         let nextDb: Database = {
           ...currentDb,

@@ -178,17 +178,11 @@ export default function SystemUsersPage() {
   const stakesById = useMemo(() => new Map(db.stakes.map((stake) => [stake.id, stake])), [db.stakes]);
   const wardOptions = useMemo(() => db.wards.slice().sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.wards]);
   const accessTemplates = useMemo(() => db.roles.filter((role) => !isSystemRoleId(role.id)).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [db.roles]);
-  const memberOptions = useMemo(
-    () => db.members.filter((member) => member.wardId === form.wardId && !member.archivedAt).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
-    [db.members, form.wardId],
-  );
-  const membersById = useMemo(() => new Map(db.members.map((member) => [member.id, member])), [db.members]);
 
   const filteredUsers = useMemo(
     () =>
       db.users
         .filter((user) => {
-          const linkedMember = user.memberId ? membersById.get(user.memberId) : undefined;
           const ward = wardsById.get(user.wardId);
           const stake = ward ? stakesById.get(ward.stakeId) : undefined;
           const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
@@ -197,7 +191,6 @@ export default function SystemUsersPage() {
             user.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
             user.email.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
             user.phone.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
-            linkedMember?.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
             ward?.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
             stake?.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
           const matchesStatus = statusFilter === "all" || user.status === statusFilter;
@@ -206,7 +199,7 @@ export default function SystemUsersPage() {
           return !user.archivedAt && matchesSearch && matchesStatus && matchesWard;
         })
         .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
-    [db.users, membersById, search, stakesById, statusFilter, wardFilter, wardsById],
+    [db.users, search, stakesById, statusFilter, wardFilter, wardsById],
   );
 
   function resetForm() {
@@ -325,7 +318,6 @@ export default function SystemUsersPage() {
         ),
         cell: ({ row }) => {
           const user = row.original;
-          const linkedMember = user.memberId ? membersById.get(user.memberId) : undefined;
           const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
 
           return (
@@ -334,7 +326,6 @@ export default function SystemUsersPage() {
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{user.email}</span>
                 <span>{user.phone || "Telefone não informado"}</span>
-                <span>{linkedMember ? `Membro: ${linkedMember.name}` : "Sem membro vinculado"}</span>
               </div>
             </div>
           );
@@ -432,7 +423,7 @@ export default function SystemUsersPage() {
         },
       },
     ],
-    [currentUser?.id, formatDateTime, membersById, openEditDrawer, stakesById, toggleUserStatus, wardsById],
+    [currentUser?.id, formatDateTime, openEditDrawer, stakesById, toggleUserStatus, wardsById],
   );
 
   return (
@@ -510,26 +501,6 @@ export default function SystemUsersPage() {
                 <div>
                   <Label>Telefone</Label>
                   <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
-                </div>
-                <div>
-                  <Label>Membro vinculado</Label>
-                  <Select
-                    disabled={!form.wardId}
-                    value={form.memberId || "__none__"}
-                    onValueChange={(value) => setForm((current) => ({ ...current, memberId: !value || value === "__none__" ? "" : value }))}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o membro" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Sem vínculo</SelectItem>
-                      {memberOptions.map((member) => (
-                        <SelectItem key={member.id} value={member.id}>
-                          {member.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
                 <div>
                   <Label>Nível de liderança</Label>

@@ -119,7 +119,8 @@ export function MinuteEditor({
     () =>
       membersByWard.map((member) => ({
         value: member.id,
-        label: `${member.name} • ${member.organization}`,
+        label: member.name,
+        searchValue: [member.name, member.organization].filter(Boolean).join(" "),
       })),
     [membersByWard],
   );
@@ -130,39 +131,6 @@ export function MinuteEditor({
         value: member.id,
         label: member.name,
       })),
-    [membersByWard],
-  );
-
-  const presidingMemberOptions = useMemo(
-    () =>
-      membersByWard
-        .filter((member) => member.canPreside)
-        .map((member) => ({
-          value: member.id,
-          label: `${member.name} • ${member.organization}`,
-        })),
-    [membersByWard],
-  );
-
-  const conductingMemberOptions = useMemo(
-    () =>
-      membersByWard
-        .filter((member) => member.canConduct)
-        .map((member) => ({
-          value: member.id,
-          label: `${member.name} • ${member.organization}`,
-        })),
-    [membersByWard],
-  );
-
-  const speakerMemberOptions = useMemo(
-    () =>
-      membersByWard
-        .filter((member) => member.canSpeak)
-        .map((member) => ({
-          value: member.id,
-          label: `${member.name} • ${member.organization} • ${member.sacramentTalkDuration} min`,
-        })),
     [membersByWard],
   );
 
@@ -858,7 +826,7 @@ export function MinuteEditor({
                       disabled={disabled}
                       label="Presidida por"
                       value={form.form.presiding}
-                      options={presidingMemberOptions}
+                      options={memberOptions}
                       manualPlaceholder="Nome de quem presidiu"
                       manualOptionLabel="Temporário"
                       onChange={(value) => updateHybridField("presiding", value)}
@@ -869,7 +837,7 @@ export function MinuteEditor({
                       disabled={disabled}
                       label="Dirigida por"
                       value={form.form.conducting}
-                      options={conductingMemberOptions}
+                      options={memberOptions}
                       manualPlaceholder="Nome de quem dirigiu"
                       manualOptionLabel="Temporário"
                       onChange={(value) => updateHybridField("conducting", value)}
@@ -1030,7 +998,7 @@ export function MinuteEditor({
                         disabled={disabled}
                         label="Primeiro orador"
                         value={form.form.speaker1}
-                        options={speakerMemberOptions}
+                        options={memberOptions}
                         manualPlaceholder="Primeiro orador"
                         manualOptionLabel="Temporário"
                         onChange={(value) => updateHybridField("speaker1", value)}
@@ -1056,7 +1024,7 @@ export function MinuteEditor({
                         disabled={disabled}
                         label="Segundo orador"
                         value={form.form.speaker2}
-                        options={speakerMemberOptions}
+                        options={memberOptions}
                         manualPlaceholder="Segundo orador"
                         manualOptionLabel="Temporário"
                         onChange={(value) => updateHybridField("speaker2", value)}
@@ -1093,7 +1061,7 @@ export function MinuteEditor({
                         disabled={disabled}
                         label="Terceiro orador"
                         value={form.form.speaker3}
-                        options={speakerMemberOptions}
+                        options={memberOptions}
                         manualPlaceholder="Terceiro orador"
                         manualOptionLabel="Temporário"
                         onChange={(value) => updateHybridField("speaker3", value)}

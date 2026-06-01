@@ -4,6 +4,33 @@ import { twMerge } from "tailwind-merge"
 const APP_LOCALE = "pt-BR"
 const APP_TIME_ZONE = "America/Fortaleza"
 const DAY_IN_MS = 86400000
+const MONTH_ALIASES: Record<string, number> = {
+  jan: 1,
+  janeiro: 1,
+  fev: 2,
+  fevereiro: 2,
+  mar: 3,
+  marco: 3,
+  março: 3,
+  abr: 4,
+  abril: 4,
+  mai: 5,
+  maio: 5,
+  jun: 6,
+  junho: 6,
+  jul: 7,
+  julho: 7,
+  ago: 8,
+  agosto: 8,
+  set: 9,
+  setembro: 9,
+  out: 10,
+  outubro: 10,
+  nov: 11,
+  novembro: 11,
+  dez: 12,
+  dezembro: 12,
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -48,6 +75,20 @@ export function normalizeDateInput(value: string) {
     const dayFirst = toDateOnly(year, second, first)
 
     return dayFirst || toDateOnly(year, first, second)
+  }
+
+  const monthNameMatch = trimmed.match(/^(\d{1,2})\s+([a-zç.]+)\s+(\d{2,4})(?:\D.*)?$/i)
+  if (monthNameMatch) {
+    const monthKey = monthNameMatch[2]
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\.$/, "")
+      .toLocaleLowerCase("pt-BR")
+    const month = MONTH_ALIASES[monthKey]
+
+    if (month) {
+      return toDateOnly(normalizeYear(monthNameMatch[3]), month, Number(monthNameMatch[1]))
+    }
   }
 
   const serial = Number(trimmed.replace(",", "."))

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "leaflet/dist/leaflet.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -318,6 +319,78 @@ html.dark {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 5;
   text-wrap: pretty;
+}
+
+.member-map-marker {
+  align-items: center;
+  background: transparent;
+  display: flex;
+  justify-content: center;
+}
+
+.member-map .leaflet-pane {
+  z-index: 10;
+}
+
+.member-map .leaflet-top,
+.member-map .leaflet-bottom {
+  z-index: 20;
+}
+
+.member-map .leaflet-control,
+.member-map .leaflet-popup-pane {
+  z-index: 30;
+}
+
+.member-map-fullscreen .member-map {
+  border: 0;
+  border-radius: 0;
+  min-height: 100vh;
+}
+
+.member-map-fullscreen .member-map .leaflet-pane {
+  z-index: 10 !important;
+}
+
+.member-map-fullscreen .member-map .leaflet-top,
+.member-map-fullscreen .member-map .leaflet-bottom {
+  z-index: 20 !important;
+}
+
+.member-map-fullscreen .member-map .leaflet-control,
+.member-map-fullscreen .member-map .leaflet-popup-pane {
+  z-index: 30 !important;
+}
+
+.member-map-marker span {
+  border: 2px solid var(--color-white);
+  border-radius: 999px;
+  box-shadow: 0 6px 14px rgb(0 0 0 / 0.28);
+  display: block;
+  height: 18px;
+  transition:
+    box-shadow 160ms ease,
+    transform 160ms ease;
+  width: 18px;
+}
+
+.member-map-marker-attending span {
+  background: var(--color-emerald-500);
+}
+
+.member-map-marker-not-attending span {
+  background: var(--color-red-500);
+}
+
+.member-map-marker-unknown span {
+  background: var(--color-zinc-500);
+}
+
+.member-map-marker-selected span {
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--primary) 24%, transparent),
+    0 8px 18px rgb(0 0 0 / 0.32);
+  transform: scale(1.22);
 }
 
 @media print {
