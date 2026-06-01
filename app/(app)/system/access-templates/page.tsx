@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Trash2 } from "lucide-react";
+import { Eye, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { AccessMatrixEditor } from "@/components/features/access/access-matrix-editor";
@@ -15,6 +15,8 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { ACCESS_MATRIX_AREAS, accessLevelFromPermissions } from "@/lib/access-control";
 import { isSystemRoleId } from "@/lib/system-ids";
 import type { PermissionKey, Role } from "@/types/domain";
@@ -132,6 +134,7 @@ export default function SystemAccessTemplatesPage() {
             Nome {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
+        cell: ({ row }) => <TablePrimaryAction onClick={() => openViewDrawer(row.original)}>{row.original.name}</TablePrimaryAction>,
       },
       {
         accessorKey: "description",
@@ -161,9 +164,9 @@ export default function SystemAccessTemplatesPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
-              Visualizar
-            </Button>
+            <TableActionButton label="Visualizar" onClick={() => openViewDrawer(row.original)}>
+              <Eye />
+            </TableActionButton>
           </div>
         ),
       },

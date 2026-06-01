@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Mars, Venus } from "lucide-react";
+import { Archive, Eye, Mars, RotateCcw, Trash2, Venus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -14,6 +14,8 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import type { MissionaryCompanionship, MissionaryType } from "@/types/domain";
 
 type CompanionshipForm = Omit<MissionaryCompanionship, "id" | "wardId" | "members"> & {
@@ -22,6 +24,7 @@ type CompanionshipForm = Omit<MissionaryCompanionship, "id" | "wardId" | "member
 };
 
 type DrawerMode = "create" | "view" | "edit";
+type CompanionshipStatusFilter = "active" | "archived";
 
 const emptyCompanionshipForm: CompanionshipForm = {
   name: "",
@@ -69,20 +72,40 @@ function MissionaryTypeBadge({ type }: { type: MissionaryType }) {
 }
 
 export default function MissionariesPage() {
-  const { companionshipsByWard, currentWard, hasPermission, saveCompanionship } = useAppContext();
+  const {
+    allCompanionshipsByWard,
+    archiveCompanionship,
+    currentWard,
+    deleteCompanionship,
+    hasPermission,
+    saveCompanionship,
+    unarchiveCompanionship,
+  } = useAppContext();
   const canManageMissionaries = hasPermission("missionary.manage");
 
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<CompanionshipStatusFilter>("active");
   const [form, setForm] = useState<CompanionshipForm>(emptyCompanionshipForm);
   const [selectedCompanionship, setSelectedCompanionship] = useState<MissionaryCompanionship | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const isReadOnly = drawerMode === "view";
+  const selectedCompanionshipIsArchived = Boolean(selectedCompanionship?.archivedAt);
+  const activeCompanionshipCount = useMemo(
+    () => allCompanionshipsByWard.filter((companionship) => !companionship.archivedAt).length,
+    [allCompanionshipsByWard],
+  );
+  const archivedCompanionshipCount = useMemo(
+    () => allCompanionshipsByWard.filter((companionship) => companionship.archivedAt).length,
+    [allCompanionshipsByWard],
+  );
 
   const filteredCompanionships = useMemo(
     () =>
-      companionshipsByWard.filter((companionship) => {
+      allCompanionshipsByWard.filter((companionship) => {
+        const matchesStatus = statusFilter === "archived" ? Boolean(companionship.archivedAt) : !companionship.archivedAt;
         const normalizedSearch = search.trim().toLowerCase();
+        if (!matchesStatus) return false;
         if (!normalizedSearch) return true;
 
         return (
@@ -91,7 +114,7 @@ export default function MissionariesPage() {
           companionship.members.some((member) => member.toLowerCase().includes(normalizedSearch))
         );
       }),
-    [companionshipsByWard, search],
+    [allCompanionshipsByWard, search, statusFilter],
   );
 
   function handleDrawerOpenChange(open: boolean) {
@@ -131,7 +154,7 @@ export default function MissionariesPage() {
 
   function saveCurrentCompanionship() {
     const members = [form.missionaryOne.trim(), form.missionaryTwo.trim()].filter(Boolean);
-    if (!currentWard || !form.name.trim() || !members.length) return;
+    if (!currentWard || !form.name.trim()) return;
 
     saveCompanionship({
       id: selectedCompanionship?.id,
@@ -146,10 +169,36 @@ export default function MissionariesPage() {
     closeDrawer();
   }
 
+  function archiveSelectedCompanionship() {
+    if (!selectedCompanionship) return;
+
+    archiveCompanionship(selectedCompanionship.id);
+    closeDrawer();
+  }
+
+  function unarchiveSelectedCompanionship() {
+    if (!selectedCompanionship) return;
+
+    unarchiveCompanionship(selectedCompanionship.id);
+    closeDrawer();
+  }
+
+  function deleteSelectedCompanionship() {
+    if (!selectedCompanionship?.archivedAt) return;
+
+    deleteCompanionship(selectedCompanionship.id);
+    closeDrawer();
+  }
+
   const drawerTitle =
     drawerMode === "create" ? "Nova dupla missionária" : drawerMode === "edit" ? "Editar dupla missionária" : selectedCompanionship?.name ?? "Dupla missionária";
-  const drawerDescription = drawerMode === "view" ? "Visualização dos dados cadastrados da dupla." : "Cadastre os missionários que servem juntos nesta área.";
-  const canSave = Boolean(currentWard && form.name.trim() && (form.missionaryOne.trim() || form.missionaryTwo.trim()));
+  const drawerDescription =
+    drawerMode === "view"
+      ? selectedCompanionshipIsArchived
+        ? "Esta dupla está arquivada e fica oculta nas novas seleções de almoço."
+        : "Visualização dos dados cadastrados da dupla."
+      : "Cadastre os missionários que servem juntos nesta área.";
+  const canSave = Boolean(currentWard && form.name.trim());
 
   const columns = useMemo<ColumnDef<MissionaryCompanionship>[]>(
     () => [
@@ -165,7 +214,8 @@ export default function MissionariesPage() {
 
           return (
             <div className="space-y-1">
-              <p className="font-medium">{companionship.name}</p>
+              <TablePrimaryAction onClick={() => openViewDrawer(companionship)}>{companionship.name}</TablePrimaryAction>
+              {companionship.archivedAt ? <Badge variant="destructive">Arquivada</Badge> : null}
               <p className="text-xs text-muted-foreground">{companionship.area || "Sem área definida"}</p>
             </div>
           );
@@ -208,9 +258,9 @@ export default function MissionariesPage() {
 
           return (
             <div className="flex justify-end">
-              <Button onClick={() => openViewDrawer(companionship)} size="sm" variant="ghost">
-                Visualizar
-              </Button>
+              <TableActionButton label="Visualizar" onClick={() => openViewDrawer(companionship)}>
+                <Eye />
+              </TableActionButton>
             </div>
           );
         },
@@ -243,6 +293,15 @@ export default function MissionariesPage() {
               placeholder="Buscar por dupla, área ou missionário"
               value={search}
             />
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter((value as CompanionshipStatusFilter) ?? "active")}>
+              <SelectTrigger className="w-full md:w-[220px]">
+                <SelectValue placeholder="Filtrar duplas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Ativas ({activeCompanionshipCount})</SelectItem>
+                <SelectItem value="archived">Arquivadas ({archivedCompanionshipCount})</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <DataTable
@@ -348,6 +407,25 @@ export default function MissionariesPage() {
                 <Button onClick={closeDrawer} variant="ghost">
                   {isReadOnly ? "Fechar" : "Cancelar"}
                 </Button>
+                {isReadOnly && canManageMissionaries && selectedCompanionship ? (
+                  selectedCompanionshipIsArchived ? (
+                    <>
+                      <Button onClick={unarchiveSelectedCompanionship} variant="secondary">
+                        <RotateCcw />
+                        Desarquivar
+                      </Button>
+                      <Button onClick={deleteSelectedCompanionship} variant="destructive">
+                        <Trash2 />
+                        Excluir
+                      </Button>
+                    </>
+                  ) : (
+                    <Button onClick={archiveSelectedCompanionship} variant="destructive">
+                      <Archive />
+                      Arquivar
+                    </Button>
+                  )
+                ) : null}
                 {isReadOnly && canManageMissionaries && selectedCompanionship ? (
                   <Button onClick={() => openEditDrawer(selectedCompanionship)}>Editar dupla</Button>
                 ) : null}

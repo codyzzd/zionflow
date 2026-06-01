@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Archive, RotateCcw, Trash2 } from "lucide-react";
+import { Archive, Eye, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -17,6 +17,8 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import type { Stake } from "@/types/domain";
 
 type StakeForm = Omit<Stake, "id">;
@@ -190,7 +192,7 @@ export default function SystemStakesPage() {
         ),
         cell: ({ row }) => (
           <div className="space-y-1">
-            <p className="font-medium">{row.original.name}</p>
+            <TablePrimaryAction onClick={() => openViewDrawer(row.original)}>{row.original.name}</TablePrimaryAction>
             <p className="text-xs text-muted-foreground">
               {[row.original.city, row.original.state, row.original.country].filter(Boolean).join(" / ") || "Local não informado"}
             </p>
@@ -216,9 +218,9 @@ export default function SystemStakesPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
-              Visualizar
-            </Button>
+            <TableActionButton label="Visualizar" onClick={() => openViewDrawer(row.original)}>
+              <Eye />
+            </TableActionButton>
           </div>
         ),
       },

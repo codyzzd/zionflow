@@ -1,9 +1,10 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Check, ChevronsUpDown, Clock3, List, LockKeyhole, RefreshCcw, Save, SlidersHorizontal, Table2, X } from "lucide-react";
+import { Check, ChevronsUpDown, Clock3, Copy, ExternalLink, List, LockKeyhole, Pencil, RefreshCcw, Save, SlidersHorizontal, Table2, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -27,9 +28,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
+import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, renewMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
 
@@ -56,14 +59,19 @@ type HybridOption = {
 };
 
 const SHEET_COLUMNS: SheetColumn[] = [
-  { key: "date", label: "Data", className: "w-36 min-w-36" },
-  { key: "speaker1", label: "1º orador", className: "w-64 min-w-64" },
-  { key: "speaker1Theme", label: "Tema 1", className: "w-72 min-w-72" },
-  { key: "speaker2", label: "2º orador", className: "w-64 min-w-64" },
-  { key: "speaker2Theme", label: "Tema 2", className: "w-72 min-w-72" },
-  { key: "speaker3", label: "3º orador", className: "w-64 min-w-64" },
-  { key: "speaker3Theme", label: "Tema 3", className: "w-72 min-w-72" },
+  { key: "date", label: "Data", className: "w-36 min-w-36 xl:w-28 xl:min-w-28" },
+  { key: "speaker1", label: "1º orador", className: "w-64 min-w-64 xl:w-32 xl:min-w-32 2xl:w-36 2xl:min-w-36" },
+  { key: "speaker1Theme", label: "Tema 1", className: "w-72 min-w-72 xl:w-36 xl:min-w-36 2xl:w-40 2xl:min-w-40" },
+  { key: "speaker2", label: "2º orador", className: "w-64 min-w-64 xl:w-32 xl:min-w-32 2xl:w-36 2xl:min-w-36" },
+  { key: "speaker2Theme", label: "Tema 2", className: "w-72 min-w-72 xl:w-36 xl:min-w-36 2xl:w-40 2xl:min-w-40" },
+  { key: "speaker3", label: "3º orador", className: "w-64 min-w-64 xl:w-32 xl:min-w-32 2xl:w-36 2xl:min-w-36" },
+  { key: "speaker3Theme", label: "Tema 3", className: "w-72 min-w-72 xl:w-36 xl:min-w-36 2xl:w-40 2xl:min-w-40" },
 ];
+const SHEET_LOCK_TTL_SECONDS = 120;
+const SHEET_LOCK_RENEW_INTERVAL_MS = 45_000;
+const SHEET_STATUS_POLL_INTERVAL_MS = 15_000;
+const SHEET_ACTIONS_COLUMN_CLASS =
+  "sticky right-0 z-10 w-20 min-w-20 border-l bg-card shadow-[-8px_0_16px_rgba(15,23,42,0.08)]";
 
 function normalizeSearchValue(value: string) {
   return value
@@ -205,6 +213,7 @@ export default function MinutesPage() {
   const [sheetStale, setSheetStale] = useState<Record<string, SacramentMinute>>({});
   const [busyMinuteIds, setBusyMinuteIds] = useState<Set<string>>(() => new Set());
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const activeSheetMinuteId = Object.keys(sheetDrafts)[0];
 
   function createEmptyForm(): MinuteCreateForm {
     return {
@@ -262,13 +271,14 @@ export default function MinutesPage() {
 
   useEffect(() => {
     if (view !== "sheet" || !items.length) return;
+    let cancelled = false;
 
-    const intervalId = window.setInterval(async () => {
+    async function refreshSheetState() {
       await Promise.all(
         items.map(async (minute) => {
           try {
             const remoteMinute = await fetchMinuteSnapshot(minute.id);
-            if (!remoteMinute) return;
+            if (!remoteMinute || cancelled) return;
 
             if (!sheetDrafts[minute.id] && remoteMinute.version > minute.version) {
               setSheetStale((current) => ({ ...current, [minute.id]: remoteMinute }));
@@ -290,10 +300,50 @@ export default function MinutesPage() {
           }
         }),
       );
-    }, 15_000);
+    }
+
+    void refreshSheetState();
+    const intervalId = window.setInterval(refreshSheetState, SHEET_STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [items, sheetDrafts, view]);
+
+  useEffect(() => {
+    if (!activeSheetMinuteId || !currentUser?.id) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const renewed = await renewMinuteLock(activeSheetMinuteId, currentUser.id, SHEET_LOCK_TTL_SECONDS);
+        setSheetLocks((current) => ({ ...current, [activeSheetMinuteId]: renewed }));
+
+        if (!renewed.renewed) {
+          setSheetDrafts((current) => {
+            const next = { ...current };
+            delete next[activeSheetMinuteId];
+            return next;
+          });
+          toast.error("Seu tempo de edição expirou. Atualize a linha antes de continuar.");
+        }
+      } catch (error) {
+        console.error("Failed to renew sheet minute lock.", error);
+      }
+    }, SHEET_LOCK_RENEW_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [items, sheetDrafts, view]);
+  }, [activeSheetMinuteId, currentUser?.id]);
+
+  useEffect(() => {
+    if (!activeSheetMinuteId || !currentUser?.id) return;
+
+    return () => {
+      void releaseMinuteLock(activeSheetMinuteId, currentUser.id).catch((error) => {
+        console.error("Failed to release sheet minute lock.", error);
+      });
+    };
+  }, [activeSheetMinuteId, currentUser?.id]);
 
   const visibleColumns = useMemo(() => SHEET_COLUMNS.filter((column) => visibleSheetColumns[column.key]), [visibleSheetColumns]);
   const speakerMemberOptions = useMemo(
@@ -360,18 +410,35 @@ export default function MinutesPage() {
   async function beginSheetEdit(minute: SacramentMinute) {
     if (!canManageMinutes || !currentUser?.id || busyMinuteIds.has(minute.id)) return false;
     if (sheetDrafts[minute.id]) return true;
+    if (activeSheetMinuteId && activeSheetMinuteId !== minute.id) {
+      toast.error("Salve ou cancele a linha em edição antes de editar outra ata.");
+      return false;
+    }
 
     setMinuteBusy(minute.id, true);
     try {
-      const lock = await acquireMinuteLock(minute.id, currentUser.id, 120);
+      const lock = await acquireMinuteLock(minute.id, currentUser.id, SHEET_LOCK_TTL_SECONDS);
       setSheetLocks((current) => ({ ...current, [minute.id]: lock }));
 
       if (!lock.acquired) {
+        toast.error(`Não foi possível editar. Esta ata está sendo editada por ${lock.lockedByName ?? "outro usuário"}.`);
         return false;
       }
 
       const latestMinute = await fetchMinuteSnapshot(minute.id);
       setSheetDrafts((current) => ({ ...current, [minute.id]: latestMinute ?? minute }));
+      setSheetLocks((current) => ({
+        ...current,
+        [minute.id]: {
+          ...lock,
+          lockedByUserId: latestMinute?.lockedByUserId ?? lock.lockedByUserId ?? currentUser.id,
+          lockedByName: lock.lockedByName ?? currentUser.name,
+          lockedAt: latestMinute?.lockedAt ?? lock.lockedAt,
+          lockExpiresAt: latestMinute?.lockExpiresAt ?? lock.lockExpiresAt,
+          version: latestMinute?.version ?? lock.version,
+          updatedAt: latestMinute?.updatedAt ?? lock.updatedAt,
+        },
+      }));
       return true;
     } finally {
       setMinuteBusy(minute.id, false);
@@ -423,6 +490,7 @@ export default function MinutesPage() {
         if (result.reason === "version_conflict" && result.minute) {
           setSheetStale((current) => ({ ...current, [minute.id]: result.minute! }));
         }
+        toast.error(result.reason === "version_conflict" ? "Nova versão disponível. Atualize a linha antes de continuar." : "Seu tempo de edição expirou. Atualize a linha antes de continuar.");
         return;
       }
 
@@ -470,10 +538,21 @@ export default function MinutesPage() {
     const draft = sheetDrafts[minute.id] ?? minute;
 
     if (column.key === "date") {
+      if (!editable) {
+        return (
+          <div
+            aria-label={`Data da ata ${formatDate(minute.date)}`}
+            className="flex h-9 min-w-0 items-center px-2 text-sm tabular-nums"
+          >
+            <span className="truncate">{formatDate(draft.date)}</span>
+          </div>
+        );
+      }
+
       return (
         <Input
           aria-label={`Data da ata ${formatDate(minute.date)}`}
-          className="h-9 rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
+          className="h-9 min-w-0 rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
           disabled={!editable}
           type="date"
           value={draft.date}
@@ -501,15 +580,15 @@ export default function MinutesPage() {
 
     return (
       <Input
-      aria-label={`${column.label} da ata ${formatDate(minute.date)}`}
-      className="h-9 rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
-      disabled={!editable}
-      value={draft.form[themeKey]}
-      onChange={(event) => updateSheetTheme(minute, themeKey, event.currentTarget.value)}
-      key={`${minute.id}-${themeKey}`}
-    />
-  );
-}
+        aria-label={`${column.label} da ata ${formatDate(minute.date)}`}
+        className="h-9 min-w-0 truncate rounded-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-1 disabled:opacity-100"
+        disabled={!editable}
+        value={draft.form[themeKey]}
+        onChange={(event) => updateSheetTheme(minute, themeKey, event.currentTarget.value)}
+        key={`${minute.id}-${themeKey}`}
+      />
+    );
+  }
 
   function renderSheetRowActions(minute: SacramentMinute) {
     const lockState = getSheetLockState(minute);
@@ -519,35 +598,31 @@ export default function MinutesPage() {
 
     if (lockState === "locked_by_me") {
       return (
-        <div className="flex items-center justify-end gap-2 px-2">
-          <span className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">Editando</span>
-          <Button disabled={isBusy} onClick={() => void cancelSheetEdit(minute)} size="sm" variant="ghost">
-            <X className="size-4" />
-            Cancelar
-          </Button>
-          <Button disabled={isBusy} onClick={() => void saveSheetDraft(minute)} size="sm">
-            <Save className="size-4" />
-            Salvar
-          </Button>
+        <div className="flex items-center justify-end gap-1 px-2">
+          <TableActionButton disabled={isBusy} label="Cancelar edição" onClick={() => void cancelSheetEdit(minute)} size="icon-xs">
+            <X />
+          </TableActionButton>
+          <TableActionButton disabled={isBusy} label="Salvar linha" onClick={() => void saveSheetDraft(minute)} size="icon-xs" variant="default">
+            <Save />
+          </TableActionButton>
         </div>
       );
     }
 
     if (lockState === "locked_by_other") {
       return (
-        <div className="flex items-center justify-end gap-2 px-2 text-xs text-muted-foreground">
+        <div className="flex items-center justify-end px-2 text-muted-foreground" title={`Em edição por ${lockOwnerName}`}>
           <LockKeyhole className="size-4" />
-          <span>Em edição por {lockOwnerName}</span>
         </div>
       );
     }
 
     if (lockState === "stale") {
       return (
-        <div className="flex items-center justify-end gap-2 px-2">
-          <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Nova versão disponível</span>
-          <Button
+        <div className="flex items-center justify-end px-2">
+          <TableActionButton
             disabled={isBusy}
+            label="Atualizar linha"
             onClick={() => {
               const staleMinute = sheetStale[minute.id];
               if (!staleMinute) return;
@@ -558,21 +633,20 @@ export default function MinutesPage() {
                 return next;
               });
             }}
-            size="sm"
+            size="icon-xs"
             variant="outline"
           >
-            <RefreshCcw className="size-4" />
-            Atualizar linha
-          </Button>
+            <RefreshCcw />
+          </TableActionButton>
         </div>
       );
     }
 
     return (
       <div className="flex justify-end px-2">
-        <Button disabled={!canManageMinutes || isBusy} onClick={() => void beginSheetEdit(minute)} size="sm" variant="outline">
-          Editar linha
-        </Button>
+        <TableActionButton disabled={!canManageMinutes || isBusy} label="Editar linha" onClick={() => void beginSheetEdit(minute)} size="icon-xs" variant="outline">
+          <Pencil />
+        </TableActionButton>
       </div>
     );
   }
@@ -613,7 +687,11 @@ export default function MinutesPage() {
             Data {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
-        cell: ({ row }) => formatDate(row.original.date),
+        cell: ({ row }) => (
+          <TablePrimaryAction asChild>
+            <Link href={`/meetings/${row.original.id}`}>{formatDate(row.original.date)}</Link>
+          </TablePrimaryAction>
+        ),
       },
       {
         id: "speaker1",
@@ -637,13 +715,14 @@ export default function MinutesPage() {
           const minute = row.original;
 
           return (
-            <div className="flex justify-end gap-2">
-              <Button asChild size="sm" variant="ghost">
-                <Link href={`/meetings/${minute.id}`}>Abrir</Link>
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
+            <div className="flex justify-end gap-1">
+              <TableActionButton asChild label="Abrir ata">
+                <Link href={`/meetings/${minute.id}`}>
+                  <ExternalLink />
+                </Link>
+              </TableActionButton>
+              <TableActionButton
+                label="Duplicar ata"
                 onClick={() => {
                   if (!currentWard) return;
                   const nextDate = new Date(`${minute.date}T12:00:00`);
@@ -659,8 +738,8 @@ export default function MinutesPage() {
                   });
                 }}
               >
-                Duplicar
-              </Button>
+                <Copy />
+              </TableActionButton>
             </div>
           );
         },
@@ -759,7 +838,7 @@ export default function MinutesPage() {
                           {column.label}
                         </th>
                       ))}
-                      <th className="w-72 min-w-72 px-2 py-2 text-right font-medium text-muted-foreground">Status</th>
+                      <th className={cn(SHEET_ACTIONS_COLUMN_CLASS, "bg-muted px-2 py-2 text-right font-medium text-muted-foreground")}>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -782,7 +861,7 @@ export default function MinutesPage() {
                                 {renderSheetCell(minute, column)}
                               </td>
                             ))}
-                            <td className="p-0 align-middle">{renderSheetRowActions(minute)}</td>
+                            <td className={cn(SHEET_ACTIONS_COLUMN_CLASS, "p-0 align-middle")}>{renderSheetRowActions(minute)}</td>
                           </tr>
                         );
                       })

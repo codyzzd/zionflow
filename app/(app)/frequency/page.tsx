@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { ExternalLink, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -13,6 +14,8 @@ import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { cn, todayDate } from "@/lib/utils";
 import type { SacramentMinute } from "@/types/domain";
@@ -186,7 +189,11 @@ export default function FrequencyPage() {
             Data {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
-        cell: ({ row }) => formatDate(row.original.date),
+        cell: ({ row }) => (
+          <TablePrimaryAction asChild>
+            <Link href={`/meetings/${row.original.id}`}>{formatDate(row.original.date)}</Link>
+          </TablePrimaryAction>
+        ),
       },
       {
         id: "status",
@@ -209,15 +216,17 @@ export default function FrequencyPage() {
         id: "actions",
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-1">
             {canManageFrequency ? (
-              <Button onClick={() => openAttendanceDrawer(row.original)} size="sm" variant="ghost">
-                Editar
-              </Button>
+              <TableActionButton label="Editar frequência" onClick={() => openAttendanceDrawer(row.original)}>
+                <Pencil />
+              </TableActionButton>
             ) : null}
-            <Button asChild size="sm" variant="ghost">
-              <Link href={`/meetings/${row.original.id}`}>Abrir ata</Link>
-            </Button>
+            <TableActionButton asChild label="Abrir ata">
+              <Link href={`/meetings/${row.original.id}`}>
+                <ExternalLink />
+              </Link>
+            </TableActionButton>
           </div>
         ),
       },

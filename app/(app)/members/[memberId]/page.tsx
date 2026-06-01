@@ -3,7 +3,7 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 
 import { MemberOrganizationLabel } from "@/components/features/members/member-organization";
 import { useAppContext } from "@/components/providers/app-provider";
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { cn } from "@/lib/utils";
+import { buildMemberTalkHistory } from "@/lib/member-talk-history";
 import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
 
 const sexLabels: Record<Member["sex"], string> = {
@@ -47,7 +47,7 @@ function memberToForm(member: Member): MemberForm {
 
 export default function MemberDetailPage({ params }: { params: Promise<{ memberId: string }> }) {
   const { memberId } = use(params);
-  const { currentWard, hasPermission, membersByWard, saveMember, usersByWard } = useAppContext();
+  const { currentWard, hasPermission, membersByWard, minutesByWard, saveMember, usersByWard } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManage = hasPermission("members.manage");
 
@@ -59,6 +59,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
   const [form, setForm] = useState<MemberForm>(memberToForm(member));
 
   const linkedUser = usersByWard.find((user) => user.memberId === member.id);
+  const talkHistoryByMemberId = useMemo(() => buildMemberTalkHistory(minutesByWard), [minutesByWard]);
+  const talkHistory = talkHistoryByMemberId.get(member.id);
 
   function handleEdit() {
     setForm(memberToForm(member));
@@ -220,6 +222,17 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                   <div>
                     <p className="text-muted-foreground">Nível de discurso</p>
                     <p className="font-medium">{talkDurationLabels[member.sacramentTalkDuration]}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Último discurso</p>
+                    {talkHistory ? (
+                      <>
+                        <p className="font-medium">{talkHistory.summary}</p>
+                        <p className="text-xs text-muted-foreground">{formatDate(talkHistory.lastTalkDate)}</p>
+                      </>
+                    ) : (
+                      <p className="font-medium text-muted-foreground">Sem discurso registrado</p>
+                    )}
                   </div>
                   <div>
                     <p className="text-muted-foreground">Organização</p>

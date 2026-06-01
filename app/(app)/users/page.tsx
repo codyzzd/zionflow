@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { Pencil, UserCheck, UserX } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { AccessMatrixEditor } from "@/components/features/access/access-matrix-editor";
@@ -17,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import {
   ACCESS_MATRIX_AREAS,
@@ -210,10 +213,12 @@ export default function UsersPage() {
         cell: ({ row }) => {
           const user = row.original;
           const linkedMember = membersByWard.find((member) => member.id === user.memberId);
+          const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
+          const canEditTarget = canManageUsers && !isProtectedSystemUser && canManageUser(currentUser, user, wards);
 
           return (
             <div className="space-y-1">
-              <p className="font-medium">{user.name}</p>
+              {canEditTarget ? <TablePrimaryAction onClick={() => openEditDrawer(user)}>{user.name}</TablePrimaryAction> : <p className="font-medium">{user.name}</p>}
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{user.email}</span>
                 <span>{user.phone || "Telefone não informado"}</span>
@@ -281,15 +286,15 @@ export default function UsersPage() {
           const canEditTarget = canManageUsers && !isProtectedSystemUser && canManageUser(currentUser, user, wards);
 
           return (
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-1">
               {canEditTarget ? (
                 <>
-                  <Button onClick={() => openEditDrawer(user)} size="sm" variant="outline">
-                    Editar
-                  </Button>
-                  <Button onClick={() => toggleUserStatus(user.id)} size="sm" variant="ghost">
-                    {user.status === "active" ? "Desativar" : "Ativar"}
-                  </Button>
+                  <TableActionButton label="Editar usuário" onClick={() => openEditDrawer(user)} variant="outline">
+                    <Pencil />
+                  </TableActionButton>
+                  <TableActionButton label={user.status === "active" ? "Desativar usuário" : "Ativar usuário"} onClick={() => toggleUserStatus(user.id)}>
+                    {user.status === "active" ? <UserX /> : <UserCheck />}
+                  </TableActionButton>
                 </>
               ) : null}
             </div>

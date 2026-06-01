@@ -233,6 +233,8 @@ export interface MissionaryCompanionship extends RecordMetadata {
   status: "active" | "inactive";
 }
 
+export type LunchCompanionshipSnapshot = Pick<MissionaryCompanionship, "id" | "name" | "type" | "area">;
+
 export interface HostHouse extends RecordMetadata {
   id: string;
   wardId: string;
@@ -251,6 +253,7 @@ export interface LunchSchedule extends RecordMetadata {
   date: string;
   time: string;
   companionshipIds: string[];
+  companionshipSnapshots?: LunchCompanionshipSnapshot[];
   host: HybridField;
   hostMemberId: string;
   notes: string;

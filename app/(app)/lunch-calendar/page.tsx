@@ -21,7 +21,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { cn, todayDate } from "@/lib/utils";
-import type { CalendarWeekStartsOn, ConfirmationStatus, HybridField, LunchSchedule, MissionaryCompanionship, Weekday } from "@/types/domain";
+import type {
+  CalendarWeekStartsOn,
+  ConfirmationStatus,
+  HybridField,
+  LunchCompanionshipSnapshot,
+  LunchSchedule,
+  MissionaryCompanionship,
+  Weekday,
+} from "@/types/domain";
 
 type LunchForm = {
   id?: string;
@@ -38,7 +46,7 @@ type LegacyLunchSchedule = LunchSchedule & {
 };
 
 type CompanionshipSelectProps = {
-  companionships: MissionaryCompanionship[];
+  companionships: LunchCompanionshipSnapshot[];
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
 };
@@ -134,7 +142,7 @@ function buildMonthCells(monthDate: Date, weekStartsOn: CalendarWeekStartsOn) {
   });
 }
 
-function isCompanionship(value: MissionaryCompanionship | undefined): value is MissionaryCompanionship {
+function isCompanionship(value: LunchCompanionshipSnapshot | undefined): value is LunchCompanionshipSnapshot {
   return value !== undefined;
 }
 
@@ -228,6 +236,7 @@ function CompanionshipSelect({ companionships, selectedIds, onSelectedIdsChange 
 
 export default function LunchCalendarPage() {
   const {
+    allCompanionshipsByWard,
     appPreferences,
     companionshipsByWard,
     currentWard,
@@ -262,6 +271,35 @@ export default function LunchCalendarPage() {
   const visibleMonthDates = useMemo(() => monthDates(monthDate), [monthDate]);
   const activeCompanionships = useMemo(() => companionshipsByWard.filter((companionship) => companionship.status === "active"), [companionshipsByWard]);
   const activeCompanionshipIds = useMemo(() => new Set(activeCompanionships.map((companionship) => companionship.id)), [activeCompanionships]);
+  const allCompanionshipsById = useMemo(
+    () => new Map(allCompanionshipsByWard.map((companionship) => [companionship.id, companionship])),
+    [allCompanionshipsByWard],
+  );
+  const companionshipSnapshotsById = useMemo(() => {
+    const snapshots = new Map<string, LunchCompanionshipSnapshot>();
+
+    lunchSchedulesByWard.forEach((lunch) => {
+      lunch.companionshipSnapshots?.forEach((snapshot) => snapshots.set(snapshot.id, snapshot));
+    });
+
+    return snapshots;
+  }, [lunchSchedulesByWard]);
+  const companionshipSelectOptions = useMemo(() => {
+    const options: LunchCompanionshipSnapshot[] = [...activeCompanionships];
+    const optionIds = new Set(options.map((companionship) => companionship.id));
+
+    lunchForm.companionshipIds.forEach((companionshipId) => {
+      if (optionIds.has(companionshipId)) return;
+
+      const companionship = allCompanionshipsById.get(companionshipId) ?? companionshipSnapshotsById.get(companionshipId);
+      if (!companionship) return;
+
+      options.push(companionship);
+      optionIds.add(companionshipId);
+    });
+
+    return options;
+  }, [activeCompanionships, allCompanionshipsById, companionshipSnapshotsById, lunchForm.companionshipIds]);
   const lunchPDayWeekday = currentWard?.lunchPDayWeekday ?? "monday";
   const pDayLabel = weekdayOptions.find((option) => option.value === lunchPDayWeekday)?.label ?? "Segunda-feira";
   const selectedLunches = lunchesByDate.get(selectedDate) ?? [];
@@ -368,8 +406,10 @@ export default function LunchCalendarPage() {
     return host.linkedId ? getHostMemberLabel(host.linkedId) : "Anfitrião não definido";
   }
 
-  function getLunchCompanionships(companionshipIds: string[]) {
-    return companionshipIds.map((id) => companionshipsByWard.find((item) => item.id === id)).filter(isCompanionship);
+  function getLunchCompanionships(lunch: LunchSchedule) {
+    return lunch.companionshipIds
+      .map((id) => allCompanionshipsById.get(id) ?? lunch.companionshipSnapshots?.find((snapshot) => snapshot.id === id))
+      .filter(isCompanionship);
   }
 
   function getMissingCompanionshipsForDate(date: string) {
@@ -444,6 +484,20 @@ export default function LunchCalendarPage() {
       date: lunchForm.date,
       time: lunchForm.time,
       companionshipIds: lunchForm.companionshipIds,
+      companionshipSnapshots: lunchForm.companionshipIds.flatMap((companionshipId) => {
+        const companionship = allCompanionshipsById.get(companionshipId) ?? companionshipSnapshotsById.get(companionshipId);
+
+        return companionship
+          ? [
+              {
+                id: companionship.id,
+                name: companionship.name,
+                type: companionship.type,
+                area: companionship.area,
+              },
+            ]
+          : [];
+      }),
       host: lunchForm.host,
       hostMemberId: lunchForm.host.mode === "linked" ? lunchForm.host.linkedId ?? "" : "",
       notes: lunchForm.notes.trim(),
@@ -479,7 +533,7 @@ export default function LunchCalendarPage() {
       }
 
       const scheduledText = lunches.map((lunch) => {
-        const companionshipNames = getLunchCompanionships(lunch.companionshipIds)
+        const companionshipNames = getLunchCompanionships(lunch)
           .map((companionship) => companionship.name)
           .join(", ");
 
@@ -649,7 +703,7 @@ export default function LunchCalendarPage() {
 
                         <div className="hidden space-y-1 sm:block">
                           {lunches.slice(0, 2).map((lunch) => {
-                            const companionships = getLunchCompanionships(lunch.companionshipIds);
+                            const companionships = getLunchCompanionships(lunch);
 
                             return (
                               <div key={lunch.id} className="rounded-md border bg-background px-2 py-1.5 text-xs">
@@ -749,7 +803,7 @@ export default function LunchCalendarPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               {selectedLunches.map((lunch) => {
-                const companionships = getLunchCompanionships(lunch.companionshipIds);
+                const companionships = getLunchCompanionships(lunch);
 
                 return (
                   <div key={lunch.id} className="rounded-lg border p-4">
@@ -838,7 +892,7 @@ export default function LunchCalendarPage() {
                 />
 
                 <CompanionshipSelect
-                  companionships={activeCompanionships}
+                  companionships={companionshipSelectOptions}
                   onSelectedIdsChange={(ids) => setLunchForm((current) => ({ ...current, companionshipIds: ids }))}
                   selectedIds={lunchForm.companionshipIds}
                 />

@@ -32,6 +32,7 @@ import type {
   HybridField,
   Hymn,
   HymnBook,
+  LunchCompanionshipSnapshot,
   LunchSchedule,
   Member,
   MemberNote,
@@ -132,6 +133,7 @@ type AppContextValue = {
   membersByWard: Member[];
   memberNotesByWard: MemberNote[];
   minutesByWard: SacramentMinute[];
+  allCompanionshipsByWard: MissionaryCompanionship[];
   companionshipsByWard: MissionaryCompanionship[];
   hostHousesByWard: HostHouse[];
   lunchSchedulesByWard: LunchSchedule[];
@@ -181,6 +183,9 @@ type AppContextValue = {
   importHymns: (input: ImportHymnsInput) => void;
   deleteHymn: (hymnId: string) => void;
   saveCompanionship: (input: Omit<MissionaryCompanionship, "id"> & { id?: string }) => void;
+  archiveCompanionship: (companionshipId: string) => void;
+  unarchiveCompanionship: (companionshipId: string) => void;
+  deleteCompanionship: (companionshipId: string) => void;
   saveHostHouse: (input: Omit<HostHouse, "id"> & { id?: string }) => void;
   saveLunchSchedule: (input: Omit<LunchSchedule, "id"> & { id?: string }) => void;
   deleteLunchSchedule: (lunchId: string) => void;
@@ -660,7 +665,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     const memberIds = new Set(membersByWard.map((member) => member.id));
     const memberNotesByWard = db.memberNotes.filter((note) => memberIds.has(note.memberId));
     const minutesByWard = db.sacramentMinutes.filter((minute) => minute.wardId === currentWardId && !minute.archivedAt);
-    const companionshipsByWard = db.missionaryCompanionships.filter((companionship) => companionship.wardId === currentWardId && !companionship.archivedAt);
+    const allCompanionshipsByWard = db.missionaryCompanionships.filter((companionship) => companionship.wardId === currentWardId);
+    const companionshipsByWard = allCompanionshipsByWard.filter((companionship) => !companionship.archivedAt);
     const hostHousesByWard = db.hostHouses.filter((house) => house.wardId === currentWardId && !house.archivedAt);
     const lunchSchedulesByWard = db.lunchSchedules.filter((lunch) => lunch.wardId === currentWardId && !lunch.archivedAt);
     const caravansByWard = db.caravans.filter((caravan) => caravan.wardId === currentWardId);
@@ -2633,6 +2639,84 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success(exists ? "Dupla missionária atualizada." : "Dupla missionária cadastrada.");
     }
 
+    function setCompanionshipArchiveState(companionshipId: string, archived: boolean) {
+      const target = db.missionaryCompanionships.find((item) => item.id === companionshipId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const companionship = currentDb.missionaryCompanionships.find((item) => item.id === companionshipId);
+        if (!companionship) return currentDb;
+
+        const actorUserId = getActorUserId(currentDb);
+        const nextDb = {
+          ...currentDb,
+          missionaryCompanionships: currentDb.missionaryCompanionships.map((item) =>
+            item.id === companionshipId ? withArchiveMetadata(item, archived, actorUserId) : item,
+          ),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: companionship.wardId,
+          action: archived ? "ARCHIVE_COMPANIONSHIP" : "UNARCHIVE_COMPANIONSHIP",
+          module: "missionaries",
+          itemLabel: companionship.name,
+          summary: archived ? "Arquivou dupla missionária." : "Desarquivou dupla missionária.",
+        });
+      });
+
+      toast.success(archived ? "Dupla missionária arquivada." : "Dupla missionária desarquivada.");
+    }
+
+    function archiveCompanionship(companionshipId: string) {
+      setCompanionshipArchiveState(companionshipId, true);
+    }
+
+    function unarchiveCompanionship(companionshipId: string) {
+      setCompanionshipArchiveState(companionshipId, false);
+    }
+
+    function deleteCompanionship(companionshipId: string) {
+      const target = db.missionaryCompanionships.find((item) => item.id === companionshipId);
+      if (!target?.archivedAt) return;
+
+      setDb((currentDb) => {
+        const companionship = currentDb.missionaryCompanionships.find((item) => item.id === companionshipId);
+        if (!companionship?.archivedAt) return currentDb;
+
+        const snapshot = {
+          id: companionship.id,
+          name: companionship.name,
+          type: companionship.type,
+          area: companionship.area,
+        };
+        const nextDb = {
+          ...currentDb,
+          missionaryCompanionships: currentDb.missionaryCompanionships.filter((item) => item.id !== companionshipId),
+          lunchSchedules: currentDb.lunchSchedules.map((lunch) => {
+            if (!lunch.companionshipIds.includes(companionshipId)) return lunch;
+
+            const existingSnapshots = lunch.companionshipSnapshots ?? [];
+            const hasSnapshot = existingSnapshots.some((item) => item.id === companionshipId);
+
+            return {
+              ...lunch,
+              companionshipSnapshots: hasSnapshot ? existingSnapshots : [...existingSnapshots, snapshot],
+            };
+          }),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: companionship.wardId,
+          action: "DELETE_COMPANIONSHIP",
+          module: "missionaries",
+          itemLabel: companionship.name,
+          summary: "Excluiu dupla missionária arquivada e preservou histórico dos almoços.",
+        });
+      });
+
+      toast.success("Dupla missionária excluída.");
+    }
+
     function saveHostHouse(input: Omit<HostHouse, "id"> & { id?: string }) {
       const exists = input.id ? db.hostHouses.some((item) => item.id === input.id) : false;
 
@@ -2667,7 +2751,25 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const existing = currentDb.lunchSchedules.find((item) => item.id === id);
         const exists = Boolean(existing);
         const actorUserId = getActorUserId(currentDb);
-        const lunch = withRecordMetadata({ ...input, id }, existing, actorUserId);
+        const previousSnapshots = [...(existing?.companionshipSnapshots ?? []), ...(input.companionshipSnapshots ?? [])];
+        const companionshipSnapshots = input.companionshipIds.flatMap((companionshipId): LunchCompanionshipSnapshot[] => {
+          const companionship = currentDb.missionaryCompanionships.find((item) => item.id === companionshipId);
+
+          if (companionship) {
+            return [
+              {
+                id: companionship.id,
+                name: companionship.name,
+                type: companionship.type,
+                area: companionship.area,
+              },
+            ];
+          }
+
+          const snapshot = previousSnapshots.find((item) => item.id === companionshipId);
+          return snapshot ? [snapshot] : [];
+        });
+        const lunch = withRecordMetadata({ ...input, id, companionshipSnapshots }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           lunchSchedules: exists ? currentDb.lunchSchedules.map((item) => (item.id === id ? lunch : item)) : [lunch, ...currentDb.lunchSchedules],
@@ -3037,6 +3139,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       membersByWard,
       memberNotesByWard,
       minutesByWard,
+      allCompanionshipsByWard,
       companionshipsByWard,
       hostHousesByWard,
       lunchSchedulesByWard,
@@ -3086,6 +3189,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       importHymns,
       deleteHymn,
       saveCompanionship,
+      archiveCompanionship,
+      unarchiveCompanionship,
+      deleteCompanionship,
       saveHostHouse,
       saveLunchSchedule,
       deleteLunchSchedule,

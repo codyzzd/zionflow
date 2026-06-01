@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Trash2 } from "lucide-react";
+import { Eye, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -13,6 +13,8 @@ import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import type { HymnBook } from "@/types/domain";
 
 type HymnBookForm = Omit<HymnBook, "id">;
@@ -137,6 +139,7 @@ export default function SystemHymnBooksPage() {
             Nome {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
+        cell: ({ row }) => <TablePrimaryAction onClick={() => openViewDrawer(row.original)}>{row.original.name}</TablePrimaryAction>,
       },
       {
         id: "hymns",
@@ -151,9 +154,9 @@ export default function SystemHymnBooksPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
-              Visualizar
-            </Button>
+            <TableActionButton label="Visualizar" onClick={() => openViewDrawer(row.original)}>
+              <Eye />
+            </TableActionButton>
           </div>
         ),
       },

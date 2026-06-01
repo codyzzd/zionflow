@@ -1,7 +1,8 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Trash2 } from "lucide-react";
+import { Eye, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { MemberImportDialog } from "@/components/features/members/member-import-dialog";
@@ -18,11 +19,16 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
 import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
 type DrawerMode = "create" | "view" | "edit";
+type DrawerTab = "data" | "talks";
 
 const emptyMemberForm: MemberForm = {
   name: "",
@@ -60,7 +66,7 @@ function memberToForm(member: Member): MemberForm {
 }
 
 export default function MembersPage() {
-  const { currentWard, deleteMembers, hasPermission, membersByWard, saveMember } = useAppContext();
+  const { currentWard, deleteMembers, hasPermission, membersByWard, minutesByWard, saveMember } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
 
@@ -69,7 +75,12 @@ export default function MembersPage() {
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
   const isReadOnly = drawerMode === "view";
+  const talkHistoryByMemberId = useMemo(() => buildMemberTalkHistory(minutesByWard), [minutesByWard]);
+  const talkOccurrencesByMemberId = useMemo(() => buildMemberTalkOccurrences(minutesByWard), [minutesByWard]);
+  const selectedMemberTalkHistory = selectedMember ? talkHistoryByMemberId.get(selectedMember.id) : undefined;
+  const selectedMemberTalkOccurrences = selectedMember ? (talkOccurrencesByMemberId.get(selectedMember.id) ?? []) : [];
 
   const filteredMembers = useMemo(
     () =>
@@ -92,6 +103,7 @@ export default function MembersPage() {
       setForm(emptyMemberForm);
       setSelectedMember(null);
       setDrawerMode("create");
+      setDrawerTab("data");
     }
   }
 
@@ -99,6 +111,7 @@ export default function MembersPage() {
     setForm(emptyMemberForm);
     setSelectedMember(null);
     setDrawerMode("create");
+    setDrawerTab("data");
     setDrawerOpen(true);
   }
 
@@ -106,6 +119,7 @@ export default function MembersPage() {
     setSelectedMember(member);
     setForm(memberToForm(member));
     setDrawerMode("view");
+    setDrawerTab("data");
     setDrawerOpen(true);
   }
 
@@ -113,6 +127,7 @@ export default function MembersPage() {
     setSelectedMember(member);
     setForm(memberToForm(member));
     setDrawerMode("edit");
+    setDrawerTab("data");
     setDrawerOpen(true);
   }
 
@@ -181,7 +196,7 @@ export default function MembersPage() {
 
           return (
             <div className="space-y-1">
-              <p className="font-medium">{member.name}</p>
+              <TablePrimaryAction onClick={() => openViewDrawer(member)}>{member.name}</TablePrimaryAction>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{sexLabels[member.sex]}</span>
               </div>
@@ -232,6 +247,28 @@ export default function MembersPage() {
         },
       },
       {
+        id: "lastTalk",
+        accessorFn: (member) => talkHistoryByMemberId.get(member.id)?.lastTalkDate ?? "",
+        meta: { label: "Último discurso" },
+        header: ({ column }) => (
+          <Button className="-ml-2 px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")} size="sm" variant="ghost">
+            Último discurso {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const talkHistory = talkHistoryByMemberId.get(row.original.id);
+
+          if (!talkHistory) return <span className="text-sm text-muted-foreground">Sem discurso registrado</span>;
+
+          return (
+            <div className="space-y-1 text-sm">
+              <p className="font-medium">{talkHistory.summary}</p>
+              <p className="text-xs text-muted-foreground">{formatDate(talkHistory.lastTalkDate)}</p>
+            </div>
+          );
+        },
+      },
+      {
         id: "sacramentPermissions",
         meta: { label: "Ata sacramental" },
         header: "Ata sacramental",
@@ -259,15 +296,15 @@ export default function MembersPage() {
 
           return (
             <div className="flex justify-end">
-              <Button onClick={() => openViewDrawer(member)} size="sm" variant="ghost">
-                Visualizar
-              </Button>
+              <TableActionButton label="Visualizar" onClick={() => openViewDrawer(member)}>
+                <Eye />
+              </TableActionButton>
             </div>
           );
         },
       },
     ],
-    [canManageMembers],
+    [canManageMembers, formatDate, talkHistoryByMemberId],
   );
 
   return (
@@ -332,101 +369,184 @@ export default function MembersPage() {
 
               <div className="flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-4">
-                  <div className="section-grid">
-                    <div>
-                      <Label>Nome completo</Label>
-                      <Input
-                        disabled={isReadOnly}
-                        value={form.name}
-                        onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <Label>Data de nascimento</Label>
-                      <DatePicker
-                        disabled={isReadOnly}
-                        value={form.birthDate}
-                        onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))}
-                      />
-                    </div>
-                    <div>
-                      <Label>Sexo</Label>
-                      <Select disabled={isReadOnly} value={form.sex} onValueChange={(value) => value && setForm((current) => ({ ...current, sex: value as Member["sex"] }))}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Selecione o sexo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="M">Masculino</SelectItem>
-                          <SelectItem value="F">Feminino</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Organização</Label>
-                      <Select
-                        disabled={isReadOnly}
-                        value={form.organization}
-                        onValueChange={(value) => value && setForm((current) => ({ ...current, organization: value }))}
+                  {selectedMember ? (
+                    <div className="flex border-b" role="tablist" aria-label="Seções do membro">
+                      <Button
+                        aria-selected={drawerTab === "data"}
+                        className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "data" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+                        onClick={() => setDrawerTab("data")}
+                        role="tab"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
                       >
-                        <SelectTrigger className="w-full">
-                          <MemberOrganizationLabel organization={form.organization} placeholder="Selecione a organização" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MEMBER_ORGANIZATION_OPTIONS.map((organization) => (
-                            <SelectItem key={organization} value={organization}>
-                              <MemberOrganizationLabel organization={organization} />
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Nível de discurso</Label>
-                      <Select
-                        disabled={isReadOnly}
-                        value={form.sacramentTalkDuration}
-                        onValueChange={(value) =>
-                          value && setForm((current) => ({ ...current, sacramentTalkDuration: value as Member["sacramentTalkDuration"] }))
-                        }
+                        Dados
+                      </Button>
+                      <Button
+                        aria-selected={drawerTab === "talks"}
+                        className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "talks" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+                        onClick={() => setDrawerTab("talks")}
+                        role="tab"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
                       >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Selecione o tempo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="5">5 minutos</SelectItem>
-                          <SelectItem value="10">10 minutos</SelectItem>
-                          <SelectItem value="15">15 minutos</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        Discursos
+                      </Button>
                     </div>
-                  </div>
+                  ) : null}
 
-                  <div className="grid gap-2 rounded-lg border bg-secondary/35 p-4 text-sm">
-                    <label className="flex items-center gap-2">
-                      <Checkbox
-                        disabled={isReadOnly}
-                        checked={form.canSpeak}
-                        onCheckedChange={(checked) => setForm((current) => ({ ...current, canSpeak: checked === true }))}
-                      />
-                      Pode ser orador
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <Checkbox
-                        disabled={isReadOnly}
-                        checked={form.canPreside}
-                        onCheckedChange={(checked) => setForm((current) => ({ ...current, canPreside: checked === true }))}
-                      />
-                      Pode presidir reunião
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <Checkbox
-                        disabled={isReadOnly}
-                        checked={form.canConduct}
-                        onCheckedChange={(checked) => setForm((current) => ({ ...current, canConduct: checked === true }))}
-                      />
-                      Pode dirigir reunião
-                    </label>
-                  </div>
+                  {drawerTab === "data" ? (
+                    <>
+                      <div className="section-grid">
+                        <div>
+                          <Label>Nome completo</Label>
+                          <Input
+                            disabled={isReadOnly}
+                            value={form.name}
+                            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Data de nascimento</Label>
+                          <DatePicker
+                            disabled={isReadOnly}
+                            value={form.birthDate}
+                            onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Sexo</Label>
+                          <Select disabled={isReadOnly} value={form.sex} onValueChange={(value) => value && setForm((current) => ({ ...current, sex: value as Member["sex"] }))}>
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Selecione o sexo" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="M">Masculino</SelectItem>
+                              <SelectItem value="F">Feminino</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label>Organização</Label>
+                          <Select
+                            disabled={isReadOnly}
+                            value={form.organization}
+                            onValueChange={(value) => value && setForm((current) => ({ ...current, organization: value }))}
+                          >
+                            <SelectTrigger className="w-full">
+                              <MemberOrganizationLabel organization={form.organization} placeholder="Selecione a organização" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {MEMBER_ORGANIZATION_OPTIONS.map((organization) => (
+                                <SelectItem key={organization} value={organization}>
+                                  <MemberOrganizationLabel organization={organization} />
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label>Nível de discurso</Label>
+                          <Select
+                            disabled={isReadOnly}
+                            value={form.sacramentTalkDuration}
+                            onValueChange={(value) =>
+                              value && setForm((current) => ({ ...current, sacramentTalkDuration: value as Member["sacramentTalkDuration"] }))
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Selecione o tempo" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="5">5 minutos</SelectItem>
+                              <SelectItem value="10">10 minutos</SelectItem>
+                              <SelectItem value="15">15 minutos</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {selectedMember ? (
+                          <div>
+                            <Label>Último discurso</Label>
+                            <div className="rounded-md border bg-background px-3 py-2 text-sm">
+                              {selectedMemberTalkHistory ? (
+                                <>
+                                  <p className="font-medium">{selectedMemberTalkHistory.summary}</p>
+                                  <p className="text-xs text-muted-foreground">{formatDate(selectedMemberTalkHistory.lastTalkDate)}</p>
+                                </>
+                              ) : (
+                                <p className="text-muted-foreground">Sem discurso registrado</p>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-2 rounded-lg border bg-secondary/35 p-4 text-sm">
+                        <label className="flex items-center gap-2">
+                          <Checkbox
+                            disabled={isReadOnly}
+                            checked={form.canSpeak}
+                            onCheckedChange={(checked) => setForm((current) => ({ ...current, canSpeak: checked === true }))}
+                          />
+                          Pode ser orador
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <Checkbox
+                            disabled={isReadOnly}
+                            checked={form.canPreside}
+                            onCheckedChange={(checked) => setForm((current) => ({ ...current, canPreside: checked === true }))}
+                          />
+                          Pode presidir reunião
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <Checkbox
+                            disabled={isReadOnly}
+                            checked={form.canConduct}
+                            onCheckedChange={(checked) => setForm((current) => ({ ...current, canConduct: checked === true }))}
+                          />
+                          Pode dirigir reunião
+                        </label>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="rounded-lg border">
+                      {selectedMemberTalkOccurrences.length ? (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Data</TableHead>
+                              <TableHead>Orador</TableHead>
+                              <TableHead>Tema</TableHead>
+                              <TableHead className="text-right">Ata</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedMemberTalkOccurrences.map((talk) => (
+                              <TableRow key={`${talk.minuteId}-${talk.speakerLabel}`}>
+                                <TableCell className="whitespace-nowrap">
+                                  <TablePrimaryAction asChild>
+                                    <Link href={`/meetings/${talk.minuteId}`}>{formatDate(talk.date)}</Link>
+                                  </TablePrimaryAction>
+                                </TableCell>
+                                <TableCell>{talk.speakerLabel}</TableCell>
+                                <TableCell>{talk.theme || "Sem tema"}</TableCell>
+                                <TableCell className="text-right">
+                                  <TableActionButton asChild label="Visualizar ata">
+                                    <Link href={`/meetings/${talk.minuteId}`}>
+                                      <Eye />
+                                    </Link>
+                                  </TableActionButton>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      ) : (
+                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">Nenhum discurso vinculado nas atas.</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

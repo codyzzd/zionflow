@@ -9,9 +9,8 @@ import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { TableActionButton } from "@/components/ui/table-action-button";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { normalizeDateInput } from "@/lib/utils";
 import type { CaravanPerson, CaravanRegistration } from "@/types/domain";
@@ -103,68 +102,49 @@ export default function CaravanApprovalDetailPage() {
           const { person, registration } = row.original;
 
           return (
-            <div className="flex flex-wrap justify-end gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      aria-label={registration.isApproved ? `Remover ok de ${person.name}` : `Marcar ${person.name} como ok`}
-                      className={
-                        registration.isApproved
-                          ? "size-10 border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800"
-                          : "size-10 border-border text-muted-foreground hover:text-foreground"
-                      }
-                      disabled={!canManageApprovals}
-                      onClick={() => updateRegistration(registration, { isApproved: !registration.isApproved })}
-                      size="icon"
-                      variant={registration.isApproved ? "default" : "outline"}
-                    >
-                      <ThumbsUp />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {canManageApprovals ? (registration.isApproved ? "Remover ok" : "Marcar como ok") : "Somente leitura"}
-                </TooltipContent>
-              </Tooltip>
+            <div className="flex flex-wrap justify-end gap-1">
+              <TableActionButton
+                aria-label={registration.isApproved ? `Remover ok de ${person.name}` : `Marcar ${person.name} como ok`}
+                className={
+                  registration.isApproved
+                    ? "size-10 border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800"
+                    : "size-10 border-border text-muted-foreground hover:text-foreground"
+                }
+                disabled={!canManageApprovals}
+                label={registration.isApproved ? "Remover ok" : "Marcar como ok"}
+                onClick={() => updateRegistration(registration, { isApproved: !registration.isApproved })}
+                size="icon"
+                tooltip={canManageApprovals ? (registration.isApproved ? "Remover ok" : "Marcar como ok") : "Somente leitura"}
+                variant={registration.isApproved ? "default" : "outline"}
+              >
+                <ThumbsUp />
+              </TableActionButton>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      aria-label={registration.isPaid ? `Remover pagamento de ${person.name}` : `Marcar ${person.name} como pago`}
-                      className={registration.isPaid ? "size-10" : "size-10 border-border text-muted-foreground hover:text-foreground"}
-                      disabled={!canManageApprovals}
-                      onClick={() => updateRegistration(registration, { isPaid: !registration.isPaid })}
-                      size="icon"
-                      variant={registration.isPaid ? "default" : "outline"}
-                    >
-                      <DollarSign />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {canManageApprovals ? (registration.isPaid ? "Remover pagamento" : "Marcar como pago") : "Somente leitura"}
-                </TooltipContent>
-              </Tooltip>
+              <TableActionButton
+                aria-label={registration.isPaid ? `Remover pagamento de ${person.name}` : `Marcar ${person.name} como pago`}
+                className={registration.isPaid ? "size-10" : "size-10 border-border text-muted-foreground hover:text-foreground"}
+                disabled={!canManageApprovals}
+                label={registration.isPaid ? "Remover pagamento" : "Marcar como pago"}
+                onClick={() => updateRegistration(registration, { isPaid: !registration.isPaid })}
+                size="icon"
+                tooltip={canManageApprovals ? (registration.isPaid ? "Remover pagamento" : "Marcar como pago") : "Somente leitura"}
+                variant={registration.isPaid ? "default" : "outline"}
+              >
+                <DollarSign />
+              </TableActionButton>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      aria-label={`Excluir ${person.name}`}
-                      className="size-10 border-destructive/70 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      disabled={!canManageApprovals}
-                      onClick={() => deleteCaravanRegistration(registration.id)}
-                      size="icon"
-                      variant="outline"
-                    >
-                      <Trash2 />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{canManageApprovals ? "Excluir passageiro" : "Somente leitura"}</TooltipContent>
-              </Tooltip>
+              <TableActionButton
+                aria-label={`Excluir ${person.name}`}
+                className="size-10"
+                disabled={!canManageApprovals}
+                label="Excluir passageiro"
+                onClick={() => deleteCaravanRegistration(registration.id)}
+                size="icon"
+                tooltip={canManageApprovals ? "Excluir passageiro" : "Somente leitura"}
+                variant="destructive"
+              >
+                <Trash2 />
+              </TableActionButton>
             </div>
           );
         },

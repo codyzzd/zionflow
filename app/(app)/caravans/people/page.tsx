@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Archive } from "lucide-react";
+import { Archive, Eye } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import type { CaravanPerson, CaravanPersonType, DocumentType, Ward } from "@/types/domain";
@@ -265,7 +267,7 @@ export default function CaravanPeoplePage() {
           return (
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="font-medium">{person.name}</p>
+                <TablePrimaryAction onClick={() => openViewDrawer(person)}>{person.name}</TablePrimaryAction>
                 {person.archivedAt ? <Badge variant="destructive">Arquivada</Badge> : null}
               </div>
               <p className="text-xs text-muted-foreground">{sexLabels[person.sex]}</p>
@@ -354,9 +356,9 @@ export default function CaravanPeoplePage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
-              Visualizar
-            </Button>
+            <TableActionButton label="Visualizar" onClick={() => openViewDrawer(row.original)}>
+              <Eye />
+            </TableActionButton>
           </div>
         ),
       },

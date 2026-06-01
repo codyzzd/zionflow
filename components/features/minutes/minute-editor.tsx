@@ -263,11 +263,13 @@ export function MinuteEditor({
 
   useEffect(() => {
     if (mode !== "edit" || !minute?.id) return;
+    const minuteId = minute.id;
+    let cancelled = false;
 
-    const intervalId = window.setInterval(async () => {
+    async function refreshMinuteState() {
       try {
-        const remoteMinute = await fetchMinuteSnapshot(minute.id);
-        if (!remoteMinute) return;
+        const remoteMinute = await fetchMinuteSnapshot(minuteId);
+        if (!remoteMinute || cancelled) return;
 
         setLockInfo({
           minuteId: remoteMinute.id,
@@ -289,9 +291,15 @@ export function MinuteEditor({
       } catch (error) {
         console.error("Failed to refresh minute state.", error);
       }
-    }, MINUTE_POLL_INTERVAL_MS);
+    }
 
-    return () => window.clearInterval(intervalId);
+    void refreshMinuteState();
+    const intervalId = window.setInterval(refreshMinuteState, MINUTE_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
   }, [currentUser?.id, db.users, minute?.id, mode]);
 
   useEffect(() => {
@@ -444,6 +452,15 @@ export function MinuteEditor({
         applyRemoteMinuteUpdate(nextMinute);
         setForm(nextMinute);
         setLockVersion(nextMinute.version);
+        setLockInfo({
+          minuteId: nextMinute.id,
+          lockedByUserId: nextMinute.lockedByUserId ?? acquired.lockedByUserId ?? currentUser.id,
+          lockedByName: acquired.lockedByName ?? currentUser.name,
+          lockedAt: nextMinute.lockedAt ?? acquired.lockedAt,
+          lockExpiresAt: nextMinute.lockExpiresAt ?? acquired.lockExpiresAt,
+          version: nextMinute.version,
+          updatedAt: nextMinute.updatedAt,
+        });
       } else {
         setLockVersion(acquired.version);
       }
@@ -530,8 +547,8 @@ export function MinuteEditor({
     if (editorStep === "preview") return null;
 
     return (
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur supports-backdrop-filter:bg-background/85">
-        <div className="mx-auto flex max-w-[800px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="fixed right-0 bottom-0 left-0 z-30 border-t bg-background/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur supports-backdrop-filter:bg-background/85 md:left-[var(--sidebar-width)] group-data-[state=collapsed]/sidebar-wrapper:md:left-[var(--sidebar-width-icon)]">
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 text-sm">
             {mode === "new" ? <p className="font-medium">Nova ata</p> : null}
             {mode === "edit" && existingEditorMode === "edit" ? <p className="font-medium">Editando</p> : null}

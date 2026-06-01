@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -11,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import type { Caravan, CaravanRegistration } from "@/types/domain";
 
@@ -60,11 +63,14 @@ export default function CaravanApprovalsPage() {
           </Button>
         ),
         cell: ({ row }) => {
+          const caravan = row.original;
           const stats = getRegistrationStats(caravanRegistrationsByWard, row.original.id);
 
           return (
             <div className="space-y-1">
-              <p className="font-medium">{row.original.destination}</p>
+              <TablePrimaryAction asChild>
+                <Link href={`/caravans/approve/${caravan.id}`}>{caravan.destination}</Link>
+              </TablePrimaryAction>
               <p className="text-xs text-muted-foreground tabular-nums">{stats.total} passageiro(s) inscrito(s)</p>
             </div>
           );
@@ -113,9 +119,11 @@ export default function CaravanApprovalsPage() {
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <Button asChild size="sm" variant="ghost">
-              <Link href={`/caravans/approve/${row.original.id}`}>Abrir</Link>
-            </Button>
+            <TableActionButton asChild label="Abrir">
+              <Link href={`/caravans/approve/${row.original.id}`}>
+                <ExternalLink />
+              </Link>
+            </TableActionButton>
           </div>
         ),
       },

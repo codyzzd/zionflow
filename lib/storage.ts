@@ -16,6 +16,7 @@ import type {
   HybridField,
   Hymn,
   HymnBook,
+  LunchCompanionshipSnapshot,
   LunchSchedule,
   PatrolMember,
   PatrolSchedule,
@@ -476,14 +477,29 @@ function normalizeSacramentMinute(minute: SacramentMinute): SacramentMinute {
 
 function normalizeLunchSchedule(lunchSchedule: LunchSchedule): LunchSchedule {
   const legacyLunchSchedule = lunchSchedule as LunchSchedule & {
+    companionshipSnapshots?: unknown;
     host?: unknown;
     hostMemberId?: unknown;
   };
   const hostMemberId = typeof legacyLunchSchedule.hostMemberId === "string" ? legacyLunchSchedule.hostMemberId : "";
   const host = normalizeHybridField(legacyLunchSchedule.host, hostMemberId);
+  const companionshipSnapshots = Array.isArray(legacyLunchSchedule.companionshipSnapshots)
+    ? legacyLunchSchedule.companionshipSnapshots.flatMap((item): LunchCompanionshipSnapshot[] => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+
+        const snapshot = item as Partial<Record<keyof LunchCompanionshipSnapshot, unknown>>;
+        const id = asString(snapshot.id);
+        const name = asString(snapshot.name);
+        const type = snapshot.type === "elders" || snapshot.type === "sisters" ? snapshot.type : undefined;
+        const area = asString(snapshot.area) ?? "";
+
+        return id && name && type ? [{ id, name, type, area }] : [];
+      })
+    : [];
 
   return normalizeSimpleRecord({
     ...lunchSchedule,
+    companionshipSnapshots,
     host,
     hostMemberId: host.mode === "linked" ? host.linkedId ?? "" : "",
   });

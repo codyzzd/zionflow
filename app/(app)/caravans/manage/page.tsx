@@ -16,6 +16,8 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import type { Caravan, CaravanRegistration, CaravanSeatMode } from "@/types/domain";
 
@@ -195,7 +197,7 @@ export default function CaravansPage() {
         ),
         cell: ({ row }) => (
           <div className="space-y-1">
-            <p className="font-medium">{row.original.destination}</p>
+            <TablePrimaryAction onClick={() => openViewDrawer(row.original)}>{row.original.destination}</TablePrimaryAction>
             {row.original.archivedAt ? <Badge variant="destructive">Arquivada</Badge> : null}
           </div>
         ),
@@ -256,17 +258,15 @@ export default function CaravansPage() {
           const caravan = row.original;
 
           return (
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button asChild className="min-w-24" size="sm" variant="outline">
+            <div className="flex flex-wrap justify-end gap-1">
+              <TableActionButton asChild label="Lista" variant="outline">
                 <Link href={`/caravans/manage/${caravan.id}/list`}>
                   <List />
-                  Lista
                 </Link>
-              </Button>
-              <Button className="min-w-24" onClick={() => openViewDrawer(caravan)} size="sm" variant="outline">
+              </TableActionButton>
+              <TableActionButton label="Visualizar" onClick={() => openViewDrawer(caravan)} variant="outline">
                 <Eye />
-                Visualizar
-              </Button>
+              </TableActionButton>
             </div>
           );
         },

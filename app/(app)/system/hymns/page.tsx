@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronsUpDown, Trash2, X } from "lucide-react";
+import { ChevronsUpDown, Eye, Trash2, X } from "lucide-react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import { useMemo, useState } from "react";
 
@@ -19,6 +19,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { isSystemAdmin } from "@/lib/system-access";
 import { cn } from "@/lib/utils";
 import type { Hymn } from "@/types/domain";
@@ -409,6 +411,7 @@ export default function SystemHymnsPage() {
             Título {column.getIsSorted() === "asc" ? "↑" : column.getIsSorted() === "desc" ? "↓" : ""}
           </Button>
         ),
+        cell: ({ row }) => <TablePrimaryAction onClick={() => openViewDrawer(row.original)}>{row.original.title}</TablePrimaryAction>,
       },
       {
         accessorKey: "category",
@@ -438,15 +441,14 @@ export default function SystemHymnsPage() {
         enableHiding: false,
         header: () => <div className="text-right">Ações</div>,
         cell: ({ row }) => (
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => openViewDrawer(row.original)} size="sm" variant="ghost">
-              Visualizar
-            </Button>
+          <div className="flex justify-end gap-1">
+            <TableActionButton label="Visualizar" onClick={() => openViewDrawer(row.original)}>
+              <Eye />
+            </TableActionButton>
             {canManageHymns ? (
-              <Button onClick={() => deleteHymn(row.original.id)} size="sm" variant="ghost">
+              <TableActionButton label="Apagar hino" onClick={() => deleteHymn(row.original.id)} variant="destructive">
                 <Trash2 />
-                Apagar
-              </Button>
+              </TableActionButton>
             ) : null}
           </div>
         ),

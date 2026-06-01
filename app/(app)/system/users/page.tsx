@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronsUpDown } from "lucide-react";
+import { ChevronsUpDown, Pencil, UserCheck, UserX } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { AccessMatrixEditor } from "@/components/features/access/access-matrix-editor";
@@ -20,6 +20,8 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { TableActionButton } from "@/components/ui/table-action-button";
+import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { ACCESS_MATRIX_AREAS, USER_ACCESS_LEVEL_LABELS, USER_ACCESS_LEVELS, accessLevelFromPermissions } from "@/lib/access-control";
 import { isSystemAdmin } from "@/lib/system-access";
@@ -324,10 +326,11 @@ export default function SystemUsersPage() {
         cell: ({ row }) => {
           const user = row.original;
           const linkedMember = user.memberId ? membersById.get(user.memberId) : undefined;
+          const isProtectedSystemUser = isSystemAdmin(user) && user.id !== currentUser?.id;
 
           return (
             <div className="space-y-1">
-              <p className="font-medium">{user.name}</p>
+              {isProtectedSystemUser ? <p className="font-medium">{user.name}</p> : <TablePrimaryAction onClick={() => openEditDrawer(user)}>{user.name}</TablePrimaryAction>}
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{user.email}</span>
                 <span>{user.phone || "Telefone não informado"}</span>
@@ -417,13 +420,13 @@ export default function SystemUsersPage() {
           }
 
           return (
-            <div className="flex justify-end gap-2">
-              <Button onClick={() => openEditDrawer(user)} size="sm" variant="outline">
-                Editar
-              </Button>
-              <Button onClick={() => toggleUserStatus(user.id)} size="sm" variant="ghost">
-                {user.status === "active" ? "Desativar" : "Ativar"}
-              </Button>
+            <div className="flex justify-end gap-1">
+              <TableActionButton label="Editar usuário" onClick={() => openEditDrawer(user)} variant="outline">
+                <Pencil />
+              </TableActionButton>
+              <TableActionButton label={user.status === "active" ? "Desativar usuário" : "Ativar usuário"} onClick={() => toggleUserStatus(user.id)}>
+                {user.status === "active" ? <UserX /> : <UserCheck />}
+              </TableActionButton>
             </div>
           );
         },
