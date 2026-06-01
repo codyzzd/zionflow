@@ -47,6 +47,7 @@ export type Weekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday"
 export type CalendarWeekStartsOn = "sunday" | "monday";
 export type DateFormat = "short" | "medium" | "long";
 export type ChurchActivityStatus = "attending" | "not_attending";
+export type MemberGeocodingStatus = "not_attempted" | "no_result" | "error" | "skipped";
 
 export const MEMBER_ORGANIZATION_OPTIONS = [
   "Quorum de Elderes",
@@ -142,6 +143,10 @@ export interface Member extends RecordMetadata {
   address: string;
   latitude?: number;
   longitude?: number;
+  geocodingAttemptedAt?: string;
+  geocodingError?: string;
+  geocodingQuery?: string;
+  geocodingStatus?: MemberGeocodingStatus;
   churchActivityStatus: ChurchActivityStatus;
   birthDate: string;
   organization: string;

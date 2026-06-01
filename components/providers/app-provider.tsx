@@ -14,7 +14,7 @@ import {
 } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
-import { createEmptyDatabase, loadDatabase, normalizeHymnTags, saveDatabase, saveMinuteSnapshot } from "@/lib/storage";
+import { createEmptyDatabase, loadDatabase, normalizeHymnTags, saveDatabase, saveMemberSnapshot, saveMinuteSnapshot } from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
@@ -65,6 +65,17 @@ type SaveMinuteOptions = {
 type SaveMinuteResult = {
   id: string;
   minute: SacramentMinute;
+  persisted: Promise<boolean>;
+};
+
+type SaveMemberOptions = {
+  persistImmediately?: boolean;
+  silent?: boolean;
+};
+
+type SaveMemberResult = {
+  id: string;
+  member: Member;
   persisted: Promise<boolean>;
 };
 
@@ -165,7 +176,7 @@ type AppContextValue = {
   archiveWard: (wardId: string) => void;
   unarchiveWard: (wardId: string) => void;
   deleteWard: (wardId: string) => void;
-  saveMember: (input: Omit<Member, "id"> & { id?: string }) => void;
+  saveMember: (input: Omit<Member, "id"> & { id?: string }, options?: SaveMemberOptions) => SaveMemberResult;
   deleteMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
   addMemberNote: (memberId: string, text: string) => void;
@@ -1600,32 +1611,48 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success("Ala deletada.");
     }
 
-    function saveMember(input: Omit<Member, "id"> & { id?: string }) {
-      const exists = input.id ? db.members.some((member) => member.id === input.id) : false;
+    function saveMember(input: Omit<Member, "id"> & { id?: string }, options: SaveMemberOptions = {}) {
+      const id = input.id ?? uid("member");
+      const existing = db.members.find((member) => member.id === id);
+      const exists = Boolean(existing);
+      const actorUserId = getActorUserId(db);
+      const memberToPersist = withRecordMetadata({ ...input, birthDate: normalizeDateInput(input.birthDate), id }, existing, actorUserId);
 
       setDb((currentDb) => {
-        const id = input.id ?? uid("member");
-        const existing = currentDb.members.find((member) => member.id === id);
-        const exists = Boolean(existing);
-        const actorUserId = getActorUserId(currentDb);
-        const member = withRecordMetadata({ ...input, birthDate: normalizeDateInput(input.birthDate), id }, existing, actorUserId);
         const nextDb = {
           ...currentDb,
           members: exists
-            ? currentDb.members.map((current) => (current.id === id ? member : current))
-            : [member, ...currentDb.members],
+            ? currentDb.members.map((current) => (current.id === id ? memberToPersist : current))
+            : [memberToPersist, ...currentDb.members],
         };
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
-          wardId: member.wardId,
+          wardId: memberToPersist.wardId,
           action: exists ? "UPDATE_MEMBER" : "CREATE_MEMBER",
           module: "membros",
-          itemLabel: member.name,
+          itemLabel: memberToPersist.name,
           summary: exists ? "Atualizou cadastro de membro." : "Criou novo cadastro de membro.",
         });
       });
 
-      toast.success(exists ? "Membro atualizado." : "Membro cadastrado.");
+      const persisted = options.persistImmediately
+        ? saveMemberSnapshot(memberToPersist)
+            .then(() => true)
+            .catch((error) => {
+              console.error("Failed to save member directly.", error);
+              if (!saveErrorShownRef.current) {
+                toast.error("Nao foi possivel salvar o membro no Supabase.");
+                saveErrorShownRef.current = true;
+              }
+              return false;
+            })
+        : Promise.resolve(true);
+
+      if (!options.silent) {
+        toast.success(exists ? "Membro atualizado." : "Membro cadastrado.");
+      }
+
+      return { id, member: memberToPersist, persisted };
     }
 
     function deleteMembers(memberIds: string[]) {

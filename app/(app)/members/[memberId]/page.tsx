@@ -197,7 +197,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                     <Label>Latitude</Label>
                     <Input
                       inputMode="decimal"
-                      placeholder="-3.7319"
+                      placeholder="ex: -3.7319"
                       value={form.latitude ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, latitude: parseCoordinateInput(e.target.value) }))}
                     />
@@ -206,7 +206,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                     <Label>Longitude</Label>
                     <Input
                       inputMode="decimal"
-                      placeholder="-38.5267"
+                      placeholder="ex: -38.5267"
                       value={form.longitude ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, longitude: parseCoordinateInput(e.target.value) }))}
                     />

@@ -569,7 +569,7 @@ export default function MembersPage() {
                           <Input
                             disabled={isReadOnly}
                             inputMode="decimal"
-                            placeholder="-3.7319"
+                            placeholder="ex: -3.7319"
                             value={form.latitude ?? ""}
                             onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))}
                           />
@@ -579,7 +579,7 @@ export default function MembersPage() {
                           <Input
                             disabled={isReadOnly}
                             inputMode="decimal"
-                            placeholder="-38.5267"
+                            placeholder="ex: -38.5267"
                             value={form.longitude ?? ""}
                             onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))}
                           />

@@ -262,6 +262,9 @@ function normalizeMember(member: Member): Member {
   const calling = `${organization} ${leadership}`.toLocaleLowerCase("pt-BR");
   const isBishopric = calling.includes("bisp") || calling.includes("presid");
   const isSecretary = calling.includes("secret");
+  const latitude = asOptionalNumber(member.latitude);
+  const longitude = asOptionalNumber(member.longitude);
+  const hasCoordinates = typeof latitude === "number" && typeof longitude === "number";
 
   return {
     id: member.id,
@@ -269,8 +272,17 @@ function normalizeMember(member: Member): Member {
     name: member.name,
     phone: asOptionalString(member.phone),
     address: asOptionalString(member.address),
-    latitude: asOptionalNumber(member.latitude),
-    longitude: asOptionalNumber(member.longitude),
+    latitude,
+    longitude,
+    geocodingAttemptedAt: hasCoordinates ? undefined : asOptionalString(member.geocodingAttemptedAt),
+    geocodingError: hasCoordinates ? undefined : asOptionalString(member.geocodingError),
+    geocodingQuery: hasCoordinates ? undefined : asOptionalString(member.geocodingQuery),
+    geocodingStatus:
+      hasCoordinates
+        ? undefined
+        : member.geocodingStatus === "no_result" || member.geocodingStatus === "error" || member.geocodingStatus === "skipped"
+          ? member.geocodingStatus
+          : "not_attempted",
     churchActivityStatus: normalizeChurchActivityStatus(member.churchActivityStatus),
     birthDate: normalizeDateInput(member.birthDate ?? ""),
     organization,
@@ -1142,6 +1154,27 @@ export async function saveMinuteSnapshot(minute: SacramentMinute): Promise<void>
 
   if (minuteError) {
     throw minuteError;
+  }
+}
+
+export async function saveMemberSnapshot(member: Member): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const supabase = createClient();
+  const normalizedMember = normalizeMember(member);
+  const { error: memberError } = await supabase.from("members").upsert(
+    {
+      id: normalizedMember.id,
+      data: normalizedMember,
+      ward_id: optionalUuid(normalizedMember.wardId),
+    },
+    { onConflict: "id" },
+  );
+
+  if (memberError) {
+    throw memberError;
   }
 }
 

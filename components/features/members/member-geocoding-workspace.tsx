@@ -7,7 +7,9 @@ import { useAppContext } from "@/components/providers/app-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn, normalizeDateInput, nowIso } from "@/lib/utils";
 import type { Member } from "@/types/domain";
 
 type GeocodeResult = {
@@ -26,15 +28,78 @@ type MemberGeocodeState = {
   skipped?: boolean;
   status: MemberGeocodeStatus;
 };
+type GeocodingFilter = "pending" | "not_attempted" | "no_result" | "error" | "skipped";
+type RunGeocodeOptions = {
+  persistFound?: boolean;
+};
 
 const processedStatuses = new Set<MemberGeocodeStatus>(["found", "empty", "error", "saved", "skipped"]);
+const geocodingFilterLabels: Record<GeocodingFilter, string> = {
+  pending: "Todos pendentes",
+  not_attempted: "Nunca tentados",
+  no_result: "Sem resultado",
+  error: "Erro",
+  skipped: "Pulados",
+};
+const talkDurationLabels: Record<Member["sacramentTalkDuration"], string> = {
+  "5": "5 min",
+  "10": "10 min",
+  "15": "15 min",
+};
 
 function isMappedMember(member: Member) {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
 }
 
+function memberGeocodingStatus(member: Member) {
+  return member.geocodingStatus ?? "not_attempted";
+}
+
+function getMemberDisplayState(member: Member, statesByMemberId: Record<string, MemberGeocodeState>): MemberGeocodeState {
+  const runtimeState = statesByMemberId[member.id];
+  if (runtimeState) return runtimeState;
+
+  if (member.geocodingStatus === "no_result") return { status: "empty" };
+  if (member.geocodingStatus === "error") return { error: member.geocodingError || "Erro registrado na última tentativa.", status: "error" };
+  if (member.geocodingStatus === "skipped") return { skipped: true, status: "skipped" };
+
+  return { status: "idle" };
+}
+
 function normalizeAddress(address: string) {
   return address.trim().replace(/\s+/g, " ");
+}
+
+function calculateAge(birthDate: string) {
+  const normalizedDate = normalizeDateInput(birthDate);
+  if (!normalizedDate) return null;
+
+  const today = new Date();
+  const birth = new Date(`${normalizedDate}T12:00:00`);
+  let age = today.getFullYear() - birth.getFullYear();
+  const birthdayThisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+
+  if (today < birthdayThisYear) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
+function parseAgeFilterValue(value: string) {
+  if (!value.trim()) return null;
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function matchesAgeRange(age: number | null, minimum: number | null, maximum: number | null) {
+  if (minimum === null && maximum === null) return true;
+  if (age === null) return false;
+  if (minimum !== null && age < minimum) return false;
+  if (maximum !== null && age > maximum) return false;
+
+  return true;
 }
 
 function wait(ms: number) {
@@ -46,7 +111,14 @@ export function MemberGeocodingWorkspace() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [statesByMemberId, setStatesByMemberId] = useState<Record<string, MemberGeocodeState>>({});
+  const [addressDraftsByMemberId, setAddressDraftsByMemberId] = useState<Record<string, string>>({});
   const [batchRunning, setBatchRunning] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<GeocodingFilter>("pending");
+  const [sexFilter, setSexFilter] = useState<"all" | Member["sex"]>("all");
+  const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
+  const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
+  const [talkDurationFilter, setTalkDurationFilter] = useState<"all" | Member["sacramentTalkDuration"]>("all");
   const cacheRef = useRef(new Map<string, GeocodeResult | null>());
   const lastRequestAtRef = useRef(0);
   const stopRequestedRef = useRef(false);
@@ -58,19 +130,80 @@ export function MemberGeocodingWorkspace() {
         .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
     [membersByWard],
   );
-  const selectedMembers = useMemo(() => candidates.filter((member) => selectedIds.has(member.id)), [candidates, selectedIds]);
-  const selectedMember = candidates.find((member) => member.id === selectedMemberId) ?? selectedMembers[0] ?? candidates[0];
-  const selectedState = selectedMember ? statesByMemberId[selectedMember.id] ?? { status: "idle" } : undefined;
-  const selectedProcessedCount = selectedMembers.filter((member) => processedStatuses.has(statesByMemberId[member.id]?.status ?? "idle")).length;
-  const foundCount = candidates.filter((member) => statesByMemberId[member.id]?.status === "found").length;
+  const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
+  const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
+  const filteredCandidates = useMemo(
+    () =>
+      candidates.filter((member) => {
+        const address = addressDraftsByMemberId[member.id] ?? member.address;
+        const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
+        const matchesSearch =
+          !normalizedSearch ||
+          member.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
+          address.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
+        const matchesStatus = statusFilter === "pending" || memberGeocodingStatus(member) === statusFilter;
+        const matchesSex = sexFilter === "all" || member.sex === sexFilter;
+        const matchesAge = matchesAgeRange(calculateAge(member.birthDate), minimumAge, maximumAge);
+        const matchesTalkDuration = talkDurationFilter === "all" || member.sacramentTalkDuration === talkDurationFilter;
+
+        return matchesSearch && matchesStatus && matchesSex && matchesAge && matchesTalkDuration;
+      }),
+    [addressDraftsByMemberId, candidates, maximumAge, minimumAge, search, sexFilter, statusFilter, talkDurationFilter],
+  );
+  const selectedMembers = useMemo(() => filteredCandidates.filter((member) => selectedIds.has(member.id)), [filteredCandidates, selectedIds]);
+  const selectedMember = filteredCandidates.find((member) => member.id === selectedMemberId) ?? selectedMembers[0] ?? filteredCandidates[0];
+  const selectedState = selectedMember ? getMemberDisplayState(selectedMember, statesByMemberId) : undefined;
+  const selectedAddress = selectedMember ? addressDraftsByMemberId[selectedMember.id] ?? selectedMember.address : "";
+  const selectedMembersWithEmptyAddress = selectedMembers.filter((member) => !normalizeAddress(addressDraftsByMemberId[member.id] ?? member.address));
+  const selectedProcessedCount = selectedMembers.filter((member) => processedStatuses.has(getMemberDisplayState(member, statesByMemberId).status)).length;
+  const foundCount = filteredCandidates.filter((member) => getMemberDisplayState(member, statesByMemberId).status === "found").length;
   const savedCount = Object.values(statesByMemberId).filter((state) => state.status === "saved").length;
-  const issueCount = candidates.filter((member) => ["empty", "error"].includes(statesByMemberId[member.id]?.status ?? "")).length;
+  const issueCount = filteredCandidates.filter((member) => {
+    const runtimeStatus = getMemberDisplayState(member, statesByMemberId).status;
+
+    return runtimeStatus === "empty" || runtimeStatus === "error";
+  }).length;
   const progressPercent = selectedMembers.length ? Math.round((selectedProcessedCount / selectedMembers.length) * 100) : 0;
-  const allSelected = candidates.length > 0 && selectedMembers.length === candidates.length;
+  const allSelected = filteredCandidates.length > 0 && selectedMembers.length === filteredCandidates.length;
   const someSelected = selectedMembers.length > 0 && !allSelected;
 
   function setMemberState(memberId: string, state: MemberGeocodeState) {
     setStatesByMemberId((current) => ({ ...current, [memberId]: state }));
+  }
+
+  function draftAddressFor(member: Member) {
+    return addressDraftsByMemberId[member.id] ?? member.address;
+  }
+
+  function memberWithDraftAddress(member: Member) {
+    return {
+      ...member,
+      address: normalizeAddress(draftAddressFor(member)),
+    };
+  }
+
+  async function persistMemberUpdate(input: Omit<Member, "id"> & { id: string }, failureMessage: string) {
+    const result = saveMember(input, { persistImmediately: true, silent: true });
+    const persisted = await result.persisted;
+
+    if (!persisted) {
+      setMemberState(input.id, { error: failureMessage, status: "error" });
+      return false;
+    }
+
+    return true;
+  }
+
+  function updateAddressDraft(memberId: string, address: string) {
+    setAddressDraftsByMemberId((current) => ({ ...current, [memberId]: address }));
+    setStatesByMemberId((current) => {
+      const state = current[memberId];
+      if (!state || state.status === "loading") return current;
+
+      const next = { ...current };
+      delete next[memberId];
+      return next;
+    });
   }
 
   function toggleMemberSelection(memberId: string, checked: boolean) {
@@ -84,29 +217,54 @@ export function MemberGeocodingWorkspace() {
   }
 
   function toggleAllSelection(checked: boolean) {
-    setSelectedIds(checked ? new Set(candidates.map((member) => member.id)) : new Set());
+    setSelectedIds(checked ? new Set(filteredCandidates.map((member) => member.id)) : new Set());
   }
 
   function selectNext(currentMemberId: string) {
-    const currentIndex = candidates.findIndex((member) => member.id === currentMemberId);
-    const nextMember = candidates.find((member, index) => index > currentIndex && statesByMemberId[member.id]?.status !== "saved");
+    const currentIndex = filteredCandidates.findIndex((member) => member.id === currentMemberId);
+    const nextMember = filteredCandidates.find((member, index) => index > currentIndex && statesByMemberId[member.id]?.status !== "saved");
 
-    setSelectedMemberId(nextMember?.id ?? candidates.find((member) => member.id !== currentMemberId)?.id ?? "");
+    setSelectedMemberId(nextMember?.id ?? filteredCandidates.find((member) => member.id !== currentMemberId)?.id ?? "");
   }
 
-  async function runGeocode(member: Member): Promise<MemberGeocodeState> {
-    const address = normalizeAddress(member.address);
+  async function runGeocode(member: Member, options: RunGeocodeOptions = {}): Promise<MemberGeocodeState> {
+    const memberToSave = memberWithDraftAddress(member);
+    const address = memberToSave.address;
 
-    if (!address) return { status: "empty" };
+    if (!address) {
+      const nextState: MemberGeocodeState = { error: "Informe um endereço antes de processar.", status: "error" };
+      setMemberState(member.id, nextState);
+      return nextState;
+    }
 
     const existingState = statesByMemberId[member.id];
-    if (existingState?.result && existingState.status !== "saved") return existingState;
+    if (existingState?.result && existingState.status !== "saved") {
+      if (options.persistFound) {
+        return saveGeocodeResult(member, existingState.result);
+      }
+
+      return existingState;
+    }
 
     setMemberState(member.id, { status: "loading" });
 
     const cached = cacheRef.current.get(address);
     if (cacheRef.current.has(address)) {
       const cachedState: MemberGeocodeState = cached ? { result: cached, status: "found" } : { status: "empty" };
+      if (!cached) {
+        const persisted = await persistMemberUpdate(
+          {
+            ...memberToSave,
+            geocodingAttemptedAt: nowIso(),
+            geocodingError: "",
+            geocodingQuery: address,
+            geocodingStatus: "no_result",
+          },
+          "Sem resultado encontrado, mas não foi possível salvar esse status no Supabase.",
+        );
+        if (!persisted) return { error: "Sem resultado encontrado, mas não foi possível salvar esse status no Supabase.", status: "error" };
+      }
+      if (cached && options.persistFound) return saveGeocodeResult(member, cached);
       setMemberState(member.id, cachedState);
       return cachedState;
     }
@@ -132,10 +290,36 @@ export function MemberGeocodingWorkspace() {
       const result = payload.results?.[0] ?? null;
       cacheRef.current.set(address, result);
       const nextState: MemberGeocodeState = result ? { result, status: "found" } : { status: "empty" };
+      if (result && options.persistFound) return saveGeocodeResult(member, result);
+      if (!result) {
+        const persisted = await persistMemberUpdate(
+          {
+            ...memberToSave,
+            geocodingAttemptedAt: nowIso(),
+            geocodingError: "",
+            geocodingQuery: address,
+            geocodingStatus: "no_result",
+          },
+          "Sem resultado encontrado, mas não foi possível salvar esse status no Supabase.",
+        );
+        if (!persisted) return { error: "Sem resultado encontrado, mas não foi possível salvar esse status no Supabase.", status: "error" };
+      }
       setMemberState(member.id, nextState);
       return nextState;
     } catch (error) {
-      const nextState: MemberGeocodeState = { error: error instanceof Error ? error.message : "Erro ao buscar coordenadas.", status: "error" };
+      const errorMessage = error instanceof Error ? error.message : "Erro ao buscar coordenadas.";
+      const nextState: MemberGeocodeState = { error: errorMessage, status: "error" };
+      const persisted = await persistMemberUpdate(
+        {
+          ...memberToSave,
+          geocodingAttemptedAt: nowIso(),
+          geocodingError: errorMessage,
+          geocodingQuery: address,
+          geocodingStatus: "error",
+        },
+        "O erro da busca aconteceu, mas não foi possível salvar esse status no Supabase.",
+      );
+      if (!persisted) return { error: "O erro da busca aconteceu, mas não foi possível salvar esse status no Supabase.", status: "error" };
       setMemberState(member.id, nextState);
       return nextState;
     }
@@ -150,9 +334,9 @@ export function MemberGeocodingWorkspace() {
     for (const member of selectedMembers) {
       if (stopRequestedRef.current) break;
       const currentState = statesByMemberId[member.id];
-      if (currentState?.status === "saved" || currentState?.result) continue;
+      if (currentState?.status === "saved") continue;
       setSelectedMemberId(member.id);
-      await runGeocode(member);
+      await runGeocode(member, { persistFound: true });
     }
 
     setBatchRunning(false);
@@ -162,31 +346,56 @@ export function MemberGeocodingWorkspace() {
     stopRequestedRef.current = true;
   }
 
-  function confirmResult(member: Member, result: GeocodeResult) {
-    saveMember({
-      ...member,
-      latitude: result.latitude,
-      longitude: result.longitude,
-    });
+  async function saveGeocodeResult(member: Member, result: GeocodeResult): Promise<MemberGeocodeState> {
+    const memberToSave = memberWithDraftAddress(member);
+    const persisted = await persistMemberUpdate(
+      {
+        ...memberToSave,
+        geocodingAttemptedAt: undefined,
+        geocodingError: undefined,
+        geocodingQuery: undefined,
+        geocodingStatus: undefined,
+        latitude: result.latitude,
+        longitude: result.longitude,
+      },
+      "Coordenada encontrada, mas não foi salva no Supabase.",
+    );
+
+    if (!persisted) return { error: "Coordenada encontrada, mas não foi salva no Supabase.", status: "error" };
+
     setMemberState(member.id, { result, status: "saved" });
+    return { result, status: "saved" };
+  }
+
+  async function confirmResult(member: Member, result: GeocodeResult) {
+    const savedState = await saveGeocodeResult(member, result);
+    if (savedState.status !== "saved") return;
     selectNext(member.id);
   }
 
-  function saveFoundResults() {
-    selectedMembers.forEach((member) => {
+  async function saveFoundResults() {
+    for (const member of selectedMembers) {
       const state = statesByMemberId[member.id];
-      if (!state?.result || state.status === "saved") return;
+      if (!state?.result || state.status === "saved") continue;
 
-      saveMember({
-        ...member,
-        latitude: state.result.latitude,
-        longitude: state.result.longitude,
-      });
-      setMemberState(member.id, { result: state.result, status: "saved" });
-    });
+      await saveGeocodeResult(member, state.result);
+    }
   }
 
-  function skipMember(member: Member) {
+  async function skipMember(member: Member) {
+    const memberToSave = memberWithDraftAddress(member);
+    const persisted = await persistMemberUpdate(
+      {
+        ...memberToSave,
+        geocodingAttemptedAt: nowIso(),
+        geocodingError: "",
+        geocodingQuery: memberToSave.address,
+        geocodingStatus: "skipped",
+      },
+      "Membro pulado, mas não foi possível salvar esse status no Supabase.",
+    );
+    if (!persisted) return;
+
     setMemberState(member.id, { skipped: true, status: "skipped" });
     selectNext(member.id);
   }
@@ -194,12 +403,69 @@ export function MemberGeocodingWorkspace() {
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-        Os endereços consultados são enviados para um serviço público externo. O processamento é sequencial, sem autocomplete, sem paralelismo e com intervalo mínimo de 1 segundo.
+        Os endereços consultados são enviados para um serviço público externo. O processamento é sequencial, sem autocomplete, sem paralelismo e com intervalo mínimo de 1 segundo. Erros, sem resultado e pulados ficam marcados no cadastro para revisão futura.
+      </div>
+
+      <div className="grid gap-2 rounded-lg border bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_repeat(5,minmax(120px,auto))]">
+        <Input
+          placeholder="Buscar por nome ou endereço"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as GeocodingFilter)}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(geocodingFilterLabels).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os sexos</SelectItem>
+            <SelectItem value="M">Masculino</SelectItem>
+            <SelectItem value="F">Feminino</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          inputMode="numeric"
+          min={0}
+          placeholder="Idade mín."
+          type="number"
+          value={minimumAgeFilter}
+          onChange={(event) => setMinimumAgeFilter(event.target.value)}
+        />
+        <Input
+          inputMode="numeric"
+          min={0}
+          placeholder="Idade máx."
+          type="number"
+          value={maximumAgeFilter}
+          onChange={(event) => setMaximumAgeFilter(event.target.value)}
+        />
+        <Select value={talkDurationFilter} onValueChange={(value) => setTalkDurationFilter(value as "all" | Member["sacramentTalkDuration"])}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos discursos</SelectItem>
+            <SelectItem value="5">{talkDurationLabels["5"]}</SelectItem>
+            <SelectItem value="10">{talkDurationLabels["10"]}</SelectItem>
+            <SelectItem value="15">{talkDurationLabels["15"]}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid gap-3 md:grid-cols-6">
         <StatTile label="Pendentes" value={candidates.length} />
-        <StatTile label="Selecionados" value={selectedMembers.length} />
+        <StatTile label="Filtrados" value={filteredCandidates.length} />
         <StatTile label="Processados" value={selectedProcessedCount} />
         <StatTile label="Encontrados" value={foundCount} />
         <StatTile label="Erros/sem resultado" value={issueCount} />
@@ -223,15 +489,15 @@ export function MemberGeocodingWorkspace() {
           <div className="border-b p-3">
             <label className="flex items-center gap-2 text-sm font-medium">
               <Checkbox checked={allSelected || (someSelected && "indeterminate")} onCheckedChange={(checked) => toggleAllSelection(checked === true)} />
-              Selecionar todos
+              Selecionar filtrados
             </label>
-            <p className="mt-1 text-xs text-muted-foreground">{candidates.length} membros com endereço e sem coordenadas</p>
+            <p className="mt-1 text-xs text-muted-foreground">{filteredCandidates.length} de {candidates.length} membros com endereço e sem coordenadas</p>
           </div>
           <div className="h-[560px] overflow-y-auto p-2">
-            {candidates.length ? (
+            {filteredCandidates.length ? (
               <div className="space-y-1">
-                {candidates.map((member) => {
-                  const state = statesByMemberId[member.id] ?? { status: "idle" };
+                {filteredCandidates.map((member) => {
+                  const state = getMemberDisplayState(member, statesByMemberId);
 
                   return (
                     <div
@@ -251,9 +517,12 @@ export function MemberGeocodingWorkspace() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium">{member.name}</p>
-                            <p className="truncate text-xs text-muted-foreground">{member.address}</p>
+                            <p className="truncate text-xs text-muted-foreground">{draftAddressFor(member) || "Sem endereço informado"}</p>
+                            {member.geocodingStatus && member.geocodingStatus !== "not_attempted" ? (
+                              <p className="truncate text-xs text-muted-foreground">{geocodingFilterLabels[member.geocodingStatus]}</p>
+                            ) : null}
                           </div>
-                          {state.status !== "idle" ? <StatusBadge status={state.status} /> : null}
+                          <StatusBadge status={state.status} />
                         </div>
                       </button>
                     </div>
@@ -270,9 +539,19 @@ export function MemberGeocodingWorkspace() {
           {selectedMember && selectedState ? (
             <>
               <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-xl font-semibold">{selectedMember.name}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{selectedMember.address}</p>
+                  <label className="mt-3 block text-xs font-medium text-muted-foreground" htmlFor={`member-geocoding-address-${selectedMember.id}`}>
+                    Endereço para buscar
+                  </label>
+                  <Input
+                    className="mt-1"
+                    disabled={selectedState.status === "loading" || batchRunning}
+                    id={`member-geocoding-address-${selectedMember.id}`}
+                    placeholder="Rua, número, bairro, cidade - UF"
+                    value={selectedAddress}
+                    onChange={(event) => updateAddressDraft(selectedMember.id, event.target.value)}
+                  />
                 </div>
                 <StatusBadge status={selectedState.status} />
               </div>
@@ -289,6 +568,7 @@ export function MemberGeocodingWorkspace() {
                 {selectedState.status === "error" ? <p className="text-destructive">{selectedState.error}</p> : null}
                 {selectedState.status === "skipped" ? <p className="text-muted-foreground">Membro pulado nesta rodada.</p> : null}
                 {selectedState.status === "saved" ? <p className="text-emerald-700 dark:text-emerald-300">Coordenadas salvas no cadastro.</p> : null}
+                {!normalizeAddress(selectedAddress) ? <p className="text-destructive">Informe um endereço para processar este membro.</p> : null}
                 {selectedState.result ? (
                   <div className="space-y-3">
                     <div>
@@ -310,25 +590,25 @@ export function MemberGeocodingWorkspace() {
                     Parar
                   </Button>
                 ) : (
-                  <Button disabled={!selectedMembers.length} onClick={processSelectedMembers} type="button" variant="outline">
+                  <Button disabled={!selectedMembers.length || selectedMembersWithEmptyAddress.length > 0} onClick={processSelectedMembers} type="button" variant="outline">
                     <Play />
                     Processar selecionados
                   </Button>
                 )}
-                <Button disabled={!selectedMembers.some((member) => statesByMemberId[member.id]?.result)} onClick={saveFoundResults} type="button" variant="outline">
+                <Button disabled={batchRunning || !selectedMembers.some((member) => statesByMemberId[member.id]?.result)} onClick={saveFoundResults} type="button" variant="outline">
                   <Save />
                   Salvar encontrados
                 </Button>
-                <Button onClick={() => skipMember(selectedMember)} type="button" variant="ghost">
+                <Button disabled={batchRunning || selectedState.status === "loading"} onClick={() => skipMember(selectedMember)} type="button" variant="ghost">
                   <SkipForward />
                   Pular
                 </Button>
-                <Button disabled={selectedState.status === "loading"} onClick={() => runGeocode(selectedMember)} type="button" variant="outline">
+                <Button disabled={selectedState.status === "loading" || !normalizeAddress(selectedAddress)} onClick={() => runGeocode(selectedMember)} type="button" variant="outline">
                   {selectedState.status === "loading" ? <Loader2 className="animate-spin" /> : <Search />}
                   Buscar
                 </Button>
                 <Button
-                  disabled={!selectedState.result || selectedState.status === "saved"}
+                  disabled={!selectedState.result || selectedState.status === "saved" || batchRunning}
                   onClick={() => selectedState.result && confirmResult(selectedMember, selectedState.result)}
                   type="button"
                 >

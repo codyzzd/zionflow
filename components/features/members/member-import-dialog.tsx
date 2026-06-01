@@ -14,8 +14,11 @@ import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { normalizeDateInput, slugify } from "@/lib/utils";
 import type { Member, RecordMetadataKey } from "@/types/domain";
 
-type ImportFieldKey = keyof Omit<Member, "id" | "wardId" | RecordMetadataKey>;
-type ImportMember = Omit<Member, "id" | "wardId" | RecordMetadataKey>;
+type ImportFieldKey = keyof Omit<
+  Member,
+  "id" | "wardId" | "geocodingAttemptedAt" | "geocodingError" | "geocodingQuery" | "geocodingStatus" | RecordMetadataKey
+>;
+type ImportMember = Omit<Member, "id" | "wardId" | "geocodingAttemptedAt" | "geocodingError" | "geocodingQuery" | "geocodingStatus" | RecordMetadataKey>;
 type ImportConflict = {
   index: number;
   member: ImportMember;
