@@ -11,12 +11,14 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
+import type { MemberMapMarkerStyle } from "@/components/features/members/member-map-canvas";
 
 const MemberMapCanvas = dynamic(() => import("@/components/features/members/member-map-canvas").then((mod) => mod.MemberMapCanvas), {
   loading: () => <div className="flex min-h-[420px] items-center justify-center rounded-lg border text-sm text-muted-foreground">Carregando mapa...</div>,
@@ -29,11 +31,13 @@ type SexFilter = "all" | Member["sex"];
 type MappedMember = Member & { latitude: number; longitude: number };
 
 const activityLabels: Record<Member["churchActivityStatus"], string> = {
+  away: "Afastado",
   attending: "Frequentando",
   not_attending: "Não frequentando",
 };
 
 const activityBadgeClassNames: Record<Member["churchActivityStatus"], string> = {
+  away: "border-zinc-300 bg-zinc-100 text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100",
   attending: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
   not_attending: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
 };
@@ -87,7 +91,10 @@ export default function MembersMapPage() {
   const [sexFilter, setSexFilter] = useState<SexFilter>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
+  const [markerStyle, setMarkerStyle] = useState<MemberMapMarkerStyle>("classic_pin");
+  const [clusterEnabled, setClusterEnabled] = useState(false);
   const [selectedMemberId, setSelectedMemberId] = useState<string | undefined>();
+  const [selectedMemberFocusKey, setSelectedMemberFocusKey] = useState(0);
   const [fullScreen, setFullScreen] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [fullScreenFiltersOpen, setFullScreenFiltersOpen] = useState(false);
@@ -122,6 +129,7 @@ export default function MembersMapPage() {
 
   function selectMember(member: Member) {
     setSelectedMemberId(member.id);
+    setSelectedMemberFocusKey((current) => current + 1);
   }
 
   function enterFullScreen() {
@@ -151,7 +159,7 @@ export default function MembersMapPage() {
     <div
       className={cn(
         "grid gap-3 rounded-lg border bg-card p-3",
-        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_150px_160px_115px_115px_160px]",
+        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_150px_160px_115px_115px_160px_150px_minmax(190px,auto)]",
       )}
     >
       <div>
@@ -184,6 +192,7 @@ export default function MembersMapPage() {
             <SelectItem value="all">Todas</SelectItem>
             <SelectItem value="attending">Frequentando</SelectItem>
             <SelectItem value="not_attending">Não frequentando</SelectItem>
+            <SelectItem value="away">Afastado</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -224,6 +233,23 @@ export default function MembersMapPage() {
           </SelectContent>
         </Select>
       </div>
+      <div>
+        <Label className="text-xs">Tipo de pino</Label>
+        <Select value={markerStyle} onValueChange={(value) => setMarkerStyle(value as MemberMapMarkerStyle)}>
+          <SelectTrigger className="mt-1 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className={mapSelectContentClassName}>
+            <SelectItem value="classic_pin">Pino clássico</SelectItem>
+            <SelectItem value="compact_pin">Pino compacto</SelectItem>
+            <SelectItem value="circle">Bola</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <label className="flex min-h-10 items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+        <Checkbox checked={clusterEnabled} onCheckedChange={(checked) => setClusterEnabled(checked === true)} />
+        <span className="leading-tight">Agrupar pinos sobrepostos</span>
+      </label>
     </div>
   );
 
@@ -285,7 +311,14 @@ export default function MembersMapPage() {
       <PermissionGuard permission="map.view">
         <div className="member-map-fullscreen fixed inset-0 z-40 isolate bg-background">
           <div className="absolute inset-0 z-0">
-            <MemberMapCanvas members={filteredMappedMembers} onSelectMember={setSelectedMemberId} selectedMemberId={selectedMemberId} />
+            <MemberMapCanvas
+              clusterEnabled={clusterEnabled}
+              markerStyle={markerStyle}
+              members={filteredMappedMembers}
+              onSelectMember={setSelectedMemberId}
+              selectedMemberFocusKey={selectedMemberFocusKey}
+              selectedMemberId={selectedMemberId}
+            />
           </div>
           <div className="absolute right-4 top-4 z-[1000] flex gap-2">
             <Button className={panelCollapsed ? "" : "hidden"} onClick={() => setPanelCollapsed(false)} size="icon" variant="secondary">
@@ -348,7 +381,14 @@ export default function MembersMapPage() {
           {filters}
 
           <div className="grid gap-4 xl:h-[calc(100dvh-26rem)] xl:min-h-[420px] xl:grid-cols-[minmax(0,1fr)_360px]">
-            <MemberMapCanvas members={filteredMappedMembers} onSelectMember={setSelectedMemberId} selectedMemberId={selectedMemberId} />
+            <MemberMapCanvas
+              clusterEnabled={clusterEnabled}
+              markerStyle={markerStyle}
+              members={filteredMappedMembers}
+              onSelectMember={setSelectedMemberId}
+              selectedMemberFocusKey={selectedMemberFocusKey}
+              selectedMemberId={selectedMemberId}
+            />
             {memberList}
           </div>
         </div>

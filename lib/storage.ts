@@ -142,7 +142,9 @@ function asOptionalNumber(value: unknown) {
 }
 
 function normalizeChurchActivityStatus(value: unknown): ChurchActivityStatus {
-  return value === "not_attending" ? "not_attending" : "attending";
+  if (value === "not_attending" || value === "away") return value;
+
+  return "attending";
 }
 
 function normalizeStakeOwnerRequestStatus(value: unknown): StakeOwnerRequestStatus {

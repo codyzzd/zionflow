@@ -46,7 +46,7 @@ export type CaravanSeatMode = "quantity" | "vehicle";
 export type Weekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
 export type CalendarWeekStartsOn = "sunday" | "monday";
 export type DateFormat = "short" | "medium" | "long";
-export type ChurchActivityStatus = "attending" | "not_attending";
+export type ChurchActivityStatus = "attending" | "not_attending" | "away";
 export type MemberGeocodingStatus = "not_attempted" | "no_result" | "error" | "skipped";
 
 export const MEMBER_ORGANIZATION_OPTIONS = [

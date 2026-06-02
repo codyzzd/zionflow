@@ -37,8 +37,13 @@ const ignoreDuplicateValue = "__ignore__";
 const exampleCsv = ["nome", '"Bruno da Silva Gonçalves"', '"Gonçalves, Bruno da Silva"', '"Nome Ainda Não Cadastrado"'].join("\n");
 
 const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
+  away: "Afastado",
   attending: "Frequentando",
   not_attending: "Não frequentando",
+};
+
+const churchActivityStatusBadgeClassNames: Partial<Record<Member["churchActivityStatus"], string>> = {
+  away: "border-zinc-300 bg-zinc-100 text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100",
 };
 
 function buildInitialNameColumn(headers: string[]) {
@@ -152,7 +157,14 @@ export function MemberActivityStatusImportDialog() {
   );
   const protectedMemberIds = useMemo(() => new Set([...attendingMemberIds, ...ignoredDuplicateMemberIds]), [attendingMemberIds, ignoredDuplicateMemberIds]);
   const notAttendingMemberIds = useMemo(
-    () => (markMissingAsNotAttending ? membersByWard.filter((member) => !protectedMemberIds.has(member.id)).map((member) => member.id) : []),
+    () =>
+      markMissingAsNotAttending
+        ? membersByWard.filter((member) => !protectedMemberIds.has(member.id) && member.churchActivityStatus !== "away").map((member) => member.id)
+        : [],
+    [markMissingAsNotAttending, membersByWard, protectedMemberIds],
+  );
+  const preservedAwayMemberCount = useMemo(
+    () => (markMissingAsNotAttending ? membersByWard.filter((member) => !protectedMemberIds.has(member.id) && member.churchActivityStatus === "away").length : 0),
     [markMissingAsNotAttending, membersByWard, protectedMemberIds],
   );
   const canApply = Boolean(currentWard && parsedNames.length && nameColumn !== ignoredColumn && duplicatesResolved);
@@ -211,7 +223,7 @@ export function MemberActivityStatusImportDialog() {
 
     const ignoredCount = matchAnalysis.duplicates.filter((group) => duplicateResolutions[group.key] === ignoreDuplicateValue).length;
     toast.success(
-      `Frequência atualizada: ${attendingUpdatedCount} frequentando, ${notAttendingUpdatedCount} não frequentando, ${ignoredCount} duplicado(s) ignorado(s), ${matchAnalysis.notFound.length} não encontrado(s).`,
+      `Frequência atualizada: ${attendingUpdatedCount} frequentando, ${notAttendingUpdatedCount} não frequentando, ${preservedAwayMemberCount} afastado(s) preservado(s), ${ignoredCount} duplicado(s) ignorado(s), ${matchAnalysis.notFound.length} não encontrado(s).`,
     );
     handleOpenChange(false);
   }
@@ -305,6 +317,7 @@ export function MemberActivityStatusImportDialog() {
                   <span>{matchAnalysis.notFound.length} não encontrado(s)</span>
                   <span>{attendingMemberIds.size} serão marcados como frequentando</span>
                   {markMissingAsNotAttending ? <span>{notAttendingMemberIds.length} serão marcados como não frequentando</span> : null}
+                  {preservedAwayMemberCount ? <span>{preservedAwayMemberCount} afastado(s) preservado(s)</span> : null}
                 </div>
               </div>
 
@@ -347,7 +360,9 @@ export function MemberActivityStatusImportDialog() {
                               <div className="rounded-md border bg-muted/30 p-2" key={member.id}>
                                 <div className="flex items-center justify-between gap-2">
                                   <p className="truncate font-medium">{member.name}</p>
-                                  <Badge variant="outline">{churchActivityStatusLabels[member.churchActivityStatus]}</Badge>
+                                  <Badge className={churchActivityStatusBadgeClassNames[member.churchActivityStatus]} variant="outline">
+                                    {churchActivityStatusLabels[member.churchActivityStatus]}
+                                  </Badge>
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">{member.phone || "Telefone não informado"}</p>
                                 <p className="text-xs text-muted-foreground">

@@ -24,6 +24,7 @@ const sexLabels: Record<Member["sex"], string> = {
 };
 
 const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
+  away: "Afastado",
   attending: "Frequentando",
   not_attending: "Não frequentando",
 };
@@ -177,6 +178,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                       <SelectContent>
                         <SelectItem value="attending">Frequentando</SelectItem>
                         <SelectItem value="not_attending">Não frequentando</SelectItem>
+                        <SelectItem value="away">Afastado</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

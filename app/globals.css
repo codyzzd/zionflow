@@ -326,6 +326,7 @@ html.dark {
   background: transparent;
   display: flex;
   justify-content: center;
+  overflow: visible;
 }
 
 .member-map .leaflet-pane {
@@ -363,15 +364,57 @@ html.dark {
 }
 
 .member-map-marker span {
-  border: 2px solid var(--color-white);
-  border-radius: 999px;
   box-shadow: 0 6px 14px rgb(0 0 0 / 0.28);
   display: block;
-  height: 18px;
+  position: relative;
   transition:
     box-shadow 160ms ease,
     transform 160ms ease;
+}
+
+.member-map-marker-circle span {
+  border: 2px solid var(--color-white);
+  border-radius: 999px;
+  height: 18px;
   width: 18px;
+}
+
+.member-map-marker-classic-pin span,
+.member-map-marker-compact-pin span {
+  border: 2px solid var(--color-white);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+}
+
+.member-map-marker-classic-pin span {
+  height: 24px;
+  width: 24px;
+}
+
+.member-map-marker-compact-pin span {
+  height: 20px;
+  width: 20px;
+}
+
+.member-map-marker-classic-pin span::after,
+.member-map-marker-compact-pin span::after {
+  background: color-mix(in oklab, var(--color-white) 86%, transparent);
+  border-radius: 999px;
+  content: "";
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.member-map-marker-classic-pin span::after {
+  height: 7px;
+  width: 7px;
+}
+
+.member-map-marker-compact-pin span::after {
+  height: 5px;
+  width: 5px;
 }
 
 .member-map-marker-attending span {
@@ -380,6 +423,10 @@ html.dark {
 
 .member-map-marker-not-attending span {
   background: var(--color-red-500);
+}
+
+.member-map-marker-away span {
+  background: var(--color-zinc-950);
 }
 
 .member-map-marker-unknown span {
@@ -391,6 +438,72 @@ html.dark {
     0 0 0 4px color-mix(in oklab, var(--primary) 24%, transparent),
     0 8px 18px rgb(0 0 0 / 0.32);
   transform: scale(1.22);
+}
+
+.member-map-marker-selected.member-map-marker-classic-pin span,
+.member-map-marker-selected.member-map-marker-compact-pin span {
+  transform: rotate(-45deg) scale(1.18);
+}
+
+.member-map-cluster {
+  align-items: center;
+  background: transparent;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+}
+
+.member-map-cluster-count {
+  align-items: center;
+  border: 2px solid var(--color-white);
+  border-radius: 50% 50% 50% 0;
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--background) 50%, transparent),
+    0 10px 24px rgb(0 0 0 / 0.22);
+  color: var(--color-white);
+  display: flex;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  height: 30px;
+  justify-content: center;
+  line-height: 1;
+  min-width: 30px;
+  padding-inline: 0.25rem;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.28);
+  transform: rotate(-45deg);
+}
+
+.member-map-cluster-count > span {
+  transform: rotate(45deg);
+}
+
+.member-map-cluster-attending .member-map-cluster-count {
+  background: var(--color-emerald-500);
+}
+
+.member-map-cluster-not-attending .member-map-cluster-count {
+  background: var(--color-red-500);
+}
+
+.member-map-cluster-away .member-map-cluster-count {
+  background: var(--color-zinc-950);
+}
+
+.member-map-cluster-mixed-attendingnot-attending .member-map-cluster-count {
+  background: linear-gradient(135deg, var(--color-emerald-500) 0 48%, var(--color-red-500) 52% 100%);
+}
+
+.member-map-cluster-mixed-attendingaway .member-map-cluster-count {
+  background: linear-gradient(135deg, var(--color-emerald-500) 0 48%, var(--color-zinc-950) 52% 100%);
+}
+
+.member-map-cluster-mixed-not-attendingaway .member-map-cluster-count {
+  background: linear-gradient(135deg, var(--color-red-500) 0 48%, var(--color-zinc-950) 52% 100%);
+}
+
+.member-map-cluster-mixed-attendingnot-attendingaway .member-map-cluster-count {
+  background: conic-gradient(var(--color-emerald-500) 0 33%, var(--color-red-500) 33% 66%, var(--color-zinc-950) 66% 100%);
 }
 
 @media print {
