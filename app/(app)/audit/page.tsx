@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 
@@ -40,7 +40,7 @@ export default function AuditPage() {
             <CardDescription>Busca rápida por ação, módulo ou item afetado.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Input className="mb-4 max-w-md" placeholder="Buscar em logs" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <SearchInput className="mb-4 max-w-md" placeholder="Buscar em logs" value={search} onChange={(event) => setSearch(event.target.value)} />
             <Table>
               <TableHeader>
                 <TableRow>

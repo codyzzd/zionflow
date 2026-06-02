@@ -1,10 +1,12 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, MapPin, Trash2 } from "lucide-react";
+import { CheckSquare, Eye, MapPin, SlidersHorizontal, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
 
+import { MemberActivityStatusImportDialog } from "@/components/features/members/member-activity-status-import-dialog";
 import { MemberImportDialog } from "@/components/features/members/member-import-dialog";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -14,21 +16,37 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
+import { buildBrazilWhatsAppUrl } from "@/lib/phone";
 import { normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
 type DrawerMode = "create" | "view" | "edit";
 type DrawerTab = "data" | "talks";
+type CoordinatesFilter = "all" | "mapped" | "unmapped";
 
 const emptyMemberForm: MemberForm = {
   name: "",
@@ -40,8 +58,8 @@ const emptyMemberForm: MemberForm = {
   birthDate: "",
   organization: "",
   sex: "M",
-  sacramentTalkDuration: "5",
-  canSpeak: true,
+  sacramentTalkDuration: "not_designable",
+  canSpeak: false,
   canPreside: false,
   canConduct: false,
 };
@@ -51,16 +69,14 @@ const sexLabels: Record<Member["sex"], string> = {
   F: "Feminino",
 };
 
-const talkDurationLabels: Record<Member["sacramentTalkDuration"], string> = {
-  "5": "5 min",
-  "10": "10 min",
-  "15": "15 min",
-};
-
 const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
   attending: "Frequentando",
   not_attending: "Não frequentando",
 };
+
+function buildGoogleMapsAddressUrl(address: string) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
 
 function calculateAge(birthDate: string) {
   const normalizedDate = normalizeDateInput(birthDate);
@@ -92,6 +108,10 @@ function matchesAgeRange(age: number | null, minimum: number | null, maximum: nu
   if (maximum !== null && age > maximum) return false;
 
   return true;
+}
+
+function hasValidCoordinates(member: Member) {
+  return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
 }
 
 function parseCoordinateInput(value: string) {
@@ -126,11 +146,14 @@ export default function MembersPage() {
 
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<MemberForm>(emptyMemberForm);
+  const [memberSelectionActive, setMemberSelectionActive] = useState(false);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
   const [sexFilter, setSexFilter] = useState<"all" | Member["sex"]>("all");
+  const [activityStatusFilter, setActivityStatusFilter] = useState<"all" | Member["churchActivityStatus"]>("all");
+  const [coordinatesFilter, setCoordinatesFilter] = useState<CoordinatesFilter>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
   const [talkDurationFilter, setTalkDurationFilter] = useState<"all" | Member["sacramentTalkDuration"]>("all");
@@ -153,12 +176,16 @@ export default function MembersPage() {
           member.phone.toLowerCase().includes(normalizedSearch);
         const age = calculateAge(member.birthDate);
         const matchesSex = sexFilter === "all" || member.sex === sexFilter;
+        const matchesActivityStatus = activityStatusFilter === "all" || member.churchActivityStatus === activityStatusFilter;
+        const memberHasCoordinates = hasValidCoordinates(member);
+        const matchesCoordinates =
+          coordinatesFilter === "all" || (coordinatesFilter === "mapped" && memberHasCoordinates) || (coordinatesFilter === "unmapped" && !memberHasCoordinates);
         const matchesAge = matchesAgeRange(age, minimumAge, maximumAge);
         const matchesTalkDuration = talkDurationFilter === "all" || member.sacramentTalkDuration === talkDurationFilter;
 
-        return matchesSearch && matchesSex && matchesAge && matchesTalkDuration;
+        return matchesSearch && matchesSex && matchesActivityStatus && matchesCoordinates && matchesAge && matchesTalkDuration;
       }),
-    [maximumAge, membersByWard, minimumAge, search, sexFilter, talkDurationFilter],
+    [activityStatusFilter, coordinatesFilter, maximumAge, membersByWard, minimumAge, search, sexFilter, talkDurationFilter],
   );
 
   function handleDrawerOpenChange(open: boolean) {
@@ -215,6 +242,24 @@ export default function MembersPage() {
     });
 
     closeDrawer();
+  }
+
+  function updateSelectedMembers(selectedMembers: Member[], patch: Pick<Partial<MemberForm>, "churchActivityStatus" | "sacramentTalkDuration">) {
+    if (!selectedMembers.length) return;
+
+    selectedMembers.forEach((member) => {
+      saveMember(
+        {
+          id: member.id,
+          wardId: member.wardId,
+          ...memberToForm(member),
+          ...patch,
+        },
+        { silent: true },
+      );
+    });
+
+    toast.success(selectedMembers.length === 1 ? "Membro atualizado." : `${selectedMembers.length} membros atualizados.`);
   }
 
   const drawerTitle = drawerMode === "create" ? "Novo membro" : drawerMode === "edit" ? "Editar membro" : selectedMember?.name ?? "Membro";
@@ -283,6 +328,15 @@ export default function MembersPage() {
         ),
         cell: ({ row }) => {
           const phone = row.original.phone;
+          const whatsappUrl = buildBrazilWhatsAppUrl(phone);
+
+          if (whatsappUrl) {
+            return (
+              <a className="text-sm font-medium text-foreground underline-offset-4 hover:underline" href={whatsappUrl} rel="noreferrer" target="_blank">
+                {phone}
+              </a>
+            );
+          }
 
           return <span className="text-sm">{phone || "Telefone não informado"}</span>;
         },
@@ -298,7 +352,22 @@ export default function MembersPage() {
         cell: ({ row }) => {
           const address = row.original.address;
 
-          return <span className="block max-w-sm truncate text-sm">{address || "Endereço não informado"}</span>;
+          if (!address) {
+            return <span className="block max-w-sm truncate text-sm text-muted-foreground">Endereço não informado</span>;
+          }
+
+          return (
+            <a
+              aria-label={`Abrir ${address} no Google Maps`}
+              className="block max-w-sm truncate text-sm text-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              href={buildGoogleMapsAddressUrl(address)}
+              rel="noreferrer"
+              target="_blank"
+              title={address}
+            >
+              {address}
+            </a>
+          );
         },
       },
       {
@@ -332,7 +401,7 @@ export default function MembersPage() {
         cell: ({ row }) => {
           const member = row.original;
 
-          return <Badge variant="secondary">{talkDurationLabels[member.sacramentTalkDuration]}</Badge>;
+          return <Badge variant="secondary">{talkDurationShortLabels[member.sacramentTalkDuration]}</Badge>;
         },
       },
       {
@@ -393,6 +462,7 @@ export default function MembersPage() {
                     Mapear endereços
                   </Link>
                 </Button>
+                <MemberActivityStatusImportDialog />
                 <MemberImportDialog />
                 <Button onClick={openCreateDrawer} size="lg">
                   Novo membro
@@ -412,13 +482,23 @@ export default function MembersPage() {
             getRowId={(member) => member.id}
             toolbar={
               <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-                <Input
+                {canManageMembers ? (
+                  <Button
+                    aria-label={memberSelectionActive ? "Cancelar seleção de membros" : "Selecionar membros"}
+                    onClick={() => setMemberSelectionActive((current) => !current)}
+                    size="icon-sm"
+                    variant={memberSelectionActive ? "secondary" : "outline"}
+                  >
+                    {memberSelectionActive ? <X /> : <CheckSquare />}
+                  </Button>
+                ) : null}
+                <SearchInput
                   className="xl:w-80"
                   placeholder="Buscar por nome, telefone ou endereço"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                 />
-                <div className="grid gap-2 sm:grid-cols-4 xl:flex xl:items-center">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6 xl:flex xl:items-center">
                   <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
                     <SelectTrigger className="w-full xl:w-40">
                       <SelectValue />
@@ -427,6 +507,29 @@ export default function MembersPage() {
                       <SelectItem value="all">Todos os sexos</SelectItem>
                       <SelectItem value="M">Masculino</SelectItem>
                       <SelectItem value="F">Feminino</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={activityStatusFilter}
+                    onValueChange={(value) => setActivityStatusFilter(value as "all" | Member["churchActivityStatus"])}
+                  >
+                    <SelectTrigger className="w-full xl:w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos status</SelectItem>
+                      <SelectItem value="attending">{churchActivityStatusLabels.attending}</SelectItem>
+                      <SelectItem value="not_attending">{churchActivityStatusLabels.not_attending}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={coordinatesFilter} onValueChange={(value) => setCoordinatesFilter(value as CoordinatesFilter)}>
+                    <SelectTrigger className="w-full xl:w-44">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos mapas</SelectItem>
+                      <SelectItem value="mapped">Com coordenadas</SelectItem>
+                      <SelectItem value="unmapped">Sem coordenadas</SelectItem>
                     </SelectContent>
                   </Select>
                   <Input
@@ -456,9 +559,11 @@ export default function MembersPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos discursos</SelectItem>
-                      <SelectItem value="5">5 min</SelectItem>
-                      <SelectItem value="10">10 min</SelectItem>
-                      <SelectItem value="15">15 min</SelectItem>
+                      {TALK_DURATION_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.shortLabel}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -467,18 +572,61 @@ export default function MembersPage() {
             renderSelectedActions={
               canManageMembers
                 ? (selectedMembers) => (
-                    <Button
-                      disabled={!selectedMembers.length}
-                      onClick={() => deleteMembers(selectedMembers.map((member) => member.id))}
-                      size="sm"
-                      variant="destructive"
-                    >
-                      <Trash2 />
-                      Apagar selecionados
-                    </Button>
+                    <>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button disabled={!selectedMembers.length} size="sm" variant="outline">
+                              <SlidersHorizontal />
+                              Alterar selecionados
+                            </Button>
+                          }
+                        />
+                        <DropdownMenuContent align="start" className="w-56">
+                          <DropdownMenuGroup>
+                            <DropdownMenuLabel>{selectedMembers.length} selecionado(s)</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger>Discurso</DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-44">
+                                {TALK_DURATION_OPTIONS.map((option) => (
+                                  <DropdownMenuItem key={option.value} onClick={() => updateSelectedMembers(selectedMembers, { sacramentTalkDuration: option.value })}>
+                                    {option.shortLabel}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger>Frequência</DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-44">
+                                <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "attending" })}>
+                                  {churchActivityStatusLabels.attending}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "not_attending" })}>
+                                  {churchActivityStatusLabels.not_attending}
+                                </DropdownMenuItem>
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <Button
+                        disabled={!selectedMembers.length}
+                        onClick={() => deleteMembers(selectedMembers.map((member) => member.id))}
+                        size="sm"
+                        variant="destructive"
+                      >
+                        <Trash2 />
+                        Apagar selecionados
+                      </Button>
+                    </>
                   )
                 : undefined
             }
+            onSelectionActiveChange={setMemberSelectionActive}
+            selectionActive={memberSelectionActive}
+            selectionMode="optional"
+            showSelectionToggle={false}
           />
         </div>
 
@@ -534,7 +682,7 @@ export default function MembersPage() {
                           <Input
                             disabled={isReadOnly}
                             inputMode="tel"
-                            placeholder="(00) 00000-0000"
+                            placeholder="ex: (00) 00000-0000"
                             value={form.phone}
                             onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
                           />
@@ -559,7 +707,7 @@ export default function MembersPage() {
                           <Label>Endereço</Label>
                           <Input
                             disabled={isReadOnly}
-                            placeholder="Rua, número, bairro, cidade"
+                            placeholder="ex: Rua, número, bairro, cidade"
                             value={form.address}
                             onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
                           />
@@ -617,9 +765,11 @@ export default function MembersPage() {
                               <SelectValue placeholder="Selecione o tempo" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="5">5 minutos</SelectItem>
-                              <SelectItem value="10">10 minutos</SelectItem>
-                              <SelectItem value="15">15 minutos</SelectItem>
+                              {TALK_DURATION_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>

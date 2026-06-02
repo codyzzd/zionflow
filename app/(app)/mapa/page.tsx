@@ -1,6 +1,6 @@
 "use client";
 
-import { MapPin, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Search, Users } from "lucide-react";
+import { ChevronDown, MapPin, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Search, SlidersHorizontal, Users } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -11,11 +11,12 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
-import { MEMBER_ORGANIZATION_OPTIONS, type Member } from "@/types/domain";
+import { cn, normalizeDateInput } from "@/lib/utils";
+import type { Member } from "@/types/domain";
 
 const MemberMapCanvas = dynamic(() => import("@/components/features/members/member-map-canvas").then((mod) => mod.MemberMapCanvas), {
   loading: () => <div className="flex min-h-[420px] items-center justify-center rounded-lg border text-sm text-muted-foreground">Carregando mapa...</div>,
@@ -24,6 +25,7 @@ const MemberMapCanvas = dynamic(() => import("@/components/features/members/memb
 
 type ActivityFilter = "all" | Member["churchActivityStatus"];
 type MappingFilter = "all" | "mapped" | "unmapped";
+type SexFilter = "all" | Member["sex"];
 type MappedMember = Member & { latitude: number; longitude: number };
 
 const activityLabels: Record<Member["churchActivityStatus"], string> = {
@@ -35,7 +37,7 @@ const activityBadgeClassNames: Record<Member["churchActivityStatus"], string> = 
   attending: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
   not_attending: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
 };
-const mapSelectContentClassName = "z-[80]";
+const mapSelectContentClassName = "z-[1100]";
 
 function isMappedMember(member: Member): member is MappedMember {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
@@ -45,18 +47,55 @@ function normalizeSearch(value: string) {
   return value.trim().toLocaleLowerCase("pt-BR");
 }
 
+function calculateAge(birthDate: string) {
+  const normalizedDate = normalizeDateInput(birthDate);
+  if (!normalizedDate) return null;
+
+  const today = new Date();
+  const birth = new Date(`${normalizedDate}T12:00:00`);
+  let age = today.getFullYear() - birth.getFullYear();
+  const birthdayThisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+
+  if (today < birthdayThisYear) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
+function parseAgeFilterValue(value: string) {
+  if (!value.trim()) return null;
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function matchesAgeRange(age: number | null, minimum: number | null, maximum: number | null) {
+  if (minimum === null && maximum === null) return true;
+  if (age === null) return false;
+  if (minimum !== null && age < minimum) return false;
+  if (maximum !== null && age > maximum) return false;
+
+  return true;
+}
+
 export default function MembersMapPage() {
   const { currentWard, membersByWard } = useAppContext();
   const [search, setSearch] = useState("");
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
   const [mappingFilter, setMappingFilter] = useState<MappingFilter>("all");
-  const [organizationFilter, setOrganizationFilter] = useState("all");
+  const [sexFilter, setSexFilter] = useState<SexFilter>("all");
+  const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
+  const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState<string | undefined>();
   const [fullScreen, setFullScreen] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [fullScreenFiltersOpen, setFullScreenFiltersOpen] = useState(false);
 
   const mappedMembers = useMemo(() => membersByWard.filter(isMappedMember), [membersByWard]);
   const unmappedMembers = useMemo(() => membersByWard.filter((member) => !isMappedMember(member)), [membersByWard]);
+  const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
+  const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
 
   const filteredMembers = useMemo(() => {
     const normalizedSearch = normalizeSearch(search);
@@ -67,20 +106,27 @@ export default function MembersMapPage() {
         !normalizedSearch ||
         member.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
         member.address.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
-        member.organization.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
+        member.phone.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
+      const age = calculateAge(member.birthDate);
       const matchesActivity = activityFilter === "all" || member.churchActivityStatus === activityFilter;
-      const matchesOrganization = organizationFilter === "all" || member.organization === organizationFilter;
       const matchesMapping = mappingFilter === "all" || (mappingFilter === "mapped" ? mapped : !mapped);
+      const matchesSex = sexFilter === "all" || member.sex === sexFilter;
+      const matchesAge = matchesAgeRange(age, minimumAge, maximumAge);
 
-      return matchesSearch && matchesActivity && matchesOrganization && matchesMapping;
+      return matchesSearch && matchesActivity && matchesMapping && matchesSex && matchesAge;
     });
-  }, [activityFilter, mappingFilter, membersByWard, organizationFilter, search]);
+  }, [activityFilter, mappingFilter, maximumAge, membersByWard, minimumAge, search, sexFilter]);
 
   const filteredMappedMembers = useMemo(() => filteredMembers.filter(isMappedMember), [filteredMembers]);
   const filteredUnmappedMembers = useMemo(() => filteredMembers.filter((member) => !isMappedMember(member)), [filteredMembers]);
 
   function selectMember(member: Member) {
     setSelectedMemberId(member.id);
+  }
+
+  function enterFullScreen() {
+    setFullScreenFiltersOpen(false);
+    setFullScreen(true);
   }
 
   const stats = (
@@ -91,14 +137,42 @@ export default function MembersMapPage() {
     </div>
   );
 
+  const subtleStats = (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+      <span className="tabular-nums">{membersByWard.length} membros</span>
+      <span aria-hidden="true">·</span>
+      <span className="tabular-nums">{mappedMembers.length} mapeados</span>
+      <span aria-hidden="true">·</span>
+      <span className="tabular-nums">{unmappedMembers.length} não mapeados</span>
+    </div>
+  );
+
   const filters = (
-    <div className={cn("grid gap-3 rounded-lg border bg-card p-3", fullScreen ? "grid-cols-1" : "lg:grid-cols-[minmax(240px,1fr)_220px_220px_180px]")}>
+    <div
+      className={cn(
+        "grid gap-3 rounded-lg border bg-card p-3",
+        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_150px_160px_115px_115px_160px]",
+      )}
+    >
       <div>
         <Label className="text-xs">Busca</Label>
         <div className="relative mt-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Nome, endereço ou organização" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <Input className="pl-9" placeholder="Nome, telefone ou endereço" value={search} onChange={(event) => setSearch(event.target.value)} />
         </div>
+      </div>
+      <div>
+        <Label className="text-xs">Sexo</Label>
+        <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as SexFilter)}>
+          <SelectTrigger className="mt-1 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className={mapSelectContentClassName}>
+            <SelectItem value="all">Todos os sexos</SelectItem>
+            <SelectItem value="M">Masculino</SelectItem>
+            <SelectItem value="F">Feminino</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div>
         <Label className="text-xs">Condição</Label>
@@ -114,20 +188,28 @@ export default function MembersMapPage() {
         </Select>
       </div>
       <div>
-        <Label className="text-xs">Organização</Label>
-        <Select value={organizationFilter} onValueChange={setOrganizationFilter}>
-          <SelectTrigger className="mt-1 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className={mapSelectContentClassName}>
-            <SelectItem value="all">Todas</SelectItem>
-            {MEMBER_ORGANIZATION_OPTIONS.map((organization) => (
-              <SelectItem key={organization} value={organization}>
-                {organization}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Label className="text-xs">Idade mín.</Label>
+        <Input
+          className="mt-1"
+          inputMode="numeric"
+          min={0}
+          placeholder="Idade mín."
+          type="number"
+          value={minimumAgeFilter}
+          onChange={(event) => setMinimumAgeFilter(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label className="text-xs">Idade máx.</Label>
+        <Input
+          className="mt-1"
+          inputMode="numeric"
+          min={0}
+          placeholder="Idade máx."
+          type="number"
+          value={maximumAgeFilter}
+          onChange={(event) => setMaximumAgeFilter(event.target.value)}
+        />
       </div>
       <div>
         <Label className="text-xs">Mapeamento</Label>
@@ -145,6 +227,21 @@ export default function MembersMapPage() {
     </div>
   );
 
+  const fullScreenFilters = (
+    <Collapsible className="group/map-filters" onOpenChange={setFullScreenFiltersOpen} open={fullScreenFiltersOpen}>
+      <CollapsibleTrigger asChild>
+        <Button className="h-9 w-full justify-between px-3 text-sm" variant="outline">
+          <span className="inline-flex items-center gap-2">
+            <SlidersHorizontal className="size-4" />
+            Filtros
+          </span>
+          <ChevronDown className="size-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]/map-filters:rotate-180" />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-3">{filters}</CollapsibleContent>
+    </Collapsible>
+  );
+
   const memberList = (
     <aside
       className={cn(
@@ -152,9 +249,9 @@ export default function MembersMapPage() {
         fullScreen ? "min-h-0 flex-1 shadow-xl" : "max-h-[calc(100dvh-26rem)] xl:h-full xl:min-h-0",
       )}
     >
-      <div className="border-b px-4 py-3">
+      <div className={cn("border-b px-4", fullScreen ? "py-2.5" : "py-3")}>
         <p className="font-medium">Membros filtrados</p>
-        <p className="text-xs text-muted-foreground">
+        <p className={cn("text-muted-foreground", fullScreen ? "text-[11px]" : "text-xs")}>
           {filteredMappedMembers.length} mapeados, {filteredUnmappedMembers.length} não mapeados
         </p>
       </div>
@@ -220,8 +317,8 @@ export default function MembersMapPage() {
                 </div>
               </div>
               <div className="space-y-3">
-                {stats}
-                {filters}
+                {subtleStats}
+                {fullScreenFilters}
               </div>
             </div>
             {memberList}
@@ -242,7 +339,7 @@ export default function MembersMapPage() {
 
         <div className="space-y-4">
           <div className="flex justify-end">
-            <Button onClick={() => setFullScreen(true)} variant="outline">
+            <Button onClick={enterFullScreen} variant="outline">
               <Maximize2 />
               Tela cheia
             </Button>

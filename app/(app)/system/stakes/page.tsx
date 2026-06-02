@@ -15,6 +15,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TableActionButton } from "@/components/ui/table-action-button";
@@ -249,7 +250,7 @@ export default function SystemStakesPage() {
           enableColumnVisibility
           toolbar={
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-              <Input
+              <SearchInput
                 className="lg:max-w-lg"
                 placeholder="Buscar por estaca, cidade ou estado"
                 value={search}

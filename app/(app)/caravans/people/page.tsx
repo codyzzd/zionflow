@@ -12,6 +12,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -387,7 +388,7 @@ export default function CaravanPeoplePage() {
           getRowId={(person) => person.id}
           toolbar={
             <div className="flex flex-col gap-3 md:flex-row">
-              <Input
+              <SearchInput
                 className="md:max-w-lg"
                 placeholder="Buscar por nome, documento, telefone ou ala"
                 value={search}

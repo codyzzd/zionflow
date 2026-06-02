@@ -14,6 +14,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TableActionButton } from "@/components/ui/table-action-button";
@@ -299,7 +300,7 @@ export default function CaravansPage() {
           getRowId={(caravan) => caravan.id}
           toolbar={
             <div className="flex flex-col gap-3 md:flex-row">
-              <Input className="md:max-w-lg" placeholder="Buscar por destino" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <SearchInput className="md:max-w-lg" placeholder="Buscar por destino" value={search} onChange={(event) => setSearch(event.target.value)} />
               <Select value={statusFilter} onValueChange={(value) => setStatusFilter((value as CaravanStatusFilter) ?? "active")}>
                 <SelectTrigger className="w-full md:w-[220px]">
                   <SelectValue placeholder="Filtrar caravanas" />

@@ -16,6 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -443,7 +444,7 @@ export default function SystemUsersPage() {
         <div className="space-y-6">
           <div className="space-y-4">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_220px] lg:items-center">
-              <Input
+              <SearchInput
                 placeholder="Buscar por nome, e-mail, telefone, membro, ala ou estaca"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}

@@ -21,7 +21,7 @@ declare module "@tanstack/react-table" {
     label?: string;
   }
 }
-import { SlidersHorizontal } from "lucide-react";
+import { CheckSquare, SlidersHorizontal, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -42,8 +42,13 @@ type DataTableProps<TData, TValue> = {
   enableColumnVisibility?: boolean;
   enableRowSelection?: boolean;
   getRowId?: (originalRow: TData, index: number, parent?: Row<TData>) => string;
+  onSelectionActiveChange?: (active: boolean) => void;
   pageSize?: number;
   renderSelectedActions?: (selectedRows: TData[]) => React.ReactNode;
+  selectionActive?: boolean;
+  selectionColumnId?: string;
+  selectionMode?: "always" | "optional";
+  showSelectionToggle?: boolean;
   toolbar?: React.ReactNode;
 };
 
@@ -63,14 +68,54 @@ export function DataTable<TData, TValue>({
   enableColumnVisibility,
   enableRowSelection,
   getRowId,
+  onSelectionActiveChange,
   pageSize = 10,
   renderSelectedActions,
+  selectionActive: controlledSelectionActive,
+  selectionColumnId = "select",
+  selectionMode = "always",
+  showSelectionToggle = true,
   toolbar,
 }: DataTableProps<TData, TValue>) {
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
   const rowSelectionEnabled = enableRowSelection ?? Boolean(renderSelectedActions);
+  const selectionIsOptional = rowSelectionEnabled && selectionMode === "optional";
+  const [uncontrolledSelectionActive, setUncontrolledSelectionActive] = React.useState(!selectionIsOptional);
+  const selectionActive = controlledSelectionActive ?? uncontrolledSelectionActive;
+  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>(() =>
+    selectionIsOptional ? { [selectionColumnId]: false } : {},
+  );
+
+  React.useEffect(() => {
+    if (!selectionIsOptional) {
+      setUncontrolledSelectionActive(rowSelectionEnabled);
+      return;
+    }
+
+    setUncontrolledSelectionActive(false);
+    onSelectionActiveChange?.(false);
+    setRowSelection({});
+    setColumnVisibility((current) => ({ ...current, [selectionColumnId]: false }));
+  }, [onSelectionActiveChange, rowSelectionEnabled, selectionColumnId, selectionIsOptional]);
+
+  React.useEffect(() => {
+    if (!selectionIsOptional) return;
+
+    setColumnVisibility((current) => ({ ...current, [selectionColumnId]: selectionActive }));
+    if (!selectionActive) {
+      setRowSelection({});
+    }
+  }, [selectionActive, selectionColumnId, selectionIsOptional]);
+
+  function setSelectionModeActive(active: boolean) {
+    setUncontrolledSelectionActive(active);
+    onSelectionActiveChange?.(active);
+  }
+
+  function toggleSelectionMode() {
+    setSelectionModeActive(!selectionActive);
+  }
 
   // TanStack Table is intentionally used here to match the shadcn data table pattern.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -100,42 +145,51 @@ export function DataTable<TData, TValue>({
   const hideableColumns = table.getAllLeafColumns().filter((column) => column.getCanHide());
 
   const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
+  const visibleColumnCount = table.getVisibleLeafColumns().length;
 
-  const showToolbar = Boolean(toolbar) || (enableColumnVisibility && hideableColumns.length > 0);
+  const showToolbar = Boolean(toolbar) || (selectionIsOptional && showSelectionToggle) || (enableColumnVisibility && hideableColumns.length > 0);
+  const showSelectionSummary = rowSelectionEnabled && (!selectionIsOptional || selectionActive);
 
   return (
     <div className="space-y-4">
       {showToolbar ? (
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex-1">{toolbar}</div>
-          {enableColumnVisibility && hideableColumns.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button size="sm" variant="outline">
-                    <SlidersHorizontal />
-                    Colunas
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Exibir colunas</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {hideableColumns.map((column) => (
-                    <DropdownMenuCheckboxItem
-                      key={column.id}
-                      checked={column.getIsVisible()}
-                      onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                      closeOnClick={false}
-                    >
-                      {getColumnLabel(column)}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {selectionIsOptional && showSelectionToggle ? (
+              <Button aria-label={selectionActive ? "Cancelar seleção" : "Selecionar linhas"} onClick={toggleSelectionMode} size="icon-sm" variant={selectionActive ? "secondary" : "outline"}>
+                {selectionActive ? <X /> : <CheckSquare />}
+              </Button>
+            ) : null}
+            {enableColumnVisibility && hideableColumns.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button size="sm" variant="outline">
+                      <SlidersHorizontal />
+                      Colunas
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Exibir colunas</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {hideableColumns.map((column) => (
+                      <DropdownMenuCheckboxItem
+                        key={column.id}
+                        checked={column.getIsVisible()}
+                        onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                        closeOnClick={false}
+                      >
+                        {getColumnLabel(column)}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -163,7 +217,7 @@ export function DataTable<TData, TValue>({
               ))
             ) : (
               <TableRow>
-                <TableCell className="h-24 text-center text-muted-foreground" colSpan={columns.length}>
+                <TableCell className="h-24 text-center text-muted-foreground" colSpan={visibleColumnCount}>
                   {emptyMessage}
                 </TableCell>
               </TableRow>
@@ -174,7 +228,7 @@ export function DataTable<TData, TValue>({
 
       <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
         <div className="flex min-h-8 flex-wrap items-center gap-3 text-muted-foreground">
-          <p className="tabular-nums">{rowSelectionEnabled ? `${selectedRows.length} de ${data.length} linha(s) selecionada(s).` : `${data.length} linha(s).`}</p>
+          <p className="tabular-nums">{showSelectionSummary ? `${selectedRows.length} de ${data.length} linha(s) selecionada(s).` : `${data.length} linha(s).`}</p>
           {renderSelectedActions && selectedRows.length ? <div className="flex items-center gap-2">{renderSelectedActions(selectedRows)}</div> : null}
         </div>
 

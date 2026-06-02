@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { TALK_DURATION_OPTIONS, talkDurationLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory } from "@/lib/member-talk-history";
 import { normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
@@ -20,12 +21,6 @@ import type { Member } from "@/types/domain";
 const sexLabels: Record<Member["sex"], string> = {
   M: "Masculino",
   F: "Feminino",
-};
-
-const talkDurationLabels: Record<Member["sacramentTalkDuration"], string> = {
-  "5": "5 minutos",
-  "10": "10 minutos",
-  "15": "15 minutos",
 };
 
 const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
@@ -165,7 +160,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                     <Label>Telefone</Label>
                     <Input
                       inputMode="tel"
-                      placeholder="(00) 00000-0000"
+                      placeholder="ex: (00) 00000-0000"
                       value={form.phone}
                       onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
                     />
@@ -188,7 +183,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                   <div className="sm:col-span-2">
                     <Label>Endereço</Label>
                     <Input
-                      placeholder="Rua, número, bairro, cidade"
+                      placeholder="ex: Rua, número, bairro, cidade"
                       value={form.address}
                       onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
                     />
@@ -237,9 +232,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ memberI
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="5">5 minutos</SelectItem>
-                        <SelectItem value="10">10 minutos</SelectItem>
-                        <SelectItem value="15">15 minutos</SelectItem>
+                        {TALK_DURATION_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

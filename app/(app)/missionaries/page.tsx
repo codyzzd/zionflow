@@ -13,6 +13,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
@@ -287,7 +288,7 @@ export default function MissionariesPage() {
 
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <Input
+            <SearchInput
               className="md:max-w-lg"
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Buscar por dupla, área ou missionário"
@@ -326,7 +327,7 @@ export default function MissionariesPage() {
                   <Input
                     disabled={isReadOnly}
                     onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Elders Centro"
+                    placeholder="ex: Elders Centro"
                     value={form.name}
                   />
                 </div>
@@ -374,7 +375,7 @@ export default function MissionariesPage() {
                   <Input
                     disabled={isReadOnly}
                     onChange={(event) => setForm((current) => ({ ...current, area: event.target.value }))}
-                    placeholder="Centro"
+                    placeholder="ex: Centro"
                     value={form.area}
                   />
                 </div>
@@ -385,7 +386,7 @@ export default function MissionariesPage() {
                     <Input
                       disabled={isReadOnly}
                       onChange={(event) => setForm((current) => ({ ...current, missionaryOne: event.target.value }))}
-                      placeholder="Elder Silva"
+                      placeholder="ex: Elder Silva"
                       value={form.missionaryOne}
                     />
                   </div>
@@ -394,7 +395,7 @@ export default function MissionariesPage() {
                     <Input
                       disabled={isReadOnly}
                       onChange={(event) => setForm((current) => ({ ...current, missionaryTwo: event.target.value }))}
-                      placeholder="Elder Santos"
+                      placeholder="ex: Elder Santos"
                       value={form.missionaryTwo}
                     />
                   </div>

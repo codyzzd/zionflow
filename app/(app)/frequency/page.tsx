@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
@@ -345,7 +346,7 @@ export default function FrequencyPage() {
           </div>
 
           <div className="space-y-4">
-            <Input
+            <SearchInput
               className="md:max-w-lg"
               placeholder="Buscar por data, ata ou frequência"
               value={search}

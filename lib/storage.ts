@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { createEmptyMinuteForm, createSeedDatabase } from "@/lib/demo-data";
 import { normalizePermissionSet, normalizeUserAccessLevel, permissionsFromLegacyRole } from "@/lib/access-control";
+import { canSpeakWithTalkDuration, normalizeTalkDuration } from "@/lib/member-talk-duration";
 import { DEFAULT_HYMN_BOOK_IDS, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
 import type {
@@ -287,9 +288,8 @@ function normalizeMember(member: Member): Member {
     birthDate: normalizeDateInput(member.birthDate ?? ""),
     organization,
     sex: member.sex === "F" ? "F" : "M",
-    sacramentTalkDuration:
-      member.sacramentTalkDuration === "10" || member.sacramentTalkDuration === "15" ? member.sacramentTalkDuration : "5",
-    canSpeak: typeof member.canSpeak === "boolean" ? member.canSpeak : true,
+    sacramentTalkDuration: normalizeTalkDuration(member.sacramentTalkDuration),
+    canSpeak: canSpeakWithTalkDuration(normalizeTalkDuration(member.sacramentTalkDuration)),
     canPreside: typeof member.canPreside === "boolean" ? member.canPreside : isBishopric,
     canConduct: typeof member.canConduct === "boolean" ? member.canConduct : isBishopric || isSecretary,
     ...normalizeRecordMetadata(member),
@@ -1151,6 +1151,25 @@ export async function saveMinuteSnapshot(minute: SacramentMinute): Promise<void>
     },
     { onConflict: "id" },
   );
+
+  if (minuteError) {
+    throw minuteError;
+  }
+}
+
+export async function deleteMinuteSnapshot(minuteId: string): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const supabase = createClient();
+  const { error: versionsError } = await supabase.from("minute_versions").delete().eq("minute_id", minuteId);
+
+  if (versionsError) {
+    throw versionsError;
+  }
+
+  const { error: minuteError } = await supabase.from("sacrament_minutes").delete().eq("id", minuteId);
 
   if (minuteError) {
     throw minuteError;

@@ -11,7 +11,7 @@ import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
@@ -144,7 +144,7 @@ export default function CaravansPage() {
           emptyMessage="Nenhuma caravana disponível com os filtros atuais."
           enableColumnVisibility
           getRowId={(caravan) => caravan.id}
-          toolbar={<Input className="md:max-w-lg" placeholder="Buscar por destino" value={search} onChange={(event) => setSearch(event.target.value)} />}
+          toolbar={<SearchInput className="md:max-w-lg" placeholder="Buscar por destino" value={search} onChange={(event) => setSearch(event.target.value)} />}
         />
       </div>
     </PermissionGuard>

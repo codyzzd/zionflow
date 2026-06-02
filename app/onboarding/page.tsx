@@ -285,22 +285,22 @@ export default function OnboardingPage() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="wardName">Nome da ala</Label>
-                <Input id="wardName" value={wardName} onChange={(event) => setWardName(event.target.value)} placeholder="Ala Torre" required />
+                <Input id="wardName" value={wardName} onChange={(event) => setWardName(event.target.value)} placeholder="ex: Ala Torre" required />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="wardCity">Cidade</Label>
-                <Input id="wardCity" value={wardCity} onChange={(event) => setWardCity(event.target.value)} placeholder="Fortaleza" required />
+                <Input id="wardCity" value={wardCity} onChange={(event) => setWardCity(event.target.value)} placeholder="ex: Fortaleza" required />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="wardState">Estado</Label>
-                <Input id="wardState" value={wardState} onChange={(event) => setWardState(event.target.value)} placeholder="CE" required />
+                <Input id="wardState" value={wardState} onChange={(event) => setWardState(event.target.value)} placeholder="ex: CE" required />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="wardCountry">País</Label>
-                <Input id="wardCountry" value={wardCountry} onChange={(event) => setWardCountry(event.target.value)} placeholder="Brasil" required />
+                <Input id="wardCountry" value={wardCountry} onChange={(event) => setWardCountry(event.target.value)} placeholder="ex: Brasil" required />
               </div>
 
               <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground md:col-span-2">
@@ -339,7 +339,7 @@ export default function OnboardingPage() {
                 className="pl-9"
                 value={wardSearch}
                 onChange={(event) => setWardSearch(event.target.value)}
-                placeholder="Ala Torre"
+                placeholder="ex: Ala Torre"
               />
             </div>
           </div>

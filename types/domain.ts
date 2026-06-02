@@ -151,7 +151,7 @@ export interface Member extends RecordMetadata {
   birthDate: string;
   organization: string;
   sex: "M" | "F";
-  sacramentTalkDuration: "5" | "10" | "15";
+  sacramentTalkDuration: "not_designable" | "5" | "10" | "15";
   canSpeak: boolean;
   canPreside: boolean;
   canConduct: boolean;

@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TALK_DURATION_OPTIONS } from "@/lib/member-talk-duration";
 import { cn, normalizeDateInput, nowIso } from "@/lib/utils";
 import type { Member } from "@/types/domain";
 
@@ -28,6 +30,7 @@ type MemberGeocodeState = {
   skipped?: boolean;
   status: MemberGeocodeStatus;
 };
+type AddressSaveStatus = "idle" | "saving" | "saved";
 type GeocodingFilter = "pending" | "not_attempted" | "no_result" | "error" | "skipped";
 type RunGeocodeOptions = {
   persistFound?: boolean;
@@ -41,12 +44,6 @@ const geocodingFilterLabels: Record<GeocodingFilter, string> = {
   error: "Erro",
   skipped: "Pulados",
 };
-const talkDurationLabels: Record<Member["sacramentTalkDuration"], string> = {
-  "5": "5 min",
-  "10": "10 min",
-  "15": "15 min",
-};
-
 function isMappedMember(member: Member) {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
 }
@@ -112,10 +109,12 @@ export function MemberGeocodingWorkspace() {
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [statesByMemberId, setStatesByMemberId] = useState<Record<string, MemberGeocodeState>>({});
   const [addressDraftsByMemberId, setAddressDraftsByMemberId] = useState<Record<string, string>>({});
+  const [addressSaveStatusesByMemberId, setAddressSaveStatusesByMemberId] = useState<Record<string, AddressSaveStatus>>({});
   const [batchRunning, setBatchRunning] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<GeocodingFilter>("pending");
   const [sexFilter, setSexFilter] = useState<"all" | Member["sex"]>("all");
+  const [activityStatusFilter, setActivityStatusFilter] = useState<"all" | Member["churchActivityStatus"]>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
   const [talkDurationFilter, setTalkDurationFilter] = useState<"all" | Member["sacramentTalkDuration"]>("all");
@@ -143,17 +142,21 @@ export function MemberGeocodingWorkspace() {
           address.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
         const matchesStatus = statusFilter === "pending" || memberGeocodingStatus(member) === statusFilter;
         const matchesSex = sexFilter === "all" || member.sex === sexFilter;
+        const matchesActivityStatus = activityStatusFilter === "all" || member.churchActivityStatus === activityStatusFilter;
         const matchesAge = matchesAgeRange(calculateAge(member.birthDate), minimumAge, maximumAge);
         const matchesTalkDuration = talkDurationFilter === "all" || member.sacramentTalkDuration === talkDurationFilter;
 
-        return matchesSearch && matchesStatus && matchesSex && matchesAge && matchesTalkDuration;
+        return matchesSearch && matchesStatus && matchesSex && matchesActivityStatus && matchesAge && matchesTalkDuration;
       }),
-    [addressDraftsByMemberId, candidates, maximumAge, minimumAge, search, sexFilter, statusFilter, talkDurationFilter],
+    [activityStatusFilter, addressDraftsByMemberId, candidates, maximumAge, minimumAge, search, sexFilter, statusFilter, talkDurationFilter],
   );
   const selectedMembers = useMemo(() => filteredCandidates.filter((member) => selectedIds.has(member.id)), [filteredCandidates, selectedIds]);
   const selectedMember = filteredCandidates.find((member) => member.id === selectedMemberId) ?? selectedMembers[0] ?? filteredCandidates[0];
   const selectedState = selectedMember ? getMemberDisplayState(selectedMember, statesByMemberId) : undefined;
   const selectedAddress = selectedMember ? addressDraftsByMemberId[selectedMember.id] ?? selectedMember.address : "";
+  const selectedNormalizedAddress = normalizeAddress(selectedAddress);
+  const selectedAddressDirty = selectedMember ? selectedNormalizedAddress !== normalizeAddress(selectedMember.address) : false;
+  const selectedAddressSaveStatus = selectedMember ? addressSaveStatusesByMemberId[selectedMember.id] ?? "idle" : "idle";
   const selectedMembersWithEmptyAddress = selectedMembers.filter((member) => !normalizeAddress(addressDraftsByMemberId[member.id] ?? member.address));
   const selectedProcessedCount = selectedMembers.filter((member) => processedStatuses.has(getMemberDisplayState(member, statesByMemberId).status)).length;
   const foundCount = filteredCandidates.filter((member) => getMemberDisplayState(member, statesByMemberId).status === "found").length;
@@ -196,6 +199,13 @@ export function MemberGeocodingWorkspace() {
 
   function updateAddressDraft(memberId: string, address: string) {
     setAddressDraftsByMemberId((current) => ({ ...current, [memberId]: address }));
+    setAddressSaveStatusesByMemberId((current) => {
+      if (!current[memberId]) return current;
+
+      const next = { ...current };
+      delete next[memberId];
+      return next;
+    });
     setStatesByMemberId((current) => {
       const state = current[memberId];
       if (!state || state.status === "loading") return current;
@@ -204,6 +214,36 @@ export function MemberGeocodingWorkspace() {
       delete next[memberId];
       return next;
     });
+  }
+
+  async function saveAddressDraft(member: Member) {
+    const address = normalizeAddress(draftAddressFor(member));
+    if (address === normalizeAddress(member.address)) return;
+
+    setAddressSaveStatusesByMemberId((current) => ({ ...current, [member.id]: "saving" }));
+    const persisted = await persistMemberUpdate(
+      {
+        ...member,
+        address,
+        geocodingAttemptedAt: undefined,
+        geocodingError: undefined,
+        geocodingQuery: undefined,
+        geocodingStatus: undefined,
+      },
+      "Endereco editado, mas nao foi possivel salvar no Supabase.",
+    );
+
+    if (!persisted) {
+      setAddressSaveStatusesByMemberId((current) => {
+        const next = { ...current };
+        delete next[member.id];
+        return next;
+      });
+      return;
+    }
+
+    setAddressDraftsByMemberId((current) => ({ ...current, [member.id]: address }));
+    setAddressSaveStatusesByMemberId((current) => ({ ...current, [member.id]: "saved" }));
   }
 
   function toggleMemberSelection(memberId: string, checked: boolean) {
@@ -406,8 +446,8 @@ export function MemberGeocodingWorkspace() {
         Os endereços consultados são enviados para um serviço público externo. O processamento é sequencial, sem autocomplete, sem paralelismo e com intervalo mínimo de 1 segundo. Erros, sem resultado e pulados ficam marcados no cadastro para revisão futura.
       </div>
 
-      <div className="grid gap-2 rounded-lg border bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_repeat(5,minmax(120px,auto))]">
-        <Input
+      <div className="grid gap-2 rounded-lg border bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_repeat(6,minmax(120px,auto))]">
+        <SearchInput
           placeholder="Buscar por nome ou endereço"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -434,6 +474,16 @@ export function MemberGeocodingWorkspace() {
             <SelectItem value="F">Feminino</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={activityStatusFilter} onValueChange={(value) => setActivityStatusFilter(value as "all" | Member["churchActivityStatus"])}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos status</SelectItem>
+            <SelectItem value="attending">Frequentando</SelectItem>
+            <SelectItem value="not_attending">Não frequentando</SelectItem>
+          </SelectContent>
+        </Select>
         <Input
           inputMode="numeric"
           min={0}
@@ -456,9 +506,11 @@ export function MemberGeocodingWorkspace() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos discursos</SelectItem>
-            <SelectItem value="5">{talkDurationLabels["5"]}</SelectItem>
-            <SelectItem value="10">{talkDurationLabels["10"]}</SelectItem>
-            <SelectItem value="15">{talkDurationLabels["15"]}</SelectItem>
+            {TALK_DURATION_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.shortLabel}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -544,14 +596,29 @@ export function MemberGeocodingWorkspace() {
                   <label className="mt-3 block text-xs font-medium text-muted-foreground" htmlFor={`member-geocoding-address-${selectedMember.id}`}>
                     Endereço para buscar
                   </label>
-                  <Input
-                    className="mt-1"
-                    disabled={selectedState.status === "loading" || batchRunning}
-                    id={`member-geocoding-address-${selectedMember.id}`}
-                    placeholder="Rua, número, bairro, cidade - UF"
-                    value={selectedAddress}
-                    onChange={(event) => updateAddressDraft(selectedMember.id, event.target.value)}
-                  />
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      className="sm:flex-1"
+                      disabled={selectedState.status === "loading" || batchRunning || selectedAddressSaveStatus === "saving"}
+                      id={`member-geocoding-address-${selectedMember.id}`}
+                      placeholder="ex: Rua, número, bairro, cidade - UF"
+                      value={selectedAddress}
+                      onChange={(event) => updateAddressDraft(selectedMember.id, event.target.value)}
+                    />
+                    <Button
+                      className="sm:w-auto"
+                      disabled={!selectedAddressDirty || selectedState.status === "loading" || batchRunning || selectedAddressSaveStatus === "saving"}
+                      onClick={() => saveAddressDraft(selectedMember)}
+                      type="button"
+                      variant="outline"
+                    >
+                      {selectedAddressSaveStatus === "saving" ? <Loader2 className="animate-spin" /> : <Save />}
+                      Salvar endereço
+                    </Button>
+                  </div>
+                  {selectedAddressSaveStatus === "saved" && !selectedAddressDirty ? (
+                    <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">Endereço salvo na ficha do membro.</p>
+                  ) : null}
                 </div>
                 <StatusBadge status={selectedState.status} />
               </div>

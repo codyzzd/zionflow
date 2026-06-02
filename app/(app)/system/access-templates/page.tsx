@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TableActionButton } from "@/components/ui/table-action-button";
@@ -193,7 +194,7 @@ export default function SystemAccessTemplatesPage() {
           data={filteredTemplates}
           emptyMessage="Nenhum template de acesso cadastrado."
           enableColumnVisibility
-          toolbar={<Input className="md:max-w-lg" placeholder="Buscar por nome ou descrição" value={search} onChange={(event) => setSearch(event.target.value)} />}
+          toolbar={<SearchInput className="md:max-w-lg" placeholder="Buscar por nome ou descrição" value={search} onChange={(event) => setSearch(event.target.value)} />}
         />
 
         <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerOpenChange}>

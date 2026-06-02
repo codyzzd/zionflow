@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Check, ChevronsUpDown, Clock3, Copy, ExternalLink, List, LockKeyhole, Pencil, RefreshCcw, Save, SlidersHorizontal, Table2, X } from "lucide-react";
+import { Check, CheckSquare, ChevronsUpDown, Clock3, Copy, ExternalLink, List, LockKeyhole, Pencil, RefreshCcw, Save, SlidersHorizontal, Table2, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +33,7 @@ import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { formatTalkDurationForSpeakerOption } from "@/lib/member-talk-duration";
 import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, renewMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
@@ -196,14 +198,16 @@ function InlineHybridCell({
 }
 
 export default function MinutesPage() {
-  const { applyRemoteMinuteUpdate, currentUser, currentWard, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
+  const { applyRemoteMinuteUpdate, currentUser, currentWard, deleteMinute, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMinutes = hasPermission("minutes.manage");
+  const currentUserId = currentUser?.id;
 
   const buildMinuteTitle = useCallback((date: string) => `Ata sacramental - ${formatDate(date)}`, [formatDate]);
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [view, setView] = useState<MeetingsView>("table");
+  const [minuteSelectionActive, setMinuteSelectionActive] = useState(false);
   const [visibleSheetColumns, setVisibleSheetColumns] = useState<Record<SheetColumnKey, boolean>>(() =>
     Object.fromEntries(SHEET_COLUMNS.map((column) => [column.key, true])) as Record<SheetColumnKey, boolean>,
   );
@@ -351,7 +355,7 @@ export default function MinutesPage() {
         .filter((member) => member.canSpeak)
         .map((member) => ({
           value: member.id,
-          label: `${member.name} • ${member.organization} • ${member.sacramentTalkDuration} min`,
+          label: `${member.name} • ${member.organization} • ${formatTalkDurationForSpeakerOption(member.sacramentTalkDuration)}`,
           searchValue: member.name,
         })),
     [membersByWard],
@@ -400,14 +404,14 @@ export default function MinutesPage() {
     const lockExpiresAtTime = lockExpiresAt ? Date.parse(lockExpiresAt) : 0;
     const lockActive = Boolean(lockedByUserId && Number.isFinite(lockExpiresAtTime) && lockExpiresAtTime > nowMs);
 
-    if (sheetDrafts[minute.id] && lockActive && lockedByUserId === currentUser?.id) return "locked_by_me";
-    if (lockActive && lockedByUserId && lockedByUserId !== currentUser?.id) return "locked_by_other";
+    if (sheetDrafts[minute.id] && lockActive && lockedByUserId === currentUserId) return "locked_by_me";
+    if (lockActive && lockedByUserId && lockedByUserId !== currentUserId) return "locked_by_other";
     if (sheetStale[minute.id]) return "stale";
     return "free";
   }
 
   async function beginSheetEdit(minute: SacramentMinute) {
-    if (!canManageMinutes || !currentUser?.id || busyMinuteIds.has(minute.id)) return false;
+    if (!canManageMinutes || !currentUserId || busyMinuteIds.has(minute.id)) return false;
     if (sheetDrafts[minute.id]) return true;
     if (activeSheetMinuteId && activeSheetMinuteId !== minute.id) {
       toast.error("Salve ou cancele a linha em edição antes de editar outra ata.");
@@ -416,7 +420,7 @@ export default function MinutesPage() {
 
     setMinuteBusy(minute.id, true);
     try {
-      const lock = await acquireMinuteLock(minute.id, currentUser.id, SHEET_LOCK_TTL_SECONDS);
+      const lock = await acquireMinuteLock(minute.id, currentUserId, SHEET_LOCK_TTL_SECONDS);
       setSheetLocks((current) => ({ ...current, [minute.id]: lock }));
 
       if (!lock.acquired) {
@@ -430,7 +434,7 @@ export default function MinutesPage() {
         ...current,
         [minute.id]: {
           ...lock,
-          lockedByUserId: latestMinute?.lockedByUserId ?? lock.lockedByUserId ?? currentUser.id,
+          lockedByUserId: latestMinute?.lockedByUserId ?? lock.lockedByUserId ?? currentUserId,
           lockedByName: lock.lockedByName ?? currentUser.name,
           lockedAt: latestMinute?.lockedAt ?? lock.lockedAt,
           lockExpiresAt: latestMinute?.lockExpiresAt ?? lock.lockExpiresAt,
@@ -462,8 +466,8 @@ export default function MinutesPage() {
   }
 
   async function cancelSheetEdit(minute: SacramentMinute) {
-    if (currentUser?.id) {
-      await releaseMinuteLock(minute.id, currentUser.id).catch(() => false);
+    if (currentUserId) {
+      await releaseMinuteLock(minute.id, currentUserId).catch(() => false);
     }
     setSheetDrafts((current) => {
       const next = { ...current };
@@ -480,11 +484,11 @@ export default function MinutesPage() {
   async function saveSheetDraft(minute: SacramentMinute) {
     const draft = sheetDrafts[minute.id];
     const lock = sheetLocks[minute.id];
-    if (!draft || !currentUser?.id || !lock?.version) return;
+    if (!draft || !currentUserId || !lock?.version) return;
 
     setMinuteBusy(minute.id, true);
     try {
-      const result = await saveLockedMinuteSnapshot(draft, currentUser.id, lock.version);
+      const result = await saveLockedMinuteSnapshot(draft, currentUserId, lock.version);
       if (!result.saved || !result.minute) {
         if (result.reason === "version_conflict" && result.minute) {
           setSheetStale((current) => ({ ...current, [minute.id]: result.minute! }));
@@ -499,6 +503,83 @@ export default function MinutesPage() {
       setMinuteBusy(minute.id, false);
     }
   }
+
+  const isMinuteLockedByOther = useCallback((minute: SacramentMinute) => {
+    const lock = sheetLocks[minute.id];
+    const lockedByUserId = lock?.lockedByUserId ?? minute.lockedByUserId;
+    const lockExpiresAt = lock?.lockExpiresAt ?? minute.lockExpiresAt;
+    const lockExpiresAtTime = lockExpiresAt ? Date.parse(lockExpiresAt) : 0;
+
+    return Boolean(lockedByUserId && lockedByUserId !== currentUserId && Number.isFinite(lockExpiresAtTime) && lockExpiresAtTime > nowMs);
+  }, [currentUserId, nowMs, sheetLocks]);
+
+  const clearSheetStateForMinutes = useCallback((minuteIds: string[]) => {
+    const ids = new Set(minuteIds);
+
+    setSheetDrafts((current) => {
+      const next = { ...current };
+      ids.forEach((id) => {
+        delete next[id];
+      });
+      return next;
+    });
+    setSheetLocks((current) => {
+      const next = { ...current };
+      ids.forEach((id) => {
+        delete next[id];
+      });
+      return next;
+    });
+    setSheetStale((current) => {
+      const next = { ...current };
+      ids.forEach((id) => {
+        delete next[id];
+      });
+      return next;
+    });
+  }, []);
+
+  const requestDeleteMinute = useCallback(async (minute: SacramentMinute) => {
+    if (!canManageMinutes || isMinuteLockedByOther(minute)) return;
+
+    const confirmed = window.confirm(`Deletar a ata de ${formatDate(minute.date)}?`);
+    if (!confirmed) return;
+
+    if (sheetDrafts[minute.id] && currentUserId) {
+      await releaseMinuteLock(minute.id, currentUserId).catch(() => false);
+    }
+
+    clearSheetStateForMinutes([minute.id]);
+    deleteMinute(minute.id);
+  }, [canManageMinutes, clearSheetStateForMinutes, currentUserId, deleteMinute, formatDate, isMinuteLockedByOther, sheetDrafts]);
+
+  const requestDeleteSelectedMinutes = useCallback(async (minutes: SacramentMinute[]) => {
+    if (!canManageMinutes) return;
+
+    const deletableMinutes = minutes.filter((minute) => !isMinuteLockedByOther(minute));
+    if (!deletableMinutes.length) {
+      toast.error("As atas selecionadas estão bloqueadas por outra pessoa.");
+      return;
+    }
+
+    const lockedCount = minutes.length - deletableMinutes.length;
+    const lockedMessage = lockedCount ? ` ${lockedCount} bloqueada(s) por outra pessoa serão mantidas.` : "";
+    const confirmed = window.confirm(`Deletar ${deletableMinutes.length} ata(s) selecionada(s)?${lockedMessage}`);
+    if (!confirmed) return;
+
+    if (currentUserId) {
+      await Promise.all(
+        deletableMinutes
+          .filter((minute) => sheetDrafts[minute.id])
+          .map((minute) => releaseMinuteLock(minute.id, currentUserId).catch(() => false)),
+      );
+    }
+
+    clearSheetStateForMinutes(deletableMinutes.map((minute) => minute.id));
+    deletableMinutes.forEach((minute) => {
+      deleteMinute(minute.id);
+    });
+  }, [canManageMinutes, clearSheetStateForMinutes, currentUserId, deleteMinute, isMinuteLockedByOther, sheetDrafts]);
 
   function updateSheetDate(minute: SacramentMinute, value: string) {
     if (!value || value === minute.date) return;
@@ -610,15 +691,18 @@ export default function MinutesPage() {
 
     if (lockState === "locked_by_other") {
       return (
-        <div className="flex items-center justify-end px-2 text-muted-foreground" title={`Em edição por ${lockOwnerName}`}>
-          <LockKeyhole className="size-4" />
+        <div className="flex items-center justify-end gap-1 px-2" title={`Em edição por ${lockOwnerName}`}>
+          <LockKeyhole className="size-4 text-muted-foreground" />
+          <TableActionButton disabled label="Deletar ata" size="icon-xs" tooltip={`Em edição por ${lockOwnerName}`} variant="destructive">
+            <Trash2 />
+          </TableActionButton>
         </div>
       );
     }
 
     if (lockState === "stale") {
       return (
-        <div className="flex items-center justify-end px-2">
+        <div className="flex items-center justify-end gap-1 px-2">
           <TableActionButton
             disabled={isBusy}
             label="Atualizar linha"
@@ -637,14 +721,32 @@ export default function MinutesPage() {
           >
             <RefreshCcw />
           </TableActionButton>
+          <TableActionButton
+            disabled={!canManageMinutes || isBusy}
+            label="Deletar ata"
+            onClick={() => void requestDeleteMinute(minute)}
+            size="icon-xs"
+            variant="destructive"
+          >
+            <Trash2 />
+          </TableActionButton>
         </div>
       );
     }
 
     return (
-      <div className="flex justify-end px-2">
+      <div className="flex justify-end gap-1 px-2">
         <TableActionButton disabled={!canManageMinutes || isBusy} label="Editar linha" onClick={() => void beginSheetEdit(minute)} size="icon-xs" variant="outline">
           <Pencil />
+        </TableActionButton>
+        <TableActionButton
+          disabled={!canManageMinutes || isBusy}
+          label="Deletar ata"
+          onClick={() => void requestDeleteMinute(minute)}
+          size="icon-xs"
+          variant="destructive"
+        >
+          <Trash2 />
         </TableActionButton>
       </div>
     );
@@ -739,12 +841,22 @@ export default function MinutesPage() {
               >
                 <Copy />
               </TableActionButton>
+              {canManageMinutes ? (
+                <TableActionButton
+                  disabled={isMinuteLockedByOther(minute)}
+                  label="Deletar ata"
+                  onClick={() => void requestDeleteMinute(minute)}
+                  variant="destructive"
+                >
+                  <Trash2 />
+                </TableActionButton>
+              ) : null}
             </div>
           );
         },
       },
     ],
-    [buildMinuteTitle, canManageMinutes, currentWard, formatDate, formatSpeakerField, saveMinute],
+    [buildMinuteTitle, canManageMinutes, currentWard, formatDate, formatSpeakerField, isMinuteLockedByOther, requestDeleteMinute, saveMinute],
   );
 
   return (
@@ -765,19 +877,39 @@ export default function MinutesPage() {
 
         <div className="space-y-4">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <Input
-              className="md:max-w-lg"
-              placeholder="Buscar por data, oradores ou temas"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              {canManageMinutes && view === "table" ? (
+                <Button
+                  aria-label={minuteSelectionActive ? "Cancelar seleção de atas" : "Selecionar atas"}
+                  onClick={() => setMinuteSelectionActive((current) => !current)}
+                  size="icon-sm"
+                  variant={minuteSelectionActive ? "secondary" : "outline"}
+                >
+                  {minuteSelectionActive ? <X /> : <CheckSquare />}
+                </Button>
+              ) : null}
+              <SearchInput
+                className="md:max-w-lg"
+                placeholder="Buscar por data, oradores ou temas"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex rounded-lg border bg-card p-1">
                 <Button className="h-8" onClick={() => setView("table")} size="sm" variant={view === "table" ? "secondary" : "ghost"}>
                   <List />
                   Tabela
                 </Button>
-                <Button className="h-8" onClick={() => setView("sheet")} size="sm" variant={view === "sheet" ? "secondary" : "ghost"}>
+                <Button
+                  className="h-8"
+                  onClick={() => {
+                    setMinuteSelectionActive(false);
+                    setView("sheet");
+                  }}
+                  size="sm"
+                  variant={view === "sheet" ? "secondary" : "ghost"}
+                >
                   <Table2 />
                   Planilha
                 </Button>
@@ -825,6 +957,20 @@ export default function MinutesPage() {
               emptyMessage="Nenhuma ata encontrada com os filtros atuais."
               enableRowSelection={canManageMinutes}
               getRowId={(minute) => minute.id}
+              onSelectionActiveChange={setMinuteSelectionActive}
+              renderSelectedActions={
+                canManageMinutes
+                  ? (selectedMinutes) => (
+                      <Button disabled={!selectedMinutes.length} onClick={() => void requestDeleteSelectedMinutes(selectedMinutes)} size="sm" variant="destructive">
+                        <Trash2 />
+                        Apagar selecionadas
+                      </Button>
+                    )
+                  : undefined
+              }
+              selectionActive={minuteSelectionActive}
+              selectionMode="optional"
+              showSelectionToggle={false}
             />
           ) : (
             <div className="space-y-3">

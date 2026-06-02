@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
@@ -183,7 +184,7 @@ export default function SystemHymnBooksPage() {
           data={filteredHymnBooks}
           emptyMessage="Nenhum livro encontrado com os filtros atuais."
           enableColumnVisibility
-          toolbar={<Input className="md:max-w-lg" placeholder="Buscar por nome ou emoji" value={search} onChange={(event) => setSearch(event.target.value)} />}
+          toolbar={<SearchInput className="md:max-w-lg" placeholder="Buscar por nome ou emoji" value={search} onChange={(event) => setSearch(event.target.value)} />}
         />
 
         <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerOpenChange}>

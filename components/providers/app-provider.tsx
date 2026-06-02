@@ -14,7 +14,8 @@ import {
 } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
-import { createEmptyDatabase, loadDatabase, normalizeHymnTags, saveDatabase, saveMemberSnapshot, saveMinuteSnapshot } from "@/lib/storage";
+import { canSpeakWithTalkDuration, normalizeTalkDuration } from "@/lib/member-talk-duration";
+import { createEmptyDatabase, deleteMinuteSnapshot, loadDatabase, normalizeHymnTags, saveDatabase, saveMemberSnapshot, saveMinuteSnapshot } from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
@@ -188,6 +189,7 @@ type AppContextValue = {
   deleteAccessTemplate: (templateId: string) => void;
   toggleUserStatus: (userId: string) => void;
   saveMinute: (input: SaveMinuteInput, options?: SaveMinuteOptions) => SaveMinuteResult;
+  deleteMinute: (minuteId: string) => void;
   applyRemoteMinuteUpdate: (minute: SacramentMinute) => void;
   saveHymnBook: (input: Omit<HymnBook, "id"> & { id?: string }) => void;
   deleteHymnBook: (hymnBookId: string) => void;
@@ -1616,7 +1618,18 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const existing = db.members.find((member) => member.id === id);
       const exists = Boolean(existing);
       const actorUserId = getActorUserId(db);
-      const memberToPersist = withRecordMetadata({ ...input, birthDate: normalizeDateInput(input.birthDate), id }, existing, actorUserId);
+      const sacramentTalkDuration = normalizeTalkDuration(input.sacramentTalkDuration);
+      const memberToPersist = withRecordMetadata(
+        {
+          ...input,
+          birthDate: normalizeDateInput(input.birthDate),
+          canSpeak: canSpeakWithTalkDuration(sacramentTalkDuration),
+          id,
+          sacramentTalkDuration,
+        },
+        existing,
+        actorUserId,
+      );
 
       setDb((currentDb) => {
         const nextDb = {
@@ -1763,6 +1776,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const normalizedImportedMembers = importedMembers.map((member) => ({
           ...member,
           birthDate: normalizeDateInput(member.birthDate),
+          canSpeak: canSpeakWithTalkDuration(normalizeTalkDuration(member.sacramentTalkDuration)),
+          sacramentTalkDuration: normalizeTalkDuration(member.sacramentTalkDuration),
         }));
 
         let createdCount = 0;
@@ -1778,6 +1793,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
               }),
               {} as Partial<Omit<Member, "id" | "wardId">>,
             );
+            const sacramentTalkDuration = normalizeTalkDuration(memberPatch.sacramentTalkDuration ?? existing.sacramentTalkDuration);
 
             updatedCount += 1;
             return {
@@ -1786,7 +1802,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
                   ...existing,
                   ...memberPatch,
                   birthDate: importedFields.has("birthDate") ? normalizeDateInput(member.birthDate) : existing.birthDate,
+                  canSpeak: canSpeakWithTalkDuration(sacramentTalkDuration),
                   id: existing.id,
+                  sacramentTalkDuration,
                   wardId: input.wardId,
                 },
                 existing,
@@ -2432,6 +2450,39 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         toast.success(existing ? "Ata salva." : "Ata cadastrada.");
       }
       return { id, minute: minuteToPersist, persisted };
+    }
+
+    function deleteMinute(minuteId: string) {
+      const target = db.sacramentMinutes.find((minute) => minute.id === minuteId);
+      if (!target) return;
+
+      setDb((currentDb) => {
+        const minute = currentDb.sacramentMinutes.find((item) => item.id === minuteId);
+        if (!minute) return currentDb;
+
+        const nextDb = {
+          ...currentDb,
+          sacramentMinutes: currentDb.sacramentMinutes.filter((item) => item.id !== minuteId),
+          minuteVersions: currentDb.minuteVersions.filter((version) => version.minuteId !== minuteId),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: minute.wardId,
+          action: "DELETE_MINUTE",
+          module: "atas",
+          itemLabel: minute.title,
+          summary: "Deletou ata sacramental.",
+        });
+      });
+
+      deleteMinuteSnapshot(minuteId)
+        .then(() => {
+          toast.success("Ata deletada.");
+        })
+        .catch((error) => {
+          console.error("Failed to delete minute directly.", error);
+          toast.error("Nao foi possivel deletar a ata no Supabase.");
+        });
     }
 
     function applyRemoteMinuteUpdate(minute: SacramentMinute) {
@@ -3272,6 +3323,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       deleteAccessTemplate,
       toggleUserStatus,
       saveMinute,
+      deleteMinute,
       applyRemoteMinuteUpdate,
       saveHymnBook,
       deleteHymnBook,

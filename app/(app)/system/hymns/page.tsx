@@ -16,6 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { DataTable } from "@/components/ui/data-table";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -483,7 +484,7 @@ export default function SystemHymnsPage() {
           getRowId={(hymn) => hymn.id}
           toolbar={
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-              <Input className="md:max-w-sm" placeholder="Buscar por número ou título" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <SearchInput className="md:max-w-sm" placeholder="Buscar por número ou título" value={search} onChange={(event) => setSearch(event.target.value)} />
               <div className="md:w-64">
                 <Label className="sr-only">Filtrar por hinário</Label>
                 <Select value={hymnBookFilter} onValueChange={setHymnBookFilter}>
@@ -516,7 +517,7 @@ export default function SystemHymnsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <Input className="md:max-w-48" placeholder="Filtrar por tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} />
+              <SearchInput className="md:max-w-48" placeholder="Filtrar por tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} />
               {hasActiveFilters ? (
                 <Button className="self-start xl:self-auto" onClick={clearFilters} type="button" variant="outline">
                   Limpar filtros

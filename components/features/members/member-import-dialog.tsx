@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { cellValue, columnValue, formatImportedName, ignoredColumn, memberNameKey, parseCsv, type CsvData, type NameFormatMode } from "@/lib/member-csv";
+import { talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { normalizeDateInput, slugify } from "@/lib/utils";
 import type { Member, RecordMetadataKey } from "@/types/domain";
 
@@ -24,13 +26,6 @@ type ImportConflict = {
   member: ImportMember;
   reason: string;
 };
-type CsvData = {
-  headers: string[];
-  rows: string[][];
-};
-
-const ignoredColumn = "__ignore__";
-const columnPrefix = "__column__";
 
 const fieldLabels: Array<{ key: ImportFieldKey; label: string; required?: boolean }> = [
   { key: "name", label: "Nome", required: true },
@@ -69,8 +64,8 @@ const emptyImportMember: ImportMember = {
   birthDate: "",
   organization: "",
   sex: "M",
-  sacramentTalkDuration: "5",
-  canSpeak: true,
+  sacramentTalkDuration: "not_designable",
+  canSpeak: false,
   canPreside: false,
   canConduct: false,
 };
@@ -81,60 +76,6 @@ const exampleCsv = [
   '"Carlos Lima","(85) 99999-0002",15/08/1984,"Av. Central, 250",M,15',
   '"Marina Alves","(85) 99999-0003",,,"F",5',
 ].join("\n");
-
-function splitCsvLine(line: string, delimiter: string) {
-  const values: string[] = [];
-  let current = "";
-  let quoted = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const nextChar = line[index + 1];
-
-    if (char === '"' && quoted && nextChar === '"') {
-      current += '"';
-      index += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === delimiter && !quoted) {
-      values.push(current.trim());
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  values.push(current.trim());
-  return values;
-}
-
-function detectDelimiter(headerLine: string) {
-  const candidates = [",", ";", "\t"];
-
-  return candidates.reduce((selected, delimiter) => {
-    const selectedCount = splitCsvLine(headerLine, selected).length;
-    const delimiterCount = splitCsvLine(headerLine, delimiter).length;
-
-    return delimiterCount > selectedCount ? delimiter : selected;
-  }, ",");
-}
-
-function parseCsv(text: string): CsvData {
-  const lines = text
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length);
-
-  if (!lines.length) {
-    return { headers: [], rows: [] };
-  }
-
-  const delimiter = detectDelimiter(lines[0]);
-  const headers = splitCsvLine(lines[0], delimiter);
-  const rows = lines.slice(1).map((line) => splitCsvLine(line, delimiter));
-
-  return { headers, rows };
-}
 
 function buildInitialMapping(headers: string[]) {
   const normalizedHeaders = headers.map((header) => slugify(header));
@@ -151,22 +92,6 @@ function buildInitialMapping(headers: string[]) {
     },
     {} as Record<ImportFieldKey, string>,
   );
-}
-
-function columnValue(index: number) {
-  return `${columnPrefix}${index}`;
-}
-
-function columnIndex(value: string) {
-  if (!value.startsWith(columnPrefix)) return -1;
-
-  return Number(value.replace(columnPrefix, ""));
-}
-
-function cellValue(row: string[], column: string) {
-  const index = columnIndex(column);
-
-  return index >= 0 ? (row[index] ?? "").trim() : "";
 }
 
 function parseBoolean(value: string, fallback: boolean) {
@@ -189,10 +114,21 @@ function parseSex(value: string): Member["sex"] {
 function parseTalkDuration(value: string): Member["sacramentTalkDuration"] {
   const normalized = slugify(value);
 
+  if (
+    [
+      "",
+      "nao-designavel",
+      "sem-discurso",
+      "indisponivel",
+    ].includes(normalized)
+  ) {
+    return "not_designable";
+  }
   if (["10", "10-min", "10-minutos"].includes(normalized)) return "10";
   if (["15", "15-min", "15-minutos"].includes(normalized)) return "15";
+  if (["5", "5-min", "5-minutos"].includes(normalized)) return "5";
 
-  return "5";
+  return "not_designable";
 }
 
 function parseOptionalNumber(value: string) {
@@ -225,20 +161,16 @@ function countBy<T>(items: T[], getKey: (item: T) => string) {
   return counts;
 }
 
-function memberNameKey(member: Pick<Member, "name"> | Pick<ImportMember, "name">) {
-  return slugify(member.name);
-}
-
 function memberIdentityKey(member: Pick<Member, "name" | "birthDate"> | Pick<ImportMember, "name" | "birthDate">) {
   const birthDate = normalizeDateInput(member.birthDate);
 
-  return birthDate ? `${memberNameKey(member)}::${birthDate}` : "";
+  return birthDate ? `${memberNameKey(member.name)}::${birthDate}` : "";
 }
 
 function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Member[]) {
   const currentMembersByName = new Map<string, Member[]>();
   const currentMembersByIdentity = new Map<string, Member[]>();
-  const importedNameCounts = countBy(importMembers, memberNameKey);
+  const importedNameCounts = countBy(importMembers, (member) => memberNameKey(member.name));
   const importedIdentityCounts = countBy(
     importMembers.filter((member) => member.birthDate),
     memberIdentityKey,
@@ -248,7 +180,7 @@ function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Memb
   let updatedCount = 0;
 
   currentMembers.forEach((member) => {
-    const nameKey = memberNameKey(member);
+    const nameKey = memberNameKey(member.name);
     currentMembersByName.set(nameKey, [...(currentMembersByName.get(nameKey) ?? []), member]);
 
     const identityKey = memberIdentityKey(member);
@@ -258,7 +190,7 @@ function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Memb
   });
 
   importMembers.forEach((member, index) => {
-    const nameKey = memberNameKey(member);
+    const nameKey = memberNameKey(member.name);
     const identityKey = memberIdentityKey(member);
 
     if (!identityKey) {
@@ -308,7 +240,7 @@ function buildImportedFields(mapping: Record<ImportFieldKey, string>) {
     .map((field) => field.key);
 }
 
-function toImportMembers(csv: CsvData, mapping: Record<ImportFieldKey, string>) {
+function toImportMembers(csv: CsvData, mapping: Record<ImportFieldKey, string>, nameFormatMode: NameFormatMode) {
   const members: ImportMember[] = [];
 
   csv.rows.forEach((row) => {
@@ -317,13 +249,13 @@ function toImportMembers(csv: CsvData, mapping: Record<ImportFieldKey, string>) 
 
       return column && column !== ignoredColumn ? cellValue(row, column) : "";
     };
-    const name = read("name");
+    const name = formatImportedName(read("name"), nameFormatMode);
 
     if (!name.trim()) return;
 
     const member: ImportMember = {
       ...emptyImportMember,
-      name: name.trim(),
+      name,
       phone: read("phone").trim(),
       address: read("address").trim(),
       latitude: parseOptionalNumber(read("latitude")),
@@ -351,9 +283,10 @@ export function MemberImportDialog() {
   const [csv, setCsv] = useState<CsvData>({ headers: [], rows: [] });
   const [fileName, setFileName] = useState("");
   const [mapping, setMapping] = useState<Record<ImportFieldKey, string>>(buildInitialMapping([]));
+  const [nameFormatMode, setNameFormatMode] = useState<NameFormatMode>("preserve");
   const [removeMissing, setRemoveMissing] = useState(false);
 
-  const parsedMembers = useMemo(() => toImportMembers(csv, mapping), [csv, mapping]);
+  const parsedMembers = useMemo(() => toImportMembers(csv, mapping, nameFormatMode), [csv, mapping, nameFormatMode]);
   const importedFields = useMemo(() => buildImportedFields(mapping), [mapping]);
   const invalidDateCount = useMemo(() => countInvalidDates(csv, mapping), [csv, mapping]);
   const currentWardMembers = useMemo(() => (currentWard ? db.members.filter((member) => member.wardId === currentWard.id) : []), [currentWard, db.members]);
@@ -364,6 +297,7 @@ export function MemberImportDialog() {
     setCsv({ headers: [], rows: [] });
     setFileName("");
     setMapping(buildInitialMapping([]));
+    setNameFormatMode("preserve");
     setRemoveMissing(false);
   }
 
@@ -487,6 +421,20 @@ export function MemberImportDialog() {
                 ))}
               </div>
 
+              <div className="grid gap-2">
+                <Label htmlFor="member-name-format">Formato do nome</Label>
+                <Select value={nameFormatMode} onValueChange={(value) => setNameFormatMode(value as NameFormatMode)}>
+                  <SelectTrigger className="w-full" id="member-name-format">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="preserve">Manter como está</SelectItem>
+                    <SelectItem value="surname_last">Converter &quot;Sobrenome, Nomes&quot; para &quot;Nomes Sobrenome&quot;</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">Exemplo: Gonçalves, Bruno da Silva -&gt; Bruno da Silva Gonçalves.</p>
+              </div>
+
               <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 text-sm">
                 <label className="flex items-start gap-2">
                   <Checkbox checked={removeMissing} onCheckedChange={(checked) => setRemoveMissing(checked === true)} />
@@ -517,7 +465,7 @@ export function MemberImportDialog() {
                         <span className="truncate font-medium">{member.name}</span>
                         <span className="truncate text-muted-foreground">{member.phone || "Não informado"}</span>
                         <span className="truncate text-muted-foreground">{member.birthDate ? formatDate(member.birthDate) : "Não informada"}</span>
-                        <span className="truncate text-muted-foreground">{member.sacramentTalkDuration} min</span>
+                        <span className="truncate text-muted-foreground">{talkDurationShortLabels[member.sacramentTalkDuration]}</span>
                       </div>
                     ))}
                     {!parsedMembers.length ? <div className="px-3 py-6 text-center text-sm text-muted-foreground">Nenhum membro válido para importar.</div> : null}
