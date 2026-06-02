@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
@@ -353,10 +354,16 @@ export default function SystemWardsPage() {
                           <RotateCcw />
                           Desarquivar
                         </Button>
-                        <Button onClick={() => deleteWard(selectedWard.id)} variant="destructive">
-                          <Trash2 />
-                          Deletar
-                        </Button>
+                        <DeleteConfirmationDialog
+                          confirmLabel="Deletar"
+                          description={`Deletar a ala ${selectedWard.name}? Essa ação remove a ala permanentemente.`}
+                          onConfirm={() => deleteWard(selectedWard.id)}
+                        >
+                          <Button variant="destructive">
+                            <Trash2 />
+                            Deletar
+                          </Button>
+                        </DeleteConfirmationDialog>
                       </>
                     ) : (
                       <Button onClick={() => archiveWard(selectedWard.id)} variant="destructive">

@@ -11,6 +11,7 @@ import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
@@ -239,10 +240,16 @@ export default function SystemAccessTemplatesPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
                 <div>
                   {isReadOnly && selectedTemplate ? (
-                    <Button onClick={deleteSelectedTemplate} variant="destructive">
-                      <Trash2 />
-                      Apagar template
-                    </Button>
+                    <DeleteConfirmationDialog
+                      confirmLabel="Apagar template"
+                      description={`Apagar o template ${selectedTemplate.name}? Essa ação remove o modelo de acesso.`}
+                      onConfirm={deleteSelectedTemplate}
+                    >
+                      <Button variant="destructive">
+                        <Trash2 />
+                        Apagar template
+                      </Button>
+                    </DeleteConfirmationDialog>
                   ) : null}
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">

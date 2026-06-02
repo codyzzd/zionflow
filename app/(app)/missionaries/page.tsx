@@ -10,6 +10,7 @@ import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -415,10 +416,15 @@ export default function MissionariesPage() {
                         <RotateCcw />
                         Desarquivar
                       </Button>
-                      <Button onClick={deleteSelectedCompanionship} variant="destructive">
-                        <Trash2 />
-                        Excluir
-                      </Button>
+                      <DeleteConfirmationDialog
+                        description={`Excluir ${selectedCompanionship.name}? Essa ação remove a dupla missionária arquivada.`}
+                        onConfirm={deleteSelectedCompanionship}
+                      >
+                        <Button variant="destructive">
+                          <Trash2 />
+                          Excluir
+                        </Button>
+                      </DeleteConfirmationDialog>
                     </>
                   ) : (
                     <Button onClick={archiveSelectedCompanionship} variant="destructive">

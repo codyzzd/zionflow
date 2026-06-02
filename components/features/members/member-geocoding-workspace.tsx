@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { parseCoordinateInput, sanitizeCoordinateInput } from "@/lib/coordinates";
 import { TALK_DURATION_OPTIONS } from "@/lib/member-talk-duration";
 import { cn, normalizeDateInput, nowIso } from "@/lib/utils";
 import type { Member } from "@/types/domain";
@@ -74,13 +75,6 @@ function normalizeAddress(address: string) {
 
 function formatCoordinateDraft(value: number | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
-}
-
-function parseCoordinateDraft(value: string) {
-  if (!value.trim()) return undefined;
-  const parsed = Number(value.replace(",", "."));
-
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function calculateAge(birthDate: string) {
@@ -176,8 +170,8 @@ export function MemberGeocodingWorkspace() {
   const selectedAddressDirty = selectedMember ? selectedNormalizedAddress !== normalizeAddress(selectedMember.address) : false;
   const selectedAddressSaveStatus = selectedMember ? addressSaveStatusesByMemberId[selectedMember.id] ?? "idle" : "idle";
   const selectedCoordinateDraft = selectedMember ? coordinateDraftFor(selectedMember) : { latitude: "", longitude: "" };
-  const selectedLatitude = parseCoordinateDraft(selectedCoordinateDraft.latitude);
-  const selectedLongitude = parseCoordinateDraft(selectedCoordinateDraft.longitude);
+  const selectedLatitude = parseCoordinateInput(selectedCoordinateDraft.latitude);
+  const selectedLongitude = parseCoordinateInput(selectedCoordinateDraft.longitude);
   const selectedCoordinatesValid = typeof selectedLatitude === "number" && typeof selectedLongitude === "number";
   const selectedCoordinateSaveStatus = selectedMember ? coordinateSaveStatusesByMemberId[selectedMember.id] ?? "idle" : "idle";
   const selectedMembersWithEmptyAddress = selectedMembers.filter((member) => !normalizeAddress(addressDraftsByMemberId[member.id] ?? member.address));
@@ -264,7 +258,7 @@ export function MemberGeocodingWorkspace() {
         ...current,
         [member.id]: {
           ...existing,
-          [field]: value,
+          [field]: sanitizeCoordinateInput(value),
         },
       };
     });
@@ -310,8 +304,8 @@ export function MemberGeocodingWorkspace() {
 
   async function saveManualCoordinates(member: Member) {
     const coordinateDraft = coordinateDraftFor(member);
-    const latitude = parseCoordinateDraft(coordinateDraft.latitude);
-    const longitude = parseCoordinateDraft(coordinateDraft.longitude);
+    const latitude = parseCoordinateInput(coordinateDraft.latitude);
+    const longitude = parseCoordinateInput(coordinateDraft.longitude);
 
     if (typeof latitude !== "number" || typeof longitude !== "number") {
       setMemberState(member.id, { error: "Informe latitude e longitude válidas antes de salvar.", status: "error" });

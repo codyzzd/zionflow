@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteConfirmationDialog, DeleteTableActionButton } from "@/components/ui/delete-confirmation-dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
@@ -447,9 +448,12 @@ export default function SystemHymnsPage() {
               <Eye />
             </TableActionButton>
             {canManageHymns ? (
-              <TableActionButton label="Apagar hino" onClick={() => deleteHymn(row.original.id)} variant="destructive">
-                <Trash2 />
-              </TableActionButton>
+              <DeleteTableActionButton
+                confirmLabel="Apagar hino"
+                description={`Apagar o hino ${row.original.number} - ${row.original.title}? Essa ação remove o hino do catálogo.`}
+                label="Apagar hino"
+                onConfirm={() => deleteHymn(row.original.id)}
+              />
             ) : null}
           </div>
         ),
@@ -528,10 +532,16 @@ export default function SystemHymnsPage() {
           renderSelectedActions={
             canManageHymns
               ? (selectedHymns) => (
-                  <Button disabled={!selectedHymns.length} onClick={() => deleteSelectedHymns(selectedHymns)} size="sm" variant="destructive">
-                    <Trash2 />
-                    Apagar selecionados
-                  </Button>
+                  <DeleteConfirmationDialog
+                    confirmLabel="Apagar selecionados"
+                    description={`Apagar ${selectedHymns.length} hino(s) selecionado(s)? Essa ação remove os hinos do catálogo.`}
+                    onConfirm={() => deleteSelectedHymns(selectedHymns)}
+                  >
+                    <Button disabled={!selectedHymns.length} size="sm" variant="destructive">
+                      <Trash2 />
+                      Apagar selecionados
+                    </Button>
+                  </DeleteConfirmationDialog>
                 )
               : undefined
           }
@@ -598,7 +608,20 @@ export default function SystemHymnsPage() {
 
             <DrawerFooter className="border-t bg-background">
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
-                <div>{isReadOnly && canManageHymns && selectedHymn ? <Button onClick={deleteSelectedHymn} variant="destructive"><Trash2 />Apagar hino</Button> : null}</div>
+                <div>
+                  {isReadOnly && canManageHymns && selectedHymn ? (
+                    <DeleteConfirmationDialog
+                      confirmLabel="Apagar hino"
+                      description={`Apagar o hino ${selectedHymn.number} - ${selectedHymn.title}? Essa ação remove o hino do catálogo.`}
+                      onConfirm={deleteSelectedHymn}
+                    >
+                      <Button variant="destructive">
+                        <Trash2 />
+                        Apagar hino
+                      </Button>
+                    </DeleteConfirmationDialog>
+                  ) : null}
+                </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                   <Button onClick={closeDrawer} variant="ghost">
                     {isReadOnly ? "Fechar" : "Cancelar"}

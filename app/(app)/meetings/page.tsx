@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
+import { DeleteConfirmationDialog, DeleteTableActionButton } from "@/components/ui/delete-confirmation-dialog";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -542,16 +543,13 @@ export default function MinutesPage() {
   const requestDeleteMinute = useCallback(async (minute: SacramentMinute) => {
     if (!canManageMinutes || isMinuteLockedByOther(minute)) return;
 
-    const confirmed = window.confirm(`Deletar a ata de ${formatDate(minute.date)}?`);
-    if (!confirmed) return;
-
     if (sheetDrafts[minute.id] && currentUserId) {
       await releaseMinuteLock(minute.id, currentUserId).catch(() => false);
     }
 
     clearSheetStateForMinutes([minute.id]);
     deleteMinute(minute.id);
-  }, [canManageMinutes, clearSheetStateForMinutes, currentUserId, deleteMinute, formatDate, isMinuteLockedByOther, sheetDrafts]);
+  }, [canManageMinutes, clearSheetStateForMinutes, currentUserId, deleteMinute, isMinuteLockedByOther, sheetDrafts]);
 
   const requestDeleteSelectedMinutes = useCallback(async (minutes: SacramentMinute[]) => {
     if (!canManageMinutes) return;
@@ -561,11 +559,6 @@ export default function MinutesPage() {
       toast.error("As atas selecionadas estão bloqueadas por outra pessoa.");
       return;
     }
-
-    const lockedCount = minutes.length - deletableMinutes.length;
-    const lockedMessage = lockedCount ? ` ${lockedCount} bloqueada(s) por outra pessoa serão mantidas.` : "";
-    const confirmed = window.confirm(`Deletar ${deletableMinutes.length} ata(s) selecionada(s)?${lockedMessage}`);
-    if (!confirmed) return;
 
     if (currentUserId) {
       await Promise.all(
@@ -721,15 +714,13 @@ export default function MinutesPage() {
           >
             <RefreshCcw />
           </TableActionButton>
-          <TableActionButton
+          <DeleteTableActionButton
             disabled={!canManageMinutes || isBusy}
+            description={`Deletar a ata de ${formatDate(minute.date)}? Essa ação remove a ata sacramental.`}
             label="Deletar ata"
-            onClick={() => void requestDeleteMinute(minute)}
+            onConfirm={() => void requestDeleteMinute(minute)}
             size="icon-xs"
-            variant="destructive"
-          >
-            <Trash2 />
-          </TableActionButton>
+          />
         </div>
       );
     }
@@ -739,15 +730,13 @@ export default function MinutesPage() {
         <TableActionButton disabled={!canManageMinutes || isBusy} label="Editar linha" onClick={() => void beginSheetEdit(minute)} size="icon-xs" variant="outline">
           <Pencil />
         </TableActionButton>
-        <TableActionButton
+        <DeleteTableActionButton
           disabled={!canManageMinutes || isBusy}
+          description={`Deletar a ata de ${formatDate(minute.date)}? Essa ação remove a ata sacramental.`}
           label="Deletar ata"
-          onClick={() => void requestDeleteMinute(minute)}
+          onConfirm={() => void requestDeleteMinute(minute)}
           size="icon-xs"
-          variant="destructive"
-        >
-          <Trash2 />
-        </TableActionButton>
+        />
       </div>
     );
   }
@@ -842,14 +831,12 @@ export default function MinutesPage() {
                 <Copy />
               </TableActionButton>
               {canManageMinutes ? (
-                <TableActionButton
+                <DeleteTableActionButton
                   disabled={isMinuteLockedByOther(minute)}
+                  description={`Deletar a ata de ${formatDate(minute.date)}? Essa ação remove a ata sacramental.`}
                   label="Deletar ata"
-                  onClick={() => void requestDeleteMinute(minute)}
-                  variant="destructive"
-                >
-                  <Trash2 />
-                </TableActionButton>
+                  onConfirm={() => void requestDeleteMinute(minute)}
+                />
               ) : null}
             </div>
           );
@@ -960,12 +947,24 @@ export default function MinutesPage() {
               onSelectionActiveChange={setMinuteSelectionActive}
               renderSelectedActions={
                 canManageMinutes
-                  ? (selectedMinutes) => (
-                      <Button disabled={!selectedMinutes.length} onClick={() => void requestDeleteSelectedMinutes(selectedMinutes)} size="sm" variant="destructive">
-                        <Trash2 />
-                        Apagar selecionadas
-                      </Button>
-                    )
+                  ? (selectedMinutes) => {
+                      const deletableCount = selectedMinutes.filter((minute) => !isMinuteLockedByOther(minute)).length;
+                      const lockedCount = selectedMinutes.length - deletableCount;
+                      const lockedMessage = lockedCount ? ` ${lockedCount} bloqueada(s) por outra pessoa serão mantidas.` : "";
+
+                      return (
+                        <DeleteConfirmationDialog
+                          confirmLabel="Apagar selecionadas"
+                          description={`Deletar ${deletableCount} ata(s) selecionada(s)?${lockedMessage}`}
+                          onConfirm={() => void requestDeleteSelectedMinutes(selectedMinutes)}
+                        >
+                          <Button disabled={!selectedMinutes.length} size="sm" variant="destructive">
+                            <Trash2 />
+                            Apagar selecionadas
+                          </Button>
+                        </DeleteConfirmationDialog>
+                      );
+                    }
                   : undefined
               }
               selectionActive={minuteSelectionActive}

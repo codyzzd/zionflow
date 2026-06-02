@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { DollarSign, ThumbsUp, Trash2 } from "lucide-react";
+import { DollarSign, ThumbsUp } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
 
@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteTableActionButton } from "@/components/ui/delete-confirmation-dialog";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { normalizeDateInput } from "@/lib/utils";
@@ -133,18 +134,17 @@ export default function CaravanApprovalDetailPage() {
                 <DollarSign />
               </TableActionButton>
 
-              <TableActionButton
+              <DeleteTableActionButton
                 aria-label={`Excluir ${person.name}`}
                 className="size-10"
+                confirmLabel="Excluir passageiro"
+                description={`Excluir ${person.name} desta caravana? Essa ação remove a inscrição do passageiro.`}
                 disabled={!canManageApprovals}
                 label="Excluir passageiro"
-                onClick={() => deleteCaravanRegistration(registration.id)}
+                onConfirm={() => deleteCaravanRegistration(registration.id)}
                 size="icon"
                 tooltip={canManageApprovals ? "Excluir passageiro" : "Somente leitura"}
-                variant="destructive"
-              >
-                <Trash2 />
-              </TableActionButton>
+              />
             </div>
           );
         },

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
@@ -365,10 +366,16 @@ export default function SystemStakesPage() {
                           <RotateCcw />
                           Desarquivar
                         </Button>
-                        <Button disabled={selectedStakeWardCount > 0} onClick={() => deleteStake(selectedStake.id)} variant="destructive">
-                          <Trash2 />
-                          Deletar
-                        </Button>
+                        <DeleteConfirmationDialog
+                          confirmLabel="Deletar"
+                          description={`Deletar a estaca ${selectedStake.name}? Essa ação remove a estaca permanentemente.`}
+                          onConfirm={() => deleteStake(selectedStake.id)}
+                        >
+                          <Button disabled={selectedStakeWardCount > 0} variant="destructive">
+                            <Trash2 />
+                            Deletar
+                          </Button>
+                        </DeleteConfirmationDialog>
                       </>
                     ) : (
                       <Button onClick={() => archiveStake(selectedStake.id)} variant="destructive">

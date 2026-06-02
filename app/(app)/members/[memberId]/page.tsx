@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { parseCoordinateInput } from "@/lib/coordinates";
 import { TALK_DURATION_OPTIONS, talkDurationLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory } from "@/lib/member-talk-history";
 import { normalizeDateInput } from "@/lib/utils";
@@ -45,13 +46,6 @@ function calculateAge(birthDate: string) {
   }
 
   return age >= 0 ? age : null;
-}
-
-function parseCoordinateInput(value: string) {
-  if (!value.trim()) return undefined;
-  const parsed = Number(value.replace(",", "."));
-
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function memberToForm(member: Member): MemberForm {

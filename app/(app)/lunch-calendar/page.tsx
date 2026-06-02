@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DatePicker } from "@/components/ui/date-picker";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -510,9 +511,6 @@ export default function LunchCalendarPage() {
   }
 
   function removeLunch(lunch: LunchSchedule) {
-    const confirmed = window.confirm(`Remover o almoço de ${formatDate(lunch.date)} às ${lunch.time}?`);
-    if (!confirmed) return;
-
     deleteLunchSchedule(lunch.id);
   }
 
@@ -838,10 +836,16 @@ export default function LunchCalendarPage() {
                           <Pencil />
                           Editar
                         </Button>
-                        <Button onClick={() => removeLunch(lunch)} size="sm" variant="destructive">
-                          <Trash2 />
-                          Remover
-                        </Button>
+                        <DeleteConfirmationDialog
+                          confirmLabel="Remover"
+                          description={`Remover o almoço de ${formatDate(lunch.date)} às ${lunch.time}? Essa ação remove o agendamento.`}
+                          onConfirm={() => removeLunch(lunch)}
+                        >
+                          <Button size="sm" variant="destructive">
+                            <Trash2 />
+                            Remover
+                          </Button>
+                        </DeleteConfirmationDialog>
                       </div>
                     ) : null}
                   </div>

@@ -10,6 +10,7 @@ import { SystemAdminGuard } from "@/components/shared/system-admin-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
@@ -220,10 +221,16 @@ export default function SystemHymnBooksPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
                 <div>
                   {isReadOnly && selectedHymnBook ? (
-                    <Button disabled={selectedHymnCount > 0} onClick={deleteSelectedHymnBook} variant="destructive">
-                      <Trash2 />
-                      Apagar livro
-                    </Button>
+                    <DeleteConfirmationDialog
+                      confirmLabel="Apagar livro"
+                      description={`Apagar o livro ${selectedHymnBook.name}? Essa ação remove o livro de hinos.`}
+                      onConfirm={deleteSelectedHymnBook}
+                    >
+                      <Button disabled={selectedHymnCount > 0} variant="destructive">
+                        <Trash2 />
+                        Apagar livro
+                      </Button>
+                    </DeleteConfirmationDialog>
                   ) : null}
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">

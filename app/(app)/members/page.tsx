@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
+import { DeleteConfirmationDialog, DeleteTableActionButton } from "@/components/ui/delete-confirmation-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +38,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { parseCoordinateInput } from "@/lib/coordinates";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
 import { buildBrazilWhatsAppUrl } from "@/lib/phone";
@@ -113,13 +115,6 @@ function matchesAgeRange(age: number | null, minimum: number | null, maximum: nu
 
 function hasValidCoordinates(member: Member) {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
-}
-
-function parseCoordinateInput(value: string) {
-  if (!value.trim()) return undefined;
-  const parsed = Number(value.replace(",", "."));
-
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function memberToForm(member: Member): MemberForm {
@@ -435,16 +430,23 @@ export default function MembersPage() {
           const member = row.original;
 
           return (
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-1">
               <TableActionButton label="Visualizar" onClick={() => openViewDrawer(member)}>
                 <Eye />
               </TableActionButton>
+              {canManageMembers ? (
+                <DeleteTableActionButton
+                  description={`Excluir ${member.name}? Essa ação remove o membro do cadastro da ala.`}
+                  label="Excluir membro"
+                  onConfirm={() => deleteMembers([member.id])}
+                />
+              ) : null}
             </div>
           );
         },
       },
     ],
-    [canManageMembers, formatDate, openViewDrawer, talkHistoryByMemberId],
+    [canManageMembers, deleteMembers, formatDate, openViewDrawer, talkHistoryByMemberId],
   );
 
   return (
@@ -615,15 +617,16 @@ export default function MembersPage() {
                           </DropdownMenuGroup>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                      <Button
-                        disabled={!selectedMembers.length}
-                        onClick={() => deleteMembers(selectedMembers.map((member) => member.id))}
-                        size="sm"
-                        variant="destructive"
+                      <DeleteConfirmationDialog
+                        confirmLabel="Apagar selecionados"
+                        description={`Excluir ${selectedMembers.length} membro(s) selecionado(s)? Essa ação remove os membros do cadastro da ala.`}
+                        onConfirm={() => deleteMembers(selectedMembers.map((member) => member.id))}
                       >
-                        <Trash2 />
-                        Apagar selecionados
-                      </Button>
+                        <Button disabled={!selectedMembers.length} size="sm" variant="destructive">
+                          <Trash2 />
+                          Apagar selecionados
+                        </Button>
+                      </DeleteConfirmationDialog>
                     </>
                   )
                 : undefined
