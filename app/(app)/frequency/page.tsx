@@ -1,9 +1,10 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { ExternalLink, Pencil } from "lucide-react";
+import { Gauge, Minus, TrendingDown, TrendingUp, UsersRound, ExternalLink, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -18,8 +19,27 @@ import { Label } from "@/components/ui/label";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import { fetchMinuteWeather, WARD_WEATHER_REQUIRED_MESSAGE } from "@/lib/minute-weather";
 import { cn, todayDate } from "@/lib/utils";
 import type { SacramentMinute } from "@/types/domain";
+
+const CHART_WIDTH = 1000;
+const CHART_HEIGHT = 340;
+const CHART_PADDING_TOP = 28;
+const CHART_PADDING_RIGHT = 18;
+const CHART_PADDING_BOTTOM = 76;
+const CHART_PADDING_LEFT = 44;
+
+type ChartPoint = {
+  id: string;
+  date: string;
+  attendance: number;
+  type: "real" | "projection";
+  expected?: number;
+  upper?: number;
+  lower?: number;
+  minute?: SacramentMinute;
+};
 
 function attendanceLabel(attendance: number) {
   return attendance > 0 ? attendance.toString() : "Pendente";
@@ -32,26 +52,25 @@ function averageAttendance(minutes: SacramentMinute[]) {
   return Math.round(filled.reduce((total, minute) => total + minute.form.attendance, 0) / filled.length);
 }
 
-function attendanceTrendPercent(minutes: SacramentMinute[]) {
+function attendanceChangePercent(minutes: SacramentMinute[]) {
   const [latest, previous] = minutes;
   if (!latest || !previous || previous.form.attendance <= 0) return null;
 
   return Math.round(((latest.form.attendance - previous.form.attendance) / previous.form.attendance) * 100);
 }
 
-function trendLabel(percent: number | null) {
+function attendanceChangeLabel(percent: number | null) {
   if (percent === null) return "Sem base";
-  if (percent > 0) return `Crescendo ${percent}%`;
-  if (percent < 0) return `Caindo ${Math.abs(percent)}%`;
-  return "Estável";
+  if (percent !== 0) return "vs ata anterior";
+  return "Sem mudança vs ata anterior";
 }
 
-function trendValue(percent: number | null) {
+function attendanceChangeValue(percent: number | null) {
   if (percent === null) return "-";
   return `${percent > 0 ? "+" : ""}${percent}%`;
 }
 
-function trendToneClass(percent: number | null) {
+function attendanceChangeToneClass(percent: number | null) {
   if (percent === null || percent === 0) return "text-foreground";
   if (percent > 0) return "text-emerald-600 dark:text-emerald-400";
   return "text-red-600 dark:text-red-400";
@@ -73,9 +92,9 @@ function nextSundayDates(afterDate: string, count: number) {
   });
 }
 
-function projectedAttendances(minutes: SacramentMinute[], count: number) {
-  if (!minutes.length) return [];
-  if (minutes.length === 1) return Array.from({ length: count }, () => minutes[0].form.attendance);
+function linearRegression(minutes: SacramentMinute[]) {
+  if (!minutes.length) return { intercept: 0, residualStdDev: 0, slope: 0 };
+  if (minutes.length === 1) return { intercept: minutes[0].form.attendance, residualStdDev: 0, slope: 0 };
 
   const points = minutes.map((minute, index) => ({ x: index, y: minute.form.attendance }));
   const xAverage = points.reduce((total, point) => total + point.x, 0) / points.length;
@@ -84,8 +103,140 @@ function projectedAttendances(minutes: SacramentMinute[], count: number) {
   const denominator = points.reduce((total, point) => total + (point.x - xAverage) ** 2, 0);
   const slope = denominator === 0 ? 0 : numerator / denominator;
   const intercept = yAverage - slope * xAverage;
+  const residuals = points.map((point) => point.y - (intercept + slope * point.x));
+  const residualVariance = residuals.reduce((total, residual) => total + residual ** 2, 0) / Math.max(1, residuals.length - 1);
 
-  return Array.from({ length: count }, (_, index) => Math.max(0, Math.round(intercept + slope * (points.length + index))));
+  return { intercept, residualStdDev: Math.sqrt(residualVariance), slope };
+}
+
+function projectedAttendanceScenarios(minutes: SacramentMinute[], count: number) {
+  if (!minutes.length) return [];
+
+  const { intercept, residualStdDev, slope } = linearRegression(minutes);
+  const average = averageAttendance(minutes);
+  const minimumScenarioGap = Math.max(3, Math.round(average * 0.08));
+
+  return Array.from({ length: count }, (_, index) => {
+    const step = index + 1;
+    const normal = Math.max(0, Math.round(intercept + slope * (minutes.length + index)));
+    const uncertainty = Math.max(minimumScenarioGap, Math.round(residualStdDev * Math.sqrt(step) * 0.85));
+
+    return {
+      normal,
+      lower: Math.max(0, normal - uncertainty),
+      upper: Math.max(0, normal + uncertainty),
+    };
+  });
+}
+
+function buildLinePath(points: Array<{ x: number; y: number }>) {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+}
+
+function buildAreaPath(points: Array<{ lowerY?: number; upperY?: number; x: number }>) {
+  const filledPoints = points.filter((point): point is { lowerY: number; upperY: number; x: number } => typeof point.lowerY === "number" && typeof point.upperY === "number");
+  if (!filledPoints.length) return "";
+
+  const upperPath = filledPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.upperY.toFixed(2)}`).join(" ");
+  const lowerPath = [...filledPoints]
+    .reverse()
+    .map((point) => `L ${point.x.toFixed(2)} ${point.lowerY.toFixed(2)}`)
+    .join(" ");
+
+  return `${upperPath} ${lowerPath} Z`;
+}
+
+function formatTemperatureShort(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value)}°` : "-";
+}
+
+function formatPrecipitationShort(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mm` : "-";
+}
+
+function chartTooltip(point: ChartPoint, dateLabel: string) {
+  const details = [`${dateLabel}`, `Frequência: ${point.attendance}`];
+  if (point.type === "projection") {
+    details[1] = `Previsão: ${point.attendance}`;
+    if (typeof point.lower === "number" && typeof point.upper === "number") details.push(`Faixa provável: ${point.lower} a ${point.upper}`);
+    if (typeof point.expected === "number") details.push(`Frequência esperada: ${point.expected}`);
+    return details.join("\n");
+  }
+
+  const weather = point.minute?.form.weather;
+  if (weather) {
+    details.push(`Temperatura: ${formatTemperatureShort(weather.temperatureMeanC)}`);
+    details.push(`Chuva: ${formatPrecipitationShort(weather.precipitationMm)}`);
+  }
+
+  return details.join("\n");
+}
+
+function predictedTrendSummary(projections: ChartPoint[]) {
+  const projectedPoints = projections.filter((point) => point.type === "projection");
+  if (projectedPoints.length < 2) return "Tendência prevista: sem base suficiente";
+
+  const first = projectedPoints[0].attendance;
+  const last = projectedPoints.at(-1)?.attendance ?? first;
+  const delta = last - first;
+
+  if (delta >= 4) return "Tendência prevista: alta provável";
+  if (delta <= -4) return "Tendência prevista: queda provável";
+  if (delta > 0) return "Tendência prevista: estabilidade com leve chance de alta";
+  if (delta < 0) return "Tendência prevista: estabilidade com leve chance de queda";
+  return "Tendência prevista: estabilidade";
+}
+
+function projectionConfidenceLabel(realCount: number, residualStdDev: number, average: number) {
+  if (realCount < 3) return "baixa";
+  if (!average || residualStdDev / average > 0.18) return "baixa";
+  if (residualStdDev / average > 0.1) return "média";
+  return "alta";
+}
+
+function predictedTrendTone(label: string) {
+  if (label.includes("alta")) {
+    return {
+      card: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+      icon: TrendingUp,
+      iconWrap: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
+    };
+  }
+
+  if (label.includes("queda")) {
+    return {
+      card: "border-red-500/20 bg-red-500/10 text-red-300",
+      icon: TrendingDown,
+      iconWrap: "bg-red-500/15 text-red-300 ring-red-500/25",
+    };
+  }
+
+  return {
+    card: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+    icon: Minus,
+    iconWrap: "bg-sky-500/15 text-sky-300 ring-sky-500/25",
+  };
+}
+
+function confidenceTone(label: string) {
+  if (label === "alta") {
+    return {
+      card: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+      iconWrap: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
+    };
+  }
+
+  if (label === "baixa") {
+    return {
+      card: "border-red-500/20 bg-red-500/10 text-red-300",
+      iconWrap: "bg-red-500/15 text-red-300 ring-red-500/25",
+    };
+  }
+
+  return {
+    card: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+    iconWrap: "bg-amber-500/15 text-amber-300 ring-amber-500/25",
+  };
 }
 
 export default function FrequencyPage() {
@@ -128,26 +279,68 @@ export default function FrequencyPage() {
   const filledMinutes = sortedMinutes.filter((minute) => minute.form.attendance > 0);
   const pendingMinutes = sortedMinutes.filter((minute) => minute.form.attendance === 0 && minute.date <= todayDate());
   const lastFilledMinute = filledMinutes[0];
-  const trendPercent = attendanceTrendPercent(filledMinutes);
+  const attendanceChangePercentValue = attendanceChangePercent(filledMinutes);
   const realTrendMinutes = [...filledMinutes].reverse();
   const visibleRealTrendMinutes = realTrendMinutes.slice(-8);
   const projectionDates = lastFilledMinute ? nextSundayDates(lastFilledMinute.date, 4) : [];
-  const projectionValues = projectedAttendances(realTrendMinutes, 4);
-  const trendData = [
+  const projectionValues = projectedAttendanceScenarios(realTrendMinutes, 4);
+  const expectedAttendance = averageAttendance(realTrendMinutes);
+  const { residualStdDev } = linearRegression(realTrendMinutes);
+  const trendData: ChartPoint[] = [
     ...visibleRealTrendMinutes.map((minute) => ({
       id: minute.id,
       date: minute.date,
       attendance: minute.form.attendance,
+      expected: expectedAttendance,
+      minute,
       type: "real" as const,
     })),
     ...projectionDates.map((date, index) => ({
       id: `projection-${date}`,
       date,
-      attendance: projectionValues[index] ?? 0,
+      attendance: projectionValues[index]?.normal ?? 0,
+      expected: expectedAttendance,
+      lower: projectionValues[index]?.lower ?? 0,
+      upper: projectionValues[index]?.upper ?? 0,
       type: "projection" as const,
     })),
   ];
-  const chartMaxAttendance = Math.max(...trendData.map((point) => point.attendance), 1);
+  const chartValues = trendData.flatMap((point) => [point.attendance, point.expected, point.upper, point.lower].filter((value): value is number => typeof value === "number"));
+  const chartMinValue = Math.max(0, Math.min(...chartValues, 0) - 8);
+  const chartMaxValue = Math.max(...chartValues, 1) + 8;
+  const chartRange = Math.max(1, chartMaxValue - chartMinValue);
+  const chartInnerWidth = CHART_WIDTH - CHART_PADDING_LEFT - CHART_PADDING_RIGHT;
+  const chartInnerHeight = CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM;
+  const showInlineWeather = trendData.length <= 9;
+  const chartCoordinates = trendData.map((point, index) => {
+    const x = CHART_PADDING_LEFT + (trendData.length <= 1 ? chartInnerWidth / 2 : (index / (trendData.length - 1)) * chartInnerWidth);
+    const toY = (value: number) => CHART_PADDING_TOP + ((chartMaxValue - value) / chartRange) * chartInnerHeight;
+
+    return {
+      ...point,
+      x,
+      y: toY(point.attendance),
+      expectedY: typeof point.expected === "number" ? toY(point.expected) : undefined,
+      lowerY: typeof point.lower === "number" ? toY(point.lower) : undefined,
+      upperY: typeof point.upper === "number" ? toY(point.upper) : undefined,
+    };
+  });
+  const realCoordinates = chartCoordinates.filter((point) => point.type === "real");
+  const lastRealCoordinate = realCoordinates.at(-1);
+  const projectionCoordinates = chartCoordinates.filter((point) => point.type === "projection");
+  const projectionBaseCoordinates = lastRealCoordinate ? [lastRealCoordinate, ...projectionCoordinates] : projectionCoordinates;
+  const realLinePath = buildLinePath(realCoordinates);
+  const projectionLinePath = buildLinePath(projectionBaseCoordinates);
+  const uncertaintyAreaPath = buildAreaPath(projectionCoordinates);
+  const expectedLinePath = buildLinePath(chartCoordinates.filter((point) => typeof point.expectedY === "number").map((point) => ({ x: point.x, y: point.expectedY! })));
+  const projectedRangeValues = projectionCoordinates.flatMap((point) => [point.lower, point.upper].filter((value): value is number => typeof value === "number"));
+  const projectedRangeLabel = projectedRangeValues.length ? `${Math.min(...projectedRangeValues)} a ${Math.max(...projectedRangeValues)} pessoas` : "-";
+  const confidenceLabel = projectionConfidenceLabel(realTrendMinutes.length, residualStdDev, expectedAttendance);
+  const predictedTrendLabel = predictedTrendSummary(trendData);
+  const predictedTrendDisplay = predictedTrendLabel.replace("Tendência prevista: ", "");
+  const predictedTrendStyle = predictedTrendTone(predictedTrendLabel);
+  const PredictedTrendIcon = predictedTrendStyle.icon;
+  const confidenceStyle = confidenceTone(confidenceLabel);
 
   function openAttendanceDrawer(minute: SacramentMinute) {
     setSelectedMinuteId(minute.id);
@@ -159,11 +352,23 @@ export default function FrequencyPage() {
     setAttendanceDraft("");
   }
 
-  function saveAttendance() {
+  async function saveAttendance() {
     if (!selectedMinute || !currentWard) return;
 
     const attendance = Math.max(0, Math.round(Number(attendanceDraft)));
     if (!Number.isFinite(attendance)) return;
+
+    let weather = selectedMinute.form.weather;
+    try {
+      weather = await fetchMinuteWeather(selectedMinute.date, currentWard);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível buscar o clima da ata.";
+      if (message === WARD_WEATHER_REQUIRED_MESSAGE) {
+        toast.info(message);
+      } else {
+        toast.error(message);
+      }
+    }
 
     saveMinute({
       id: selectedMinute.id,
@@ -176,6 +381,7 @@ export default function FrequencyPage() {
       form: {
         ...selectedMinute.form,
         attendance,
+        weather,
       },
     });
     closeAttendanceDrawer();
@@ -245,7 +451,7 @@ export default function FrequencyPage() {
         />
 
         <div className="space-y-6">
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid min-w-0 gap-3 md:grid-cols-3">
             <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
               <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Média</p>
               <p className="mt-2 text-3xl font-semibold tabular-nums">{averageAttendance(sortedMinutes) || "-"}</p>
@@ -255,11 +461,11 @@ export default function FrequencyPage() {
               <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Última</p>
               <p className="mt-2 text-3xl font-semibold tabular-nums">{lastFilledMinute?.form.attendance || "-"}</p>
               <p className="mt-1 text-sm text-muted-foreground">{lastFilledMinute ? formatDate(lastFilledMinute.date) : "Sem frequência"}</p>
-            </div>
-            <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
-              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Tendência</p>
-              <p className={cn("mt-2 text-3xl font-semibold tabular-nums", trendToneClass(trendPercent))}>{trendValue(trendPercent)}</p>
-              <p className={cn("mt-1 text-sm", trendToneClass(trendPercent))}>{trendLabel(trendPercent)} vs ata anterior</p>
+              <p className={cn("mt-1 text-sm font-medium tabular-nums", attendanceChangeToneClass(attendanceChangePercentValue))}>
+                {attendanceChangePercentValue === null || attendanceChangePercentValue === 0
+                  ? attendanceChangeLabel(attendanceChangePercentValue)
+                  : `${attendanceChangeValue(attendanceChangePercentValue)} ${attendanceChangeLabel(attendanceChangePercentValue)}`}
+              </p>
             </div>
             <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
               <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Pendentes</p>
@@ -272,67 +478,183 @@ export default function FrequencyPage() {
             <div className="mb-4 flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-base font-medium">Progresso da frequência</h2>
-                <p className="text-sm text-muted-foreground">Trajeto real das últimas atas preenchidas e projeção para os próximos 4 domingos.</p>
+                <p className="text-sm text-muted-foreground">Histórico registrado e previsão provável para os próximos 4 domingos.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-primary" />
-                  Real
+                  <span className="h-2.5 w-5 rounded-full bg-primary" />
+                  Frequência registrada
                 </span>
                 <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm border border-dashed border-muted-foreground bg-muted-foreground/20" />
-                  Projeção
+                  <span className="h-0 w-5 border-t-2 border-dashed border-primary" />
+                  Previsão
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-5 rounded-full bg-primary/15 ring-1 ring-primary/20" />
+                  Margem provável
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-0 w-5 border-t-2 border-dotted border-muted-foreground" />
+                  Frequência esperada
                 </span>
               </div>
             </div>
 
             <div className="w-full overflow-hidden">
               {trendData.length ? (
-                <div className="flex h-72 items-end gap-2 border-b border-border pb-2 md:gap-3">
-                  {trendData.map((point) => {
-                    const height = Math.max(8, (point.attendance / chartMaxAttendance) * 100);
-                    const [dateLine, yearLine] = chartDateParts(point.date);
-                    const minute = point.type === "real" ? minutesByWard.find((item) => item.id === point.id) : undefined;
-                    const isEditable = canManageFrequency && Boolean(minute);
-                    const chartColumn = (
-                      <>
-                        <p className="text-xs font-medium tabular-nums md:text-sm">{point.attendance}</p>
-                        <div className="flex h-40 w-full items-end rounded-md bg-muted/50 px-1.5 py-1.5 md:h-44 md:px-2 md:py-2">
-                          <div
-                            aria-hidden="true"
-                            className={cn(
-                              "w-full rounded-sm transition-[height,background-color,border-color]",
-                              point.type === "real"
-                                ? "bg-primary"
-                                : "border border-dashed border-muted-foreground bg-muted-foreground/20",
-                            )}
-                            style={{ height: `${height}%` }}
+                <div className="relative h-[320px] min-h-[300px] w-full md:h-[340px]">
+                  <svg
+                    aria-label="Gráfico de linha da frequência sacramental com projeções"
+                    className="absolute inset-0 size-full overflow-visible"
+                    preserveAspectRatio="none"
+                    role="img"
+                    viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+                  >
+                    {[0, 1, 2, 3].map((tick) => {
+                      const y = CHART_PADDING_TOP + (tick / 3) * chartInnerHeight;
+
+                      return (
+                        <g key={tick}>
+                          <line
+                            className="stroke-border"
+                            strokeDasharray={tick === 3 ? undefined : "3 6"}
+                            vectorEffect="non-scaling-stroke"
+                            x1={CHART_PADDING_LEFT}
+                            x2={CHART_WIDTH - CHART_PADDING_RIGHT}
+                            y1={y}
+                            y2={y}
                           />
-                        </div>
-                        <div className="text-center text-[10px] leading-3 text-muted-foreground tabular-nums md:text-xs md:leading-4">
-                          <p>{dateLine}</p>
-                          {yearLine ? <p>{yearLine}</p> : null}
-                        </div>
+                        </g>
+                      );
+                    })}
+
+                    {uncertaintyAreaPath ? (
+                      <path className="fill-primary/15 stroke-primary/20" d={uncertaintyAreaPath} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                    ) : null}
+                    {lastRealCoordinate && projectionCoordinates.length ? (
+                      <line
+                        className="stroke-muted-foreground/30"
+                        strokeDasharray="4 8"
+                        vectorEffect="non-scaling-stroke"
+                        x1={lastRealCoordinate.x}
+                        x2={lastRealCoordinate.x}
+                        y1={CHART_PADDING_TOP}
+                        y2={CHART_HEIGHT - CHART_PADDING_BOTTOM + 8}
+                      />
+                    ) : null}
+                    {expectedLinePath ? (
+                      <path
+                        className="fill-none stroke-muted-foreground/70"
+                        d={expectedLinePath}
+                        strokeDasharray="2 7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ) : null}
+                    {projectionLinePath ? (
+                      <path
+                        className="fill-none stroke-primary"
+                        d={projectionLinePath}
+                        strokeDasharray="6 7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2.5}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ) : null}
+                    {realLinePath ? (
+                      <path className="fill-none stroke-primary" d={realLinePath} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+                    ) : null}
+                  </svg>
+
+                  {[0, 1, 2, 3].map((tick) => {
+                    const y = CHART_PADDING_TOP + (tick / 3) * chartInnerHeight;
+                    const value = Math.round(chartMaxValue - (tick / 3) * chartRange);
+
+                    return (
+                      <span
+                        className="pointer-events-none absolute left-0 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums"
+                        key={tick}
+                        style={{ top: `${(y / CHART_HEIGHT) * 100}%` }}
+                      >
+                        {value}
+                      </span>
+                    );
+                  })}
+
+                  {chartCoordinates.map((point) => {
+                    const isProjection = point.type === "projection";
+                    const pointDateLabel = chartDateLabel(point.date);
+                    const pointTitle = chartTooltip(point, pointDateLabel);
+                    const pointStyle = {
+                      left: `${(point.x / CHART_WIDTH) * 100}%`,
+                      top: `${(point.y / CHART_HEIGHT) * 100}%`,
+                    };
+                    const pointContent = (
+                      <>
+                        <span
+                          className={cn(
+                            "absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium tabular-nums",
+                            isProjection ? "text-slate-700 dark:text-slate-200" : "text-foreground",
+                          )}
+                        >
+                          {isProjection ? `Prev. ${point.attendance}` : point.attendance}
+                        </span>
+                        <span
+                          className={cn(
+                            "block rounded-full border-[2.5px] transition-[background-color,border-color,transform]",
+                            isProjection ? "size-2.5 border-slate-500 bg-background dark:border-slate-300" : "size-3 border-background bg-primary",
+                          )}
+                        />
                       </>
                     );
 
-                    return isEditable && minute ? (
+                    return point.minute && canManageFrequency ? (
                       <button
-                        aria-label={`Editar frequência de ${chartDateLabel(point.date)}: ${point.attendance}`}
-                        className="flex min-w-0 flex-1 flex-col items-center gap-2 rounded-md transition-transform hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96]"
+                        aria-label={`Editar frequência de ${pointDateLabel}: ${point.attendance}`}
+                        className="absolute z-10 flex size-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96]"
                         key={point.id}
-                        onClick={() => openAttendanceDrawer(minute)}
+                        onClick={() => openAttendanceDrawer(point.minute!)}
+                        style={pointStyle}
+                        title={pointTitle}
                         type="button"
                       >
-                        {chartColumn}
+                        {pointContent}
                       </button>
                     ) : (
                       <div
-                        aria-label={`${chartDateLabel(point.date)}: ${point.attendance}`}
-                        className="flex min-w-0 flex-1 flex-col items-center gap-2"
+                        aria-label={`${pointDateLabel}: ${point.attendance}`}
+                        className="absolute z-10 flex size-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
                         key={point.id}
+                        role="img"
+                        style={pointStyle}
+                        title={pointTitle}
                       >
-                        {chartColumn}
+                        {pointContent}
+                      </div>
+                    );
+                  })}
+
+                  {chartCoordinates.map((point) => {
+                    const isProjection = point.type === "projection";
+                    const [dateLine, yearLine] = chartDateParts(point.date);
+                    const weather = point.minute?.form.weather;
+
+                    return (
+                      <div
+                        className="pointer-events-none absolute flex -translate-x-1/2 flex-col items-center text-center leading-none"
+                        key={`axis-${point.id}`}
+                        style={{ left: `${(point.x / CHART_WIDTH) * 100}%`, top: `${((CHART_HEIGHT - 42) / CHART_HEIGHT) * 100}%` }}
+                      >
+                        <span className="whitespace-nowrap text-[11px] font-medium text-muted-foreground tabular-nums">{dateLine}</span>
+                        <span className="mt-1 whitespace-nowrap text-[9px] text-muted-foreground/80 tabular-nums">{isProjection ? "projeção" : yearLine}</span>
+                        {showInlineWeather && weather ? (
+                          <span className="mt-2 hidden whitespace-nowrap rounded-md bg-muted/70 px-1.5 py-0.5 text-[9px] text-muted-foreground tabular-nums md:inline">
+                            {formatTemperatureShort(weather.temperatureMeanC)} | {formatPrecipitationShort(weather.precipitationMm)}
+                          </span>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -343,6 +665,38 @@ export default function FrequencyPage() {
                 </div>
               )}
             </div>
+
+            {projectionCoordinates.length ? (
+              <div className="mt-4 grid gap-2 border-t border-border pt-4 text-sm md:grid-cols-3">
+                <div className={cn("flex items-center gap-3 rounded-md border px-3 py-2.5", predictedTrendStyle.card)}>
+                  <span className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-md ring-1", predictedTrendStyle.iconWrap)}>
+                    <PredictedTrendIcon className="size-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Tendência prevista</p>
+                    <p className="mt-1 text-pretty font-medium leading-snug">{predictedTrendDisplay}</p>
+                  </div>
+                </div>
+                <div className={cn("flex items-center gap-3 rounded-md border px-3 py-2.5", confidenceStyle.card)}>
+                  <span className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-md ring-1", confidenceStyle.iconWrap)}>
+                    <Gauge className="size-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Confiança</p>
+                    <p className="mt-1 font-medium capitalize">{confidenceLabel}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/10 px-3 py-2.5 text-primary">
+                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/25">
+                    <UsersRound className="size-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Faixa provável</p>
+                    <p className="mt-1 font-medium tabular-nums">{projectedRangeLabel}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="space-y-4">

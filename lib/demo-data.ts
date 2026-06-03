@@ -37,6 +37,7 @@ export function createEmptyMinuteForm(): MinuteFormData {
     closingHymn: emptyHybridField(),
     closingPrayer: emptyHybridField(),
     notes: "",
+    weather: undefined,
   };
 }
 

@@ -1,12 +1,29 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Check, CheckSquare, ChevronsUpDown, Clock3, Copy, ExternalLink, List, LockKeyhole, Pencil, RefreshCcw, Save, SlidersHorizontal, Table2, Trash2, X } from "lucide-react";
+import {
+  Check,
+  CheckSquare,
+  ChevronsUpDown,
+  Clock3,
+  Copy,
+  ExternalLink,
+  List,
+  LockKeyhole,
+  Pencil,
+  RefreshCcw,
+  Save,
+  SlidersHorizontal,
+  Table2,
+  Trash2,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
+import { MinuteWeatherDisplay } from "@/components/features/minutes/minute-weather-display";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Button } from "@/components/ui/button";
@@ -35,6 +52,7 @@ import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { formatTalkDurationForSpeakerOption } from "@/lib/member-talk-duration";
+import { fetchMinuteWeather, WARD_WEATHER_REQUIRED_MESSAGE } from "@/lib/minute-weather";
 import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, renewMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import type { HybridField, SacramentMinute } from "@/types/domain";
@@ -45,6 +63,34 @@ type MinuteCreateForm = {
 };
 
 type MeetingsView = "table" | "sheet";
+type TableColumnKey =
+  | "weather"
+  | "presiding"
+  | "conducting"
+  | "recognitions"
+  | "announcements"
+  | "attendance"
+  | "conductor"
+  | "accompanist"
+  | "openingHymn"
+  | "openingPrayer"
+  | "releases"
+  | "sustainings"
+  | "priesthoodAdvancements"
+  | "certificates"
+  | "confirmations"
+  | "childBlessings"
+  | "sacramentHymn"
+  | "speaker1"
+  | "speaker1Theme"
+  | "speaker2"
+  | "speaker2Theme"
+  | "intermediateHymn"
+  | "speaker3"
+  | "speaker3Theme"
+  | "closingHymn"
+  | "closingPrayer"
+  | "notes";
 type SheetColumnKey = "date" | "speaker1" | "speaker1Theme" | "speaker2" | "speaker2Theme" | "speaker3" | "speaker3Theme";
 type SpeakerFieldKey = "speaker1" | "speaker2" | "speaker3";
 type SpeakerThemeFieldKey = "speaker1Theme" | "speaker2Theme" | "speaker3Theme";
@@ -61,6 +107,35 @@ type HybridOption = {
   searchValue?: string;
 };
 
+const TABLE_COLUMNS: { key: TableColumnKey; label: string; defaultVisible: boolean }[] = [
+  { key: "weather", label: "Clima", defaultVisible: false },
+  { key: "presiding", label: "Presidida por", defaultVisible: false },
+  { key: "conducting", label: "Dirigida por", defaultVisible: false },
+  { key: "recognitions", label: "Reconhecimentos", defaultVisible: false },
+  { key: "announcements", label: "Anúncios", defaultVisible: false },
+  { key: "attendance", label: "Frequência", defaultVisible: true },
+  { key: "conductor", label: "Regente", defaultVisible: false },
+  { key: "accompanist", label: "Instrumentista", defaultVisible: false },
+  { key: "openingHymn", label: "Hino inicial", defaultVisible: false },
+  { key: "openingPrayer", label: "Oração inicial", defaultVisible: false },
+  { key: "releases", label: "Desobrigações", defaultVisible: false },
+  { key: "sustainings", label: "Apoios", defaultVisible: false },
+  { key: "priesthoodAdvancements", label: "Avanço no sacerdócio", defaultVisible: false },
+  { key: "certificates", label: "Entrega de certificado", defaultVisible: false },
+  { key: "confirmations", label: "Confirmação batismal", defaultVisible: false },
+  { key: "childBlessings", label: "Bênção de criança", defaultVisible: false },
+  { key: "sacramentHymn", label: "Hino sacramental", defaultVisible: false },
+  { key: "speaker1", label: "Primeiro orador", defaultVisible: true },
+  { key: "speaker1Theme", label: "Tema 1", defaultVisible: false },
+  { key: "speaker2", label: "Segundo orador", defaultVisible: true },
+  { key: "speaker2Theme", label: "Tema 2", defaultVisible: false },
+  { key: "intermediateHymn", label: "Hino intermediário", defaultVisible: false },
+  { key: "speaker3", label: "Terceiro orador", defaultVisible: true },
+  { key: "speaker3Theme", label: "Tema 3", defaultVisible: false },
+  { key: "closingHymn", label: "Hino final", defaultVisible: false },
+  { key: "closingPrayer", label: "Última oração", defaultVisible: false },
+  { key: "notes", label: "Anotações gerais", defaultVisible: false },
+];
 const SHEET_COLUMNS: SheetColumn[] = [
   { key: "date", label: "Data", className: "w-36 min-w-36 xl:w-28 xl:min-w-28" },
   { key: "speaker1", label: "1º orador", className: "w-64 min-w-64 xl:w-32 xl:min-w-32 2xl:w-36 2xl:min-w-36" },
@@ -199,7 +274,7 @@ function InlineHybridCell({
 }
 
 export default function MinutesPage() {
-  const { applyRemoteMinuteUpdate, currentUser, currentWard, deleteMinute, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
+  const { applyRemoteMinuteUpdate, currentUser, currentWard, db, deleteMinute, hasPermission, membersByWard, minutesByWard, saveMinute, usersByWard } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMinutes = hasPermission("minutes.manage");
   const currentUserId = currentUser?.id;
@@ -209,6 +284,9 @@ export default function MinutesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [view, setView] = useState<MeetingsView>("table");
   const [minuteSelectionActive, setMinuteSelectionActive] = useState(false);
+  const [visibleTableColumns, setVisibleTableColumns] = useState<Record<TableColumnKey, boolean>>(() =>
+    Object.fromEntries(TABLE_COLUMNS.map((column) => [column.key, column.defaultVisible])) as Record<TableColumnKey, boolean>,
+  );
   const [visibleSheetColumns, setVisibleSheetColumns] = useState<Record<SheetColumnKey, boolean>>(() =>
     Object.fromEntries(SHEET_COLUMNS.map((column) => [column.key, true])) as Record<SheetColumnKey, boolean>,
   );
@@ -254,6 +332,27 @@ export default function MinutesPage() {
       return membersByWard.find((member) => member.id === field.linkedId)?.name ?? "-";
     },
     [membersByWard],
+  );
+  const formatMemberField = useCallback(
+    (field: HybridField) => {
+      if (field.mode === "manual") {
+        return field.manualValue?.trim() || "-";
+      }
+
+      return membersByWard.find((member) => member.id === field.linkedId)?.name ?? "-";
+    },
+    [membersByWard],
+  );
+  const formatHymnField = useCallback(
+    (field: HybridField) => {
+      if (field.mode === "manual") {
+        return field.manualValue?.trim() || "-";
+      }
+
+      const hymn = db.hymns.find((item) => item.id === field.linkedId);
+      return hymn ? `${hymn.number}. ${hymn.title}` : "-";
+    },
+    [db.hymns],
   );
 
   const items = useMemo(
@@ -379,11 +478,21 @@ export default function MinutesPage() {
     handleDrawerOpenChange(false);
   }
 
-  function saveCurrentMinute() {
+  async function saveCurrentMinute() {
     if (!currentWard || !form.date) return;
 
     const minuteForm = createEmptyMinuteForm();
     minuteForm.notes = form.notes.trim();
+    try {
+      minuteForm.weather = await fetchMinuteWeather(form.date, currentWard);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível buscar o clima da ata.";
+      if (message === WARD_WEATHER_REQUIRED_MESSAGE) {
+        toast.info(message);
+      } else {
+        toast.error(message);
+      }
+    }
 
     saveMinute({
       wardId: currentWard.id,
@@ -741,6 +850,147 @@ export default function MinutesPage() {
     );
   }
 
+  const tableColumnsByKey = useMemo<Record<TableColumnKey, ColumnDef<SacramentMinute>>>(
+    () => ({
+      weather: {
+        id: "weather",
+        header: "Clima",
+        cell: ({ row }) => <MinuteWeatherDisplay weather={row.original.form.weather} />,
+      },
+      presiding: {
+        id: "presiding",
+        header: "Presidida por",
+        cell: ({ row }) => formatMemberField(row.original.form.presiding),
+      },
+      conducting: {
+        id: "conducting",
+        header: "Dirigida por",
+        cell: ({ row }) => formatMemberField(row.original.form.conducting),
+      },
+      recognitions: {
+        id: "recognitions",
+        header: "Reconhecimentos",
+        cell: ({ row }) => row.original.form.recognitions || "-",
+      },
+      announcements: {
+        id: "announcements",
+        header: "Anúncios",
+        cell: ({ row }) => row.original.form.announcements || "-",
+      },
+      attendance: {
+        id: "attendance",
+        header: () => <div className="text-right">Frequência</div>,
+        cell: ({ row }) => <div className="text-right tabular-nums">{row.original.form.attendance || "-"}</div>,
+      },
+      conductor: {
+        id: "conductor",
+        header: "Regente",
+        cell: ({ row }) => formatMemberField(row.original.form.conductor),
+      },
+      accompanist: {
+        id: "accompanist",
+        header: "Instrumentista",
+        cell: ({ row }) => formatMemberField(row.original.form.accompanist),
+      },
+      openingHymn: {
+        id: "openingHymn",
+        header: "Hino inicial",
+        cell: ({ row }) => formatHymnField(row.original.form.openingHymn),
+      },
+      openingPrayer: {
+        id: "openingPrayer",
+        header: "Oração inicial",
+        cell: ({ row }) => formatMemberField(row.original.form.openingPrayer),
+      },
+      releases: {
+        id: "releases",
+        header: "Desobrigações",
+        cell: ({ row }) => row.original.form.releases || "-",
+      },
+      sustainings: {
+        id: "sustainings",
+        header: "Apoios",
+        cell: ({ row }) => row.original.form.sustainings || "-",
+      },
+      priesthoodAdvancements: {
+        id: "priesthoodAdvancements",
+        header: "Avanço no sacerdócio",
+        cell: ({ row }) => row.original.form.priesthoodAdvancements || "-",
+      },
+      certificates: {
+        id: "certificates",
+        header: "Entrega de certificado",
+        cell: ({ row }) => row.original.form.certificates || "-",
+      },
+      confirmations: {
+        id: "confirmations",
+        header: "Confirmação batismal",
+        cell: ({ row }) => row.original.form.confirmations || "-",
+      },
+      childBlessings: {
+        id: "childBlessings",
+        header: "Bênção de criança",
+        cell: ({ row }) => row.original.form.childBlessings || "-",
+      },
+      sacramentHymn: {
+        id: "sacramentHymn",
+        header: "Hino sacramental",
+        cell: ({ row }) => formatHymnField(row.original.form.sacramentHymn),
+      },
+      speaker1: {
+        id: "speaker1",
+        header: "Primeiro orador",
+        cell: ({ row }) => formatSpeakerField(row.original.form.speaker1),
+      },
+      speaker1Theme: {
+        id: "speaker1Theme",
+        header: "Tema 1",
+        cell: ({ row }) => row.original.form.speaker1Theme || "-",
+      },
+      speaker2: {
+        id: "speaker2",
+        header: "Segundo orador",
+        cell: ({ row }) => formatSpeakerField(row.original.form.speaker2),
+      },
+      speaker2Theme: {
+        id: "speaker2Theme",
+        header: "Tema 2",
+        cell: ({ row }) => row.original.form.speaker2Theme || "-",
+      },
+      intermediateHymn: {
+        id: "intermediateHymn",
+        header: "Hino intermediário",
+        cell: ({ row }) => formatHymnField(row.original.form.intermediateHymn),
+      },
+      speaker3: {
+        id: "speaker3",
+        header: "Terceiro orador",
+        cell: ({ row }) => formatSpeakerField(row.original.form.speaker3),
+      },
+      speaker3Theme: {
+        id: "speaker3Theme",
+        header: "Tema 3",
+        cell: ({ row }) => row.original.form.speaker3Theme || "-",
+      },
+      closingHymn: {
+        id: "closingHymn",
+        header: "Hino final",
+        cell: ({ row }) => formatHymnField(row.original.form.closingHymn),
+      },
+      closingPrayer: {
+        id: "closingPrayer",
+        header: "Última oração",
+        cell: ({ row }) => formatMemberField(row.original.form.closingPrayer),
+      },
+      notes: {
+        id: "notes",
+        header: "Anotações gerais",
+        cell: ({ row }) => row.original.form.notes || "-",
+      },
+    }),
+    [formatHymnField, formatMemberField, formatSpeakerField],
+  );
+
   const columns = useMemo<ColumnDef<SacramentMinute>[]>(
     () => [
       ...(canManageMinutes
@@ -783,21 +1033,7 @@ export default function MinutesPage() {
           </TablePrimaryAction>
         ),
       },
-      {
-        id: "speaker1",
-        header: "1º orador",
-        cell: ({ row }) => formatSpeakerField(row.original.form.speaker1),
-      },
-      {
-        id: "speaker2",
-        header: "2º orador",
-        cell: ({ row }) => formatSpeakerField(row.original.form.speaker2),
-      },
-      {
-        id: "speaker3",
-        header: "3º orador",
-        cell: ({ row }) => formatSpeakerField(row.original.form.speaker3),
-      },
+      ...TABLE_COLUMNS.filter((column) => visibleTableColumns[column.key]).map((column) => tableColumnsByKey[column.key]),
       {
         id: "actions",
         header: () => <div className="text-right">Ações</div>,
@@ -824,7 +1060,7 @@ export default function MinutesPage() {
                     status: "draft",
                     presidency: minute.presidency,
                     responsibleUserId: minute.responsibleUserId,
-                    form: minute.form,
+                    form: { ...minute.form, weather: undefined },
                   });
                 }}
               >
@@ -843,7 +1079,17 @@ export default function MinutesPage() {
         },
       },
     ],
-    [buildMinuteTitle, canManageMinutes, currentWard, formatDate, formatSpeakerField, isMinuteLockedByOther, requestDeleteMinute, saveMinute],
+    [
+      buildMinuteTitle,
+      canManageMinutes,
+      currentWard,
+      formatDate,
+      isMinuteLockedByOther,
+      requestDeleteMinute,
+      saveMinute,
+      tableColumnsByKey,
+      visibleTableColumns,
+    ],
   );
 
   return (
@@ -901,6 +1147,39 @@ export default function MinutesPage() {
                   Planilha
                 </Button>
               </div>
+              {view === "table" ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button size="sm" variant="outline">
+                        <SlidersHorizontal />
+                        Colunas
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>Exibir colunas</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {TABLE_COLUMNS.map((column) => (
+                        <DropdownMenuCheckboxItem
+                          checked={visibleTableColumns[column.key]}
+                          closeOnClick={false}
+                          key={column.key}
+                          onCheckedChange={(value) =>
+                            setVisibleTableColumns((current) => ({
+                              ...current,
+                              [column.key]: Boolean(value),
+                            }))
+                          }
+                        >
+                          {column.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
               {view === "sheet" ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger

@@ -99,7 +99,9 @@ type RemoteCollectionKey = (typeof REMOTE_TABLES)[number]["key"];
 type RemoteColumnValue = boolean | number | string | string[] | unknown[] | Record<string, unknown> | null;
 type RemoteColumns = Record<string, RemoteColumnValue>;
 type RemoteSchemaOptions = {
+  includeWardCoordinates?: boolean;
   includeWardLunchPDay?: boolean;
+  includeWardMeetingTime?: boolean;
   includeUserAccessLevel?: boolean;
 };
 
@@ -352,13 +354,20 @@ function normalizeStake(stake: Stake): Stake {
 }
 
 function normalizeWard(ward: Ward): Ward {
+  const latitude = asOptionalNumber(ward.latitude);
+  const longitude = asOptionalNumber(ward.longitude);
+
   return {
     id: ward.id,
     stakeId: String(ward.stakeId ?? ""),
     name: String(ward.name ?? ""),
+    address: String(ward.address ?? ""),
+    meetingTime: String(ward.meetingTime ?? ""),
     city: String(ward.city ?? ""),
     state: String(ward.state ?? ""),
     country: String(ward.country ?? "Brasil"),
+    latitude,
+    longitude,
     lunchPDayWeekday: normalizeWeekday(ward.lunchPDayWeekday),
     ...normalizeRecordMetadata(ward),
   };
@@ -681,6 +690,14 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
       return {
         stake_id: optionalUuid(record.stakeId),
         name: asOptionalString(record.name),
+        ...(options.includeWardMeetingTime === false ? {} : { meeting_time: optionalText(record.meetingTime) }),
+        ...(options.includeWardCoordinates === false
+          ? {}
+          : {
+              address: optionalText(record.address),
+              latitude: asOptionalNumber(record.latitude) ?? null,
+              longitude: asOptionalNumber(record.longitude) ?? null,
+            }),
         city: asOptionalString(record.city),
         state: asOptionalString(record.state),
         country: asOptionalString(record.country),
@@ -820,6 +837,8 @@ function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOpti
         "id",
         "stake_id",
         "name",
+        ...(options.includeWardMeetingTime === false ? [] : ["meeting_time"]),
+        ...(options.includeWardCoordinates === false ? [] : ["address", "latitude", "longitude"]),
         "city",
         "state",
         "country",
@@ -912,9 +931,13 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         id: row.id,
         stakeId: rowString(row, "stake_id", "stakeId"),
         name: rowString(row, "name", "name"),
+        address: rowString(row, "address", "address"),
+        meetingTime: rowString(row, "meeting_time", "meetingTime"),
         city: rowString(row, "city", "city"),
         state: rowString(row, "state", "state"),
         country: rowString(row, "country", "country", "Brasil"),
+        latitude: asOptionalNumber(row.latitude ?? asDataObject(row).latitude),
+        longitude: asOptionalNumber(row.longitude ?? asDataObject(row).longitude),
         lunchPDayWeekday: normalizeWeekday(rowString(row, "lunch_p_day_weekday", "lunchPDayWeekday", "monday")),
         createdAt: asString(row.created_at) ?? UNKNOWN_TIMESTAMP,
         updatedAt: asString(row.updated_at) ?? UNKNOWN_TIMESTAMP,
@@ -1023,10 +1046,40 @@ export async function loadDatabase(): Promise<Database> {
     REMOTE_TABLES.map(async ({ key, table }) => {
       let { data, error } = await supabase.from(table).select(remoteSelectColumns(key));
 
-      if (key === "wards" && isMissingRemoteColumn(error, "lunch_p_day_weekday")) {
-        const fallback = await supabase.from(table).select(remoteSelectColumns(key, { includeWardLunchPDay: false }));
-        data = fallback.data;
-        error = fallback.error;
+      if (key === "wards") {
+        const missingWardLunchPDay = isMissingRemoteColumn(error, "lunch_p_day_weekday");
+        const missingWardMeetingTime = isMissingRemoteColumn(error, "meeting_time");
+        const missingWardCoordinates =
+          isMissingRemoteColumn(error, "address") || isMissingRemoteColumn(error, "latitude") || isMissingRemoteColumn(error, "longitude");
+
+        if (missingWardLunchPDay || missingWardMeetingTime || missingWardCoordinates) {
+          const fallback = await supabase
+            .from(table)
+            .select(
+              remoteSelectColumns(key, {
+                includeWardCoordinates: !missingWardCoordinates,
+                includeWardLunchPDay: !missingWardLunchPDay,
+                includeWardMeetingTime: !missingWardMeetingTime,
+              }),
+            );
+          data = fallback.data;
+          error = fallback.error;
+
+          if (
+            key === "wards" &&
+            (isMissingRemoteColumn(error, "lunch_p_day_weekday") ||
+              isMissingRemoteColumn(error, "meeting_time") ||
+              isMissingRemoteColumn(error, "address") ||
+              isMissingRemoteColumn(error, "latitude") ||
+              isMissingRemoteColumn(error, "longitude"))
+          ) {
+            const broadFallback = await supabase
+              .from(table)
+              .select(remoteSelectColumns(key, { includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }));
+            data = broadFallback.data;
+            error = broadFallback.error;
+          }
+        }
       }
 
       if (key === "users" && isMissingRemoteColumn(error, "access_level")) {
@@ -1117,9 +1170,38 @@ export async function saveDatabase(db: Database): Promise<void> {
 
     let { error: upsertError } = await supabase.from(table).upsert(buildUpsertPayload(), { onConflict: "id" });
 
-    if (key === "wards" && isMissingRemoteColumn(upsertError, "lunch_p_day_weekday")) {
-      const fallback = await supabase.from(table).upsert(buildUpsertPayload({ includeWardLunchPDay: false }), { onConflict: "id" });
-      upsertError = fallback.error;
+    if (key === "wards") {
+      const missingWardLunchPDay = isMissingRemoteColumn(upsertError, "lunch_p_day_weekday");
+      const missingWardMeetingTime = isMissingRemoteColumn(upsertError, "meeting_time");
+      const missingWardCoordinates =
+        isMissingRemoteColumn(upsertError, "address") || isMissingRemoteColumn(upsertError, "latitude") || isMissingRemoteColumn(upsertError, "longitude");
+
+      if (missingWardLunchPDay || missingWardMeetingTime || missingWardCoordinates) {
+        const fallback = await supabase
+          .from(table)
+          .upsert(
+            buildUpsertPayload({
+              includeWardCoordinates: !missingWardCoordinates,
+              includeWardLunchPDay: !missingWardLunchPDay,
+              includeWardMeetingTime: !missingWardMeetingTime,
+            }),
+            { onConflict: "id" },
+          );
+        upsertError = fallback.error;
+
+        if (
+          isMissingRemoteColumn(upsertError, "lunch_p_day_weekday") ||
+          isMissingRemoteColumn(upsertError, "meeting_time") ||
+          isMissingRemoteColumn(upsertError, "address") ||
+          isMissingRemoteColumn(upsertError, "latitude") ||
+          isMissingRemoteColumn(upsertError, "longitude")
+        ) {
+          const broadFallback = await supabase
+            .from(table)
+            .upsert(buildUpsertPayload({ includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }), { onConflict: "id" });
+          upsertError = broadFallback.error;
+        }
+      }
     }
 
     if (key === "users" && isMissingRemoteColumn(upsertError, "access_level")) {

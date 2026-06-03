@@ -18,6 +18,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { parseCoordinateInput } from "@/lib/coordinates";
 import { cn } from "@/lib/utils";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
@@ -31,9 +32,13 @@ function createEmptyForm(): WardForm {
   return {
     stakeId: "",
     name: "",
+    address: "",
+    meetingTime: "",
     city: "",
     state: "",
     country: "Brasil",
+    latitude: undefined,
+    longitude: undefined,
     lunchPDayWeekday: "monday",
   };
 }
@@ -42,9 +47,13 @@ function wardToForm(ward: Ward): WardForm {
   return {
     stakeId: ward.stakeId,
     name: ward.name,
+    address: ward.address,
+    meetingTime: ward.meetingTime,
     city: ward.city,
     state: ward.state,
     country: ward.country,
+    latitude: ward.latitude,
+    longitude: ward.longitude,
     lunchPDayWeekday: ward.lunchPDayWeekday,
     createdAt: ward.createdAt,
     createdByUserId: ward.createdByUserId,
@@ -211,6 +220,7 @@ export default function SystemWardsPage() {
       id: selectedWard?.id,
       ...form,
       name: form.name.trim(),
+      meetingTime: form.meetingTime.trim(),
       city: form.city.trim(),
       state: form.state.trim(),
       country: form.country.trim() || "Brasil",
@@ -333,6 +343,14 @@ export default function SystemWardsPage() {
                   <Label>Cidade</Label>
                   <Input disabled={isReadOnly} value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} />
                 </div>
+                <div className="sm:col-span-2">
+                  <Label>Endereço</Label>
+                  <Input disabled={isReadOnly} value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} />
+                </div>
+                <div>
+                  <Label>Horário da reunião</Label>
+                  <Input disabled={isReadOnly} type="time" value={form.meetingTime} onChange={(event) => setForm((current) => ({ ...current, meetingTime: event.target.value }))} />
+                </div>
                 <div>
                   <Label>Estado</Label>
                   <Input disabled={isReadOnly} value={form.state} onChange={(event) => setForm((current) => ({ ...current, state: event.target.value }))} />
@@ -340,6 +358,14 @@ export default function SystemWardsPage() {
                 <div>
                   <Label>País</Label>
                   <Input disabled={isReadOnly} value={form.country} onChange={(event) => setForm((current) => ({ ...current, country: event.target.value }))} />
+                </div>
+                <div>
+                  <Label>Latitude</Label>
+                  <Input disabled={isReadOnly} inputMode="decimal" value={form.latitude ?? ""} onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))} />
+                </div>
+                <div>
+                  <Label>Longitude</Label>
+                  <Input disabled={isReadOnly} inputMode="decimal" value={form.longitude ?? ""} onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))} />
                 </div>
               </div>
             </div>

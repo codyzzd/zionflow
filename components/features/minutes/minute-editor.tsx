@@ -1,12 +1,13 @@
 "use client";
 
-import { LockKeyhole, Printer, RefreshCcw, Save, X } from "lucide-react";
+import { CloudSun, Loader2, LockKeyhole, Printer, RefreshCcw, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+import { MinuteWeatherDisplay } from "@/components/features/minutes/minute-weather-display";
 import { useAppContext } from "@/components/providers/app-provider";
 import { HybridSelector } from "@/components/shared/hybrid-selector";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
+import { fetchMinuteWeather, formatPrecipitation, formatTemperature, WARD_WEATHER_REQUIRED_MESSAGE } from "@/lib/minute-weather";
 import { acquireMinuteLock, fetchMinuteSnapshot, releaseMinuteLock, renewMinuteLock, saveLockedMinuteSnapshot, type MinuteLockInfo } from "@/lib/storage";
 import type { HybridField, MinuteFormData, SacramentMinute } from "@/types/domain";
 
@@ -89,6 +91,7 @@ export function MinuteEditor({
   const [lockVersion, setLockVersion] = useState(minute?.version ?? 1);
   const [staleMinute, setStaleMinute] = useState<SacramentMinute | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isWeatherBusy, setIsWeatherBusy] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [form, setForm] = useState<SacramentMinute | null>(() => {
     if (minute) {
@@ -301,6 +304,20 @@ export function MinuteEditor({
     return options.find((option) => option.value === field.linkedId)?.label ?? "-";
   }
 
+  async function getWeatherForMinute(date: string) {
+    try {
+      return await fetchMinuteWeather(date, currentWard);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível buscar o clima da ata.";
+      if (message === WARD_WEATHER_REQUIRED_MESSAGE) {
+        toast.info(message);
+      } else {
+        toast.error(message);
+      }
+      return undefined;
+    }
+  }
+
   async function saveMinuteDraft(nextMinute: SacramentMinute, options: { redirect?: boolean; silent?: boolean } = {}) {
     if (mode === "edit") {
       if (!currentUser?.id || !lockedByMe) {
@@ -370,10 +387,41 @@ export function MinuteEditor({
     return result.id;
   }
 
-  function saveCurrentMinute() {
+  async function saveCurrentMinute() {
     if (!form) return;
     setIsBusy(true);
-    void saveMinuteDraft(form, { redirect: mode === "new" }).finally(() => setIsBusy(false));
+    try {
+      const attendanceChanged = mode === "edit" && savedMinuteRef.current?.form.attendance !== form.form.attendance;
+      const shouldRefreshWeather = mode === "new" || attendanceChanged;
+      let nextMinute = form;
+
+      if (shouldRefreshWeather) {
+        const weather = await getWeatherForMinute(form.date);
+        if (weather) {
+          nextMinute = { ...form, form: { ...form.form, weather } };
+          setForm(nextMinute);
+        }
+      }
+
+      await saveMinuteDraft(nextMinute, { redirect: mode === "new" });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function refreshWeather() {
+    if (!form) return;
+
+    setIsWeatherBusy(true);
+    try {
+      const weather = await getWeatherForMinute(form.date);
+      if (!weather) return;
+
+      setForm((current) => (current ? { ...current, form: { ...current.form, weather } } : current));
+      toast.success("Clima da ata atualizado.");
+    } finally {
+      setIsWeatherBusy(false);
+    }
   }
 
   function updateDate(value: string) {
@@ -577,6 +625,7 @@ export function MinuteEditor({
         { label: "Presidida por", value: formatHybridField(currentForm.form.presiding, printMemberOptions) },
         { label: "Dirigida por", value: formatHybridField(currentForm.form.conducting, printMemberOptions) },
         { label: "Frequência", value: currentForm.form.attendance || "-" },
+        { label: "Clima", value: currentForm.form.weather ? `${formatTemperature(currentForm.form.weather.temperatureMeanC)} no horario, ${formatPrecipitation(currentForm.form.weather.precipitationMm)} de chuva` : "-" },
         { label: "Reconhecimentos", value: currentForm.form.recognitions, wide: true },
         { label: "Anúncios", value: currentForm.form.announcements, wide: true },
       ],
@@ -812,6 +861,22 @@ export function MinuteEditor({
                     <DatePicker disabled={disabled} value={form.date} onChange={updateDate} />
                   </div>
                 ))}
+                <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Label>Clima</Label>
+                      {form.form.weather ? (
+                        <MinuteWeatherDisplay className="mt-2" weather={form.form.weather} />
+                      ) : (
+                        <p className="mt-1 text-muted-foreground">Informe latitude, longitude e horário da reunião no cadastro da ala para buscar o clima da ata.</p>
+                      )}
+                    </div>
+                    <Button disabled={fieldsDisabled || isWeatherBusy} onClick={() => void refreshWeather()} type="button" variant="outline">
+                      {isWeatherBusy ? <Loader2 className="size-4 animate-spin" /> : <CloudSun className="size-4" />}
+                      Atualizar clima
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 

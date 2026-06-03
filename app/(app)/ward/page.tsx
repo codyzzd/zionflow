@@ -1,7 +1,8 @@
 "use client";
 
-import { Landmark, Save } from "lucide-react";
+import { Landmark, Loader2, MapPin, Save } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -12,13 +13,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { parseCoordinateInput } from "@/lib/coordinates";
 import type { Stake, User, Ward } from "@/types/domain";
 
 type WardForm = {
   name: string;
+  address: string;
+  meetingTime: string;
   city: string;
   state: string;
   country: string;
+  latitude?: number;
+  longitude?: number;
 };
 
 type StakeRegistrationForm = Pick<Stake, "name" | "city" | "state" | "country">;
@@ -26,17 +32,31 @@ type StakeRegistrationForm = Pick<Stake, "name" | "city" | "state" | "country">;
 function formFromWard(ward: Ward): WardForm {
   return {
     name: ward.name,
+    address: ward.address,
+    meetingTime: ward.meetingTime,
     city: ward.city,
     state: ward.state,
     country: ward.country,
+    latitude: ward.latitude,
+    longitude: ward.longitude,
   };
 }
 
 const emptyWardForm: WardForm = {
   name: "",
+  address: "",
+  meetingTime: "",
   city: "",
   state: "",
   country: "",
+  latitude: undefined,
+  longitude: undefined,
+};
+
+type GeocodingResult = {
+  displayName: string;
+  latitude: number;
+  longitude: number;
 };
 
 function stakeFormFromWard(ward?: Ward): StakeRegistrationForm {
@@ -123,6 +143,7 @@ export default function WardPage() {
     [currentWard, db.stakes],
   );
   const [form, setForm] = useState<WardForm>(() => (currentWard ? formFromWard(currentWard) : emptyWardForm));
+  const [isGeocoding, setIsGeocoding] = useState(false);
   const [transferTargetUserId, setTransferTargetUserId] = useState("");
   const usersById = useMemo(() => new Map(db.users.map((user) => [user.id, user])), [db.users]);
   const wardsById = useMemo(() => new Map(db.wards.map((ward) => [ward.id, ward])), [db.wards]);
@@ -153,15 +174,68 @@ export default function WardPage() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function updateCoordinateField(field: "latitude" | "longitude", value: string) {
+    setForm((current) => ({ ...current, [field]: parseCoordinateInput(value) }));
+  }
+
+  function buildWardGeocodingAddress() {
+    return [form.address, form.city, form.state, form.country].map((value) => value.trim()).filter(Boolean).join(", ");
+  }
+
+  async function handleGeocodeWardAddress() {
+    const address = buildWardGeocodingAddress();
+    if (!address) {
+      toast.error("Informe o endereço da ala antes de buscar coordenadas.");
+      return;
+    }
+
+    setIsGeocoding(true);
+    try {
+      const response = await fetch("/api/geocode/ward-address", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string; results?: GeocodingResult[] } | null;
+
+      if (!response.ok) {
+        toast.error(payload?.error ?? "Não foi possível buscar coordenadas agora.");
+        return;
+      }
+
+      const result = payload?.results?.[0];
+      if (!result) {
+        toast.error("Nenhuma coordenada encontrada para esse endereço.");
+        return;
+      }
+
+      setForm((current) => ({
+        ...current,
+        latitude: result.latitude,
+        longitude: result.longitude,
+      }));
+      toast.success("Coordenadas preenchidas. Salve a ala para persistir.");
+    } catch (error) {
+      console.error("Failed to geocode ward address.", error);
+      toast.error("Não foi possível buscar coordenadas agora.");
+    } finally {
+      setIsGeocoding(false);
+    }
+  }
+
   function handleSave() {
     if (!currentWard || !canManageWard || !form.name.trim()) return;
 
     const nextWard: Ward = {
       ...currentWard,
       name: form.name.trim(),
+      address: form.address.trim(),
+      meetingTime: form.meetingTime.trim(),
       city: form.city.trim(),
       state: form.state.trim(),
       country: form.country.trim(),
+      latitude: form.latitude,
+      longitude: form.longitude,
     };
 
     saveWard(nextWard);
@@ -195,26 +269,94 @@ export default function WardPage() {
           <CardHeader>
             <CardTitle>Cadastro da ala</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="ward-name">Nome da ala</Label>
-                <Input disabled={!canManageWard} id="ward-name" value={form.name} onChange={(event) => updateField("name", event.target.value)} />
+          <CardContent className="space-y-6">
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                <div className="space-y-2">
+                  <Label htmlFor="ward-name">Nome da ala</Label>
+                  <Input disabled={!canManageWard} id="ward-name" value={form.name} onChange={(event) => updateField("name", event.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ward-meeting-time">Horário da reunião</Label>
+                  <Input
+                    disabled={!canManageWard}
+                    id="ward-meeting-time"
+                    type="time"
+                    value={form.meetingTime}
+                    onChange={(event) => updateField("meetingTime", event.target.value)}
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="ward-city">Cidade</Label>
-                <Input disabled={!canManageWard} id="ward-city" value={form.city} onChange={(event) => updateField("city", event.target.value)} />
+                <Label htmlFor="ward-address">Endereço</Label>
+                <Input disabled={!canManageWard} id="ward-address" value={form.address} onChange={(event) => updateField("address", event.target.value)} />
               </div>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="ward-state">Estado</Label>
-                <Input disabled={!canManageWard} id="ward-state" value={form.state} onChange={(event) => updateField("state", event.target.value)} />
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">Localização</p>
+                <p className="text-xs text-muted-foreground">Dados usados para identificar a ala e montar a busca de coordenadas.</p>
               </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="ward-city">Cidade</Label>
+                  <Input disabled={!canManageWard} id="ward-city" value={form.city} onChange={(event) => updateField("city", event.target.value)} />
+                </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="ward-country">País</Label>
-                <Input disabled={!canManageWard} id="ward-country" value={form.country} onChange={(event) => updateField("country", event.target.value)} />
+                <div className="space-y-2">
+                  <Label htmlFor="ward-state">Estado</Label>
+                  <Input disabled={!canManageWard} id="ward-state" value={form.state} onChange={(event) => updateField("state", event.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ward-country">País</Label>
+                  <Input disabled={!canManageWard} id="ward-country" value={form.country} onChange={(event) => updateField("country", event.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 rounded-lg border bg-muted/40 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Coordenadas para clima</p>
+                  <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+                    O clima das atas só pode ser buscado quando latitude, longitude e horário da reunião estiverem preenchidos.
+                  </p>
+                </div>
+                {canManageWard ? (
+                  <Button className="shrink-0" disabled={isGeocoding || !buildWardGeocodingAddress()} onClick={() => void handleGeocodeWardAddress()} type="button" variant="outline">
+                    {isGeocoding ? <Loader2 className="size-4 animate-spin" /> : <MapPin className="size-4" />}
+                    Buscar coordenadas
+                  </Button>
+                ) : null}
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="ward-latitude">Latitude</Label>
+                  <Input
+                    className="tabular-nums"
+                    disabled={!canManageWard}
+                    id="ward-latitude"
+                    inputMode="decimal"
+                    value={form.latitude ?? ""}
+                    onChange={(event) => updateCoordinateField("latitude", event.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ward-longitude">Longitude</Label>
+                  <Input
+                    className="tabular-nums"
+                    disabled={!canManageWard}
+                    id="ward-longitude"
+                    inputMode="decimal"
+                    value={form.longitude ?? ""}
+                    onChange={(event) => updateCoordinateField("longitude", event.target.value)}
+                  />
+                </div>
               </div>
             </div>
           </CardContent>

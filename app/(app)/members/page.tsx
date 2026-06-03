@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CheckSquare, Eye, MapPin, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { CheckSquare, Eye, MapPin, Mars, Pause, Play, Skull, SlidersHorizontal, Trash2, Venus, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -42,7 +42,7 @@ import { parseCoordinateInput } from "@/lib/coordinates";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
 import { buildBrazilWhatsAppUrl } from "@/lib/phone";
-import { normalizeDateInput } from "@/lib/utils";
+import { cn, normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
@@ -76,6 +76,39 @@ const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string>
   attending: "Frequentando",
   not_attending: "Não frequentando",
 };
+
+const sexIconMeta: Record<Member["sex"], { className: string; icon: typeof Mars }> = {
+  M: { className: "text-blue-500", icon: Mars },
+  F: { className: "text-pink-500", icon: Venus },
+};
+
+const churchActivityStatusIconMeta: Record<Member["churchActivityStatus"], { className: string; icon: typeof Play }> = {
+  away: { className: "text-muted-foreground", icon: Skull },
+  attending: { className: "text-emerald-600 dark:text-emerald-400", icon: Play },
+  not_attending: { className: "text-red-600 dark:text-red-400", icon: Pause },
+};
+
+function MemberSexIcon({ sex }: { sex: Member["sex"] }) {
+  const meta = sexIconMeta[sex];
+  const Icon = meta.icon;
+
+  return (
+    <span aria-label={sexLabels[sex]} className={cn("inline-flex size-5 items-center justify-center", meta.className)} title={sexLabels[sex]}>
+      <Icon aria-hidden="true" className="size-3.5" />
+    </span>
+  );
+}
+
+function MemberActivityStatusIcon({ status }: { status: Member["churchActivityStatus"] }) {
+  const meta = churchActivityStatusIconMeta[status];
+  const Icon = meta.icon;
+
+  return (
+    <span aria-label={churchActivityStatusLabels[status]} className={cn("inline-flex size-5 items-center justify-center", meta.className)} title={churchActivityStatusLabels[status]}>
+      <Icon aria-hidden="true" className="size-3.5" />
+    </span>
+  );
+}
 
 function buildGoogleMapsAddressUrl(address: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
@@ -305,9 +338,9 @@ export default function MembersPage() {
           return (
             <div className="space-y-1">
               <TablePrimaryAction onClick={() => openViewDrawer(member)}>{member.name}</TablePrimaryAction>
-              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span>{sexLabels[member.sex]}</span>
-                <span>{churchActivityStatusLabels[member.churchActivityStatus]}</span>
+              <div className="flex items-center gap-1">
+                <MemberSexIcon sex={member.sex} />
+                <MemberActivityStatusIcon status={member.churchActivityStatus} />
               </div>
             </div>
           );

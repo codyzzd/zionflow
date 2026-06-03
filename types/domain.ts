@@ -68,9 +68,13 @@ export interface Ward extends RecordMetadata {
   id: string;
   stakeId: string;
   name: string;
+  address: string;
+  meetingTime: string;
   city: string;
   state: string;
   country: string;
+  latitude?: number;
+  longitude?: number;
   lunchPDayWeekday: Weekday;
 }
 
@@ -190,6 +194,20 @@ export interface MinuteFormData {
   closingHymn: HybridField;
   closingPrayer: HybridField;
   notes: string;
+  weather?: MinuteWeatherSnapshot;
+}
+
+export interface MinuteWeatherSnapshot {
+  source: "open-meteo";
+  fetchedAt: string;
+  latitude: number;
+  longitude: number;
+  meetingTime?: string;
+  temperatureMinC?: number;
+  temperatureMeanC?: number;
+  temperatureMaxC?: number;
+  precipitationMm?: number;
+  rainLevel: "sem chuva" | "chuva fraca" | "chuva moderada" | "chuva forte";
 }
 
 export interface SacramentMinuteVersion {
