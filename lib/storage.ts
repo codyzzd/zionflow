@@ -1116,31 +1116,6 @@ export async function saveDatabase(db: Database): Promise<void> {
 
   const supabase = createClient();
   const remoteDb = normalizeDatabase(db);
-  const existingIdsByTable = new Map<RemoteCollectionKey, Set<string>>();
-
-  for (const { key, table } of REMOTE_TABLES_FOR_GLOBAL_SAVE) {
-    const { data: existingRows, error: selectError } = await supabase.from(table).select("id");
-
-    if (selectError) {
-      throw selectError;
-    }
-
-    existingIdsByTable.set(key, new Set(((existingRows ?? []) as Array<{ id: string }>).map((row) => row.id)));
-  }
-
-  for (const { key, table } of [...REMOTE_TABLES_FOR_GLOBAL_SAVE].reverse()) {
-    const records = remoteDb[key] as Array<{ id: string }>;
-    const nextIds = new Set(records.map((record) => record.id));
-    const staleIds = [...(existingIdsByTable.get(key) ?? new Set<string>())].filter((id) => !nextIds.has(id));
-
-    if (staleIds.length) {
-      const { error: deleteError } = await supabase.from(table).delete().in("id", staleIds);
-
-      if (deleteError) {
-        throw deleteError;
-      }
-    }
-  }
 
   for (const { key, table } of REMOTE_TABLES_FOR_GLOBAL_SAVE) {
     const records = remoteDb[key] as Array<{ id: string }>;
