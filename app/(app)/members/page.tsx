@@ -170,7 +170,7 @@ function memberToForm(member: Member): MemberForm {
 }
 
 export default function MembersPage() {
-  const { allMembersByWard, currentWard, deleteMembers, hasPermission, minutesByWard, restoreMembers, saveMember } = useAppContext();
+  const { allMembersByWard, currentWard, deleteArchivedMembers, deleteMembers, hasPermission, minutesByWard, restoreMembers, saveMember } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
 
@@ -476,6 +476,14 @@ export default function MembersPage() {
                   <RotateCcw />
                 </TableActionButton>
               ) : null}
+              {canManageMembers && member.archivedAt ? (
+                <DeleteTableActionButton
+                  confirmLabel="Apagar definitivamente"
+                  description={`Apagar definitivamente ${member.name}? Essa ação remove o membro arquivado e não pode ser desfeita.`}
+                  label="Apagar membro"
+                  onConfirm={() => deleteArchivedMembers([member.id])}
+                />
+              ) : null}
               {canManageMembers && !member.archivedAt ? (
                 <DeleteTableActionButton
                   description={`Arquivar ${member.name}? O membro sai da lista ativa, mas pode ser restaurado pelo filtro Arquivados.`}
@@ -488,7 +496,7 @@ export default function MembersPage() {
         },
       },
     ],
-    [canManageMembers, deleteMembers, formatDate, openViewDrawer, restoreMembers, talkHistoryByMemberId],
+    [canManageMembers, deleteArchivedMembers, deleteMembers, formatDate, openViewDrawer, restoreMembers, talkHistoryByMemberId],
   );
 
   return (
@@ -629,10 +637,22 @@ export default function MembersPage() {
                 ? (selectedMembers) => (
                     <>
                       {memberStatusFilter === "archived" ? (
-                        <Button disabled={!selectedMembers.length} onClick={() => restoreMembers(selectedMembers.map((member) => member.id))} size="sm" variant="outline">
-                          <RotateCcw />
-                          Restaurar selecionados
-                        </Button>
+                        <>
+                          <Button disabled={!selectedMembers.length} onClick={() => restoreMembers(selectedMembers.map((member) => member.id))} size="sm" variant="outline">
+                            <RotateCcw />
+                            Restaurar selecionados
+                          </Button>
+                          <DeleteConfirmationDialog
+                            confirmLabel="Apagar definitivamente"
+                            description={`Apagar definitivamente ${selectedMembers.length} membro(s) arquivado(s)? Essa ação não pode ser desfeita.`}
+                            onConfirm={() => deleteArchivedMembers(selectedMembers.map((member) => member.id))}
+                          >
+                            <Button disabled={!selectedMembers.length} size="sm" variant="destructive">
+                              <Trash2 />
+                              Apagar selecionados
+                            </Button>
+                          </DeleteConfirmationDialog>
+                        </>
                       ) : (
                         <>
                           <DropdownMenu>
@@ -906,6 +926,21 @@ export default function MembersPage() {
                   <Button onClick={closeDrawer} variant="ghost">
                     {isReadOnly ? "Fechar" : "Cancelar"}
                   </Button>
+                  {canManageMembers && selectedMember?.archivedAt ? (
+                    <DeleteConfirmationDialog
+                      confirmLabel="Apagar definitivamente"
+                      description={`Apagar definitivamente ${selectedMember.name}? Essa ação remove o membro arquivado e não pode ser desfeita.`}
+                      onConfirm={() => {
+                        deleteArchivedMembers([selectedMember.id]);
+                        closeDrawer();
+                      }}
+                    >
+                      <Button variant="destructive">
+                        <Trash2 />
+                        Apagar membro
+                      </Button>
+                    </DeleteConfirmationDialog>
+                  ) : null}
                   {isReadOnly && canManageMembers && selectedMember ? (
                     <Button onClick={() => openEditDrawer(selectedMember)}>Editar membro</Button>
                   ) : null}

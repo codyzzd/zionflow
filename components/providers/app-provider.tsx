@@ -15,7 +15,7 @@ import {
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
 import { canSpeakWithTalkDuration, normalizeTalkDuration } from "@/lib/member-talk-duration";
-import { createEmptyDatabase, deleteMinuteSnapshot, loadDatabase, normalizeHymnTags, saveDatabase, saveMemberSnapshot, saveMinuteSnapshot } from "@/lib/storage";
+import { createEmptyDatabase, deleteMemberSnapshot, deleteMinuteSnapshot, loadDatabase, normalizeHymnTags, saveDatabase, saveMemberSnapshot, saveMinuteSnapshot } from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
@@ -180,6 +180,7 @@ type AppContextValue = {
   deleteWard: (wardId: string) => void;
   saveMember: (input: Omit<Member, "id"> & { id?: string }, options?: SaveMemberOptions) => SaveMemberResult;
   deleteMembers: (memberIds: string[]) => void;
+  deleteArchivedMembers: (memberIds: string[]) => void;
   restoreMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
   addMemberNote: (memberId: string, text: string) => void;
@@ -1722,6 +1723,56 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       });
 
       toast.success(deletedCount === 1 ? "Membro removido." : `${deletedCount} membros removidos.`);
+    }
+
+    function deleteArchivedMembers(memberIds: string[]) {
+      const ids = new Set(memberIds);
+      if (!ids.size) return;
+
+      const targetWardId = currentWardId ?? currentUser?.wardId;
+      const deletableIds = new Set(db.members.filter((member) => ids.has(member.id) && member.archivedAt && (!targetWardId || member.wardId === targetWardId)).map((member) => member.id));
+      const deletedCount = deletableIds.size;
+      if (!deletedCount) return;
+
+      setDb((currentDb) => {
+        const actorUserId = getActorUserId(currentDb);
+        const membersToDelete = currentDb.members.filter((member) => deletableIds.has(member.id) && member.archivedAt && (!targetWardId || member.wardId === targetWardId));
+        if (!membersToDelete.length) return currentDb;
+
+        const scopedIds = new Set(membersToDelete.map((member) => member.id));
+        const itemLabel = membersToDelete.length === 1 ? membersToDelete[0].name : `${membersToDelete.length} membros`;
+        const nextDb = clearDeletedMemberReferences(
+          {
+            ...currentDb,
+            members: currentDb.members.filter((member) => !scopedIds.has(member.id)),
+          },
+          scopedIds,
+          actorUserId,
+        );
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: targetWardId ?? membersToDelete[0].wardId,
+          action: membersToDelete.length === 1 ? "HARD_DELETE_MEMBER" : "BULK_HARD_DELETE_MEMBERS",
+          module: "membros",
+          itemLabel,
+          summary:
+            membersToDelete.length === 1
+              ? "Apagou definitivamente cadastro de membro arquivado."
+              : `Apagou definitivamente ${membersToDelete.length} cadastros de membros arquivados.`,
+        });
+      });
+
+      Promise.all([...deletableIds].map((memberId) => deleteMemberSnapshot(memberId)))
+        .then(() => true)
+        .catch((error) => {
+          console.error("Failed to delete member directly.", error);
+          if (!saveErrorShownRef.current) {
+            toast.error("Nao foi possivel apagar o membro no Supabase.");
+            saveErrorShownRef.current = true;
+          }
+        });
+
+      toast.success(deletedCount === 1 ? "Membro apagado definitivamente." : `${deletedCount} membros apagados definitivamente.`);
     }
 
     function restoreMembers(memberIds: string[]) {
@@ -3373,6 +3424,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       deleteWard,
       saveMember,
       deleteMembers,
+      deleteArchivedMembers,
       restoreMembers,
       importMembers,
       addMemberNote,

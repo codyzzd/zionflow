@@ -1256,6 +1256,19 @@ export async function saveMemberSnapshot(member: Member): Promise<void> {
   }
 }
 
+export async function deleteMemberSnapshot(memberId: string): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const supabase = createClient();
+  const { error } = await supabase.from("members").delete().eq("id", memberId);
+
+  if (error) {
+    throw error;
+  }
+}
+
 function mapMinuteLockRow(row: RemoteRecord & { acquired?: boolean; renewed?: boolean }): MinuteLockInfo {
   return {
     acquired: row.acquired === true,
