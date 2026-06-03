@@ -438,7 +438,7 @@ export function MemberImportDialog() {
               <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 text-sm">
                 <label className="flex items-start gap-2">
                   <Checkbox checked={removeMissing} onCheckedChange={(checked) => setRemoveMissing(checked === true)} />
-                  <span>Apagar membros atuais que não estiverem no CSV</span>
+                  <span>Arquivar membros da minha ala que não estiverem no CSV</span>
                 </label>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
                   <span>{csv.rows.length} linhas lidas</span>
@@ -447,7 +447,7 @@ export function MemberImportDialog() {
                   <span>{importAnalysis.updatedCount} serão atualizados</span>
                   <span>{importAnalysis.conflicts.length} conflitos</span>
                   {invalidDateCount ? <span>{invalidDateCount} datas ignoradas</span> : null}
-                  <span>{removeMissing ? "CSV como fonte principal" : "Atualização parcial"}</span>
+                  <span>{removeMissing ? "Arquiva ausentes da minha ala" : "Atualização parcial"}</span>
                 </div>
               </div>
 

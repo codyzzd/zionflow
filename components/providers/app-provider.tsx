@@ -143,6 +143,7 @@ type AppContextValue = {
   currentWard?: Ward;
   currentUserPermissions: PermissionKey[];
   usersByWard: User[];
+  allMembersByWard: Member[];
   membersByWard: Member[];
   memberNotesByWard: MemberNote[];
   minutesByWard: SacramentMinute[];
@@ -179,6 +180,7 @@ type AppContextValue = {
   deleteWard: (wardId: string) => void;
   saveMember: (input: Omit<Member, "id"> & { id?: string }, options?: SaveMemberOptions) => SaveMemberResult;
   deleteMembers: (memberIds: string[]) => void;
+  restoreMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
   addMemberNote: (memberId: string, text: string) => void;
   saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) => void;
@@ -676,7 +678,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
   const value = useMemo<AppContextValue>(() => {
     const usersByWard = db.users.filter((user) => user.wardId === currentWardId && !user.archivedAt);
-    const membersByWard = db.members.filter((member) => member.wardId === currentWardId && !member.archivedAt);
+    const allMembersByWard = db.members.filter((member) => member.wardId === currentWardId);
+    const membersByWard = allMembersByWard.filter((member) => !member.archivedAt);
     const memberIds = new Set(membersByWard.map((member) => member.id));
     const memberNotesByWard = db.memberNotes.filter((note) => memberIds.has(note.memberId));
     const minutesByWard = db.sacramentMinutes.filter((minute) => minute.wardId === currentWardId && !minute.archivedAt);
@@ -1721,7 +1724,47 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success(deletedCount === 1 ? "Membro removido." : `${deletedCount} membros removidos.`);
     }
 
+    function restoreMembers(memberIds: string[]) {
+      const ids = new Set(memberIds);
+      if (!ids.size) return;
+      const restoredCount = db.members.filter((member) => ids.has(member.id) && member.archivedAt).length;
+      if (!restoredCount) return;
+
+      setDb((currentDb) => {
+        const actorUserId = getActorUserId(currentDb);
+        const targetWardId = currentDb.session.currentWardId ?? currentUser?.wardId;
+        const membersToRestore = currentDb.members.filter((member) => ids.has(member.id) && member.archivedAt && member.wardId === targetWardId);
+        if (!membersToRestore.length) return currentDb;
+
+        const scopedIds = new Set(membersToRestore.map((member) => member.id));
+        const itemLabel = membersToRestore.length === 1 ? membersToRestore[0].name : `${membersToRestore.length} membros`;
+        const nextDb = {
+          ...currentDb,
+          members: currentDb.members.map((member) => (scopedIds.has(member.id) ? withArchiveMetadata(member, false, actorUserId) : member)),
+        };
+
+        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+          wardId: targetWardId ?? membersToRestore[0].wardId,
+          action: membersToRestore.length === 1 ? "RESTORE_MEMBER" : "BULK_RESTORE_MEMBERS",
+          module: "membros",
+          itemLabel,
+          summary:
+            membersToRestore.length === 1
+              ? "Restaurou cadastro de membro arquivado."
+              : `Restaurou ${membersToRestore.length} cadastros de membros arquivados.`,
+        });
+      });
+
+      toast.success(restoredCount === 1 ? "Membro restaurado." : `${restoredCount} membros restaurados.`);
+    }
+
     function importMembers(input: ImportMembersInput) {
+      const targetWardId = currentWardId ?? currentUser?.wardId;
+      if (!targetWardId) {
+        toast.error("Selecione uma ala antes de importar membros.");
+        return;
+      }
+
       const importedMembers = input.members.filter((member) => member.name.trim());
       if (!importedMembers.length) return;
       const importedFields = new Set(input.importedFields);
@@ -1742,7 +1785,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
         return counts;
       };
-      const currentWardMembers = db.members.filter((member) => member.wardId === input.wardId);
+      const currentWardMembers = db.members.filter((member) => member.wardId === targetWardId);
       const importedNameCounts = countBy(importedMembers, buildMemberNameKey);
       const importedIdentityCounts = countBy(
         importedMembers.filter((member) => normalizeDateInput(member.birthDate)),
@@ -1781,7 +1824,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const actorUserId = getActorUserId(currentDb);
         const membersByIdentity = new Map<string, Member>();
         currentDb.members
-          .filter((member) => member.wardId === input.wardId)
+          .filter((member) => member.wardId === targetWardId)
           .forEach((member) => {
             const identityKey = buildMemberIdentityKey(member);
             if (identityKey) {
@@ -1821,7 +1864,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
                   canSpeak: canSpeakWithTalkDuration(sacramentTalkDuration),
                   id: existing.id,
                   sacramentTalkDuration,
-                  wardId: input.wardId,
+                  wardId: targetWardId,
                 },
                 existing,
                 actorUserId,
@@ -1836,7 +1879,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             {
               ...member,
               id: uid("member"),
-              wardId: input.wardId,
+              wardId: targetWardId,
             },
             undefined,
             actorUserId,
@@ -1846,7 +1889,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const importedRecordIds = new Set(importedRecords.map((member) => member.id));
         const untouchedMemberIds = new Set(
           currentDb.members
-            .filter((member) => member.wardId === input.wardId && !importedRecordIds.has(member.id))
+            .filter((member) => member.wardId === targetWardId && !member.archivedAt && !importedRecordIds.has(member.id))
             .map((member) => member.id),
         );
         const archivedMissingMemberIds = input.removeMissing ? untouchedMemberIds : new Set<string>();
@@ -1855,7 +1898,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           members: [
             ...importedRecords,
             ...currentDb.members.flatMap((member) => {
-              if (member.wardId !== input.wardId) return [member];
+              if (member.wardId !== targetWardId) return [member];
               if (importedRecordIds.has(member.id)) return [];
               if (!input.removeMissing || !untouchedMemberIds.has(member.id)) return [member];
 
@@ -1869,7 +1912,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         }
 
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
-          wardId: input.wardId,
+          wardId: targetWardId,
           action: "IMPORT_MEMBERS",
           module: "membros",
           itemLabel: `${importedRecords.length} membros`,
@@ -3293,6 +3336,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       currentWard,
       currentUserPermissions,
       usersByWard,
+      allMembersByWard,
       membersByWard,
       memberNotesByWard,
       minutesByWard,
@@ -3329,6 +3373,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       deleteWard,
       saveMember,
       deleteMembers,
+      restoreMembers,
       importMembers,
       addMemberNote,
       saveUser,

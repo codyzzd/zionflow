@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CheckSquare, Eye, MapPin, Mars, Pause, Play, Skull, SlidersHorizontal, Trash2, Venus, X } from "lucide-react";
+import { CheckSquare, Eye, MapPin, Mars, Pause, Play, RotateCcw, Skull, SlidersHorizontal, Trash2, Venus, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -49,6 +49,7 @@ type MemberForm = Omit<Member, "id" | "wardId">;
 type DrawerMode = "create" | "view" | "edit";
 type DrawerTab = "data" | "talks";
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
+type MemberStatusFilter = "active" | "archived";
 
 const emptyMemberForm: MemberForm = {
   name: "",
@@ -169,7 +170,7 @@ function memberToForm(member: Member): MemberForm {
 }
 
 export default function MembersPage() {
-  const { currentWard, deleteMembers, hasPermission, membersByWard, minutesByWard, saveMember } = useAppContext();
+  const { allMembersByWard, currentWard, deleteMembers, hasPermission, minutesByWard, restoreMembers, saveMember } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
 
@@ -181,6 +182,7 @@ export default function MembersPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
   const [sexFilter, setSexFilter] = useState<"all" | Member["sex"]>("all");
+  const [memberStatusFilter, setMemberStatusFilter] = useState<MemberStatusFilter>("active");
   const [activityStatusFilter, setActivityStatusFilter] = useState<"all" | Member["churchActivityStatus"]>("all");
   const [coordinatesFilter, setCoordinatesFilter] = useState<CoordinatesFilter>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
@@ -196,7 +198,8 @@ export default function MembersPage() {
 
   const filteredMembers = useMemo(
     () =>
-      membersByWard.filter((member) => {
+      allMembersByWard.filter((member) => {
+        const matchesMemberStatus = memberStatusFilter === "archived" ? Boolean(member.archivedAt) : !member.archivedAt;
         const normalizedSearch = search.trim().toLowerCase();
         const matchesSearch =
           !normalizedSearch ||
@@ -212,9 +215,9 @@ export default function MembersPage() {
         const matchesAge = matchesAgeRange(age, minimumAge, maximumAge);
         const matchesTalkDuration = talkDurationFilter === "all" || member.sacramentTalkDuration === talkDurationFilter;
 
-        return matchesSearch && matchesSex && matchesActivityStatus && matchesCoordinates && matchesAge && matchesTalkDuration;
+        return matchesMemberStatus && matchesSearch && matchesSex && matchesActivityStatus && matchesCoordinates && matchesAge && matchesTalkDuration;
       }),
-    [activityStatusFilter, coordinatesFilter, maximumAge, membersByWard, minimumAge, search, sexFilter, talkDurationFilter],
+    [activityStatusFilter, allMembersByWard, coordinatesFilter, maximumAge, memberStatusFilter, minimumAge, search, sexFilter, talkDurationFilter],
   );
 
   function handleDrawerOpenChange(open: boolean) {
@@ -341,6 +344,7 @@ export default function MembersPage() {
               <div className="flex items-center gap-1">
                 <MemberSexIcon sex={member.sex} />
                 <MemberActivityStatusIcon status={member.churchActivityStatus} />
+                {member.archivedAt ? <Badge variant="secondary">Arquivado</Badge> : null}
               </div>
             </div>
           );
@@ -467,10 +471,15 @@ export default function MembersPage() {
               <TableActionButton label="Visualizar" onClick={() => openViewDrawer(member)}>
                 <Eye />
               </TableActionButton>
-              {canManageMembers ? (
+              {canManageMembers && member.archivedAt ? (
+                <TableActionButton label="Restaurar" onClick={() => restoreMembers([member.id])}>
+                  <RotateCcw />
+                </TableActionButton>
+              ) : null}
+              {canManageMembers && !member.archivedAt ? (
                 <DeleteTableActionButton
-                  description={`Excluir ${member.name}? Essa ação remove o membro do cadastro da ala.`}
-                  label="Excluir membro"
+                  description={`Arquivar ${member.name}? O membro sai da lista ativa, mas pode ser restaurado pelo filtro Arquivados.`}
+                  label="Arquivar membro"
                   onConfirm={() => deleteMembers([member.id])}
                 />
               ) : null}
@@ -479,7 +488,7 @@ export default function MembersPage() {
         },
       },
     ],
-    [canManageMembers, deleteMembers, formatDate, openViewDrawer, talkHistoryByMemberId],
+    [canManageMembers, deleteMembers, formatDate, openViewDrawer, restoreMembers, talkHistoryByMemberId],
   );
 
   return (
@@ -535,6 +544,15 @@ export default function MembersPage() {
                   onChange={(event) => setSearch(event.target.value)}
                 />
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6 xl:flex xl:items-center">
+                  <Select value={memberStatusFilter} onValueChange={(value) => setMemberStatusFilter(value as MemberStatusFilter)}>
+                    <SelectTrigger className="w-full xl:w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Ativos</SelectItem>
+                      <SelectItem value="archived">Arquivados</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
                     <SelectTrigger className="w-full xl:w-40">
                       <SelectValue />
@@ -610,56 +628,65 @@ export default function MembersPage() {
               canManageMembers
                 ? (selectedMembers) => (
                     <>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button disabled={!selectedMembers.length} size="sm" variant="outline">
-                              <SlidersHorizontal />
-                              Alterar selecionados
-                            </Button>
-                          }
-                        />
-                        <DropdownMenuContent align="start" className="w-56">
-                          <DropdownMenuGroup>
-                            <DropdownMenuLabel>{selectedMembers.length} selecionado(s)</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger>Discurso</DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="w-44">
-                                {TALK_DURATION_OPTIONS.map((option) => (
-                                  <DropdownMenuItem key={option.value} onClick={() => updateSelectedMembers(selectedMembers, { sacramentTalkDuration: option.value })}>
-                                    {option.shortLabel}
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger>Frequência</DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="w-44">
-                                <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "attending" })}>
-                                  {churchActivityStatusLabels.attending}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "not_attending" })}>
-                                  {churchActivityStatusLabels.not_attending}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "away" })}>
-                                  {churchActivityStatusLabels.away}
-                                </DropdownMenuItem>
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                          </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <DeleteConfirmationDialog
-                        confirmLabel="Apagar selecionados"
-                        description={`Excluir ${selectedMembers.length} membro(s) selecionado(s)? Essa ação remove os membros do cadastro da ala.`}
-                        onConfirm={() => deleteMembers(selectedMembers.map((member) => member.id))}
-                      >
-                        <Button disabled={!selectedMembers.length} size="sm" variant="destructive">
-                          <Trash2 />
-                          Apagar selecionados
+                      {memberStatusFilter === "archived" ? (
+                        <Button disabled={!selectedMembers.length} onClick={() => restoreMembers(selectedMembers.map((member) => member.id))} size="sm" variant="outline">
+                          <RotateCcw />
+                          Restaurar selecionados
                         </Button>
-                      </DeleteConfirmationDialog>
+                      ) : (
+                        <>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              render={
+                                <Button disabled={!selectedMembers.length} size="sm" variant="outline">
+                                  <SlidersHorizontal />
+                                  Alterar selecionados
+                                </Button>
+                              }
+                            />
+                            <DropdownMenuContent align="start" className="w-56">
+                              <DropdownMenuGroup>
+                                <DropdownMenuLabel>{selectedMembers.length} selecionado(s)</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuSub>
+                                  <DropdownMenuSubTrigger>Discurso</DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent className="w-44">
+                                    {TALK_DURATION_OPTIONS.map((option) => (
+                                      <DropdownMenuItem key={option.value} onClick={() => updateSelectedMembers(selectedMembers, { sacramentTalkDuration: option.value })}>
+                                        {option.shortLabel}
+                                      </DropdownMenuItem>
+                                    ))}
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                                <DropdownMenuSub>
+                                  <DropdownMenuSubTrigger>Frequência</DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent className="w-44">
+                                    <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "attending" })}>
+                                      {churchActivityStatusLabels.attending}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "not_attending" })}>
+                                      {churchActivityStatusLabels.not_attending}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => updateSelectedMembers(selectedMembers, { churchActivityStatus: "away" })}>
+                                      {churchActivityStatusLabels.away}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                              </DropdownMenuGroup>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <DeleteConfirmationDialog
+                            confirmLabel="Arquivar selecionados"
+                            description={`Arquivar ${selectedMembers.length} membro(s) selecionado(s)? Eles sairão da lista ativa, mas poderão ser restaurados pelo filtro Arquivados.`}
+                            onConfirm={() => deleteMembers(selectedMembers.map((member) => member.id))}
+                          >
+                            <Button disabled={!selectedMembers.length} size="sm" variant="destructive">
+                              <Trash2 />
+                              Arquivar selecionados
+                            </Button>
+                          </DeleteConfirmationDialog>
+                        </>
+                      )}
                     </>
                   )
                 : undefined
