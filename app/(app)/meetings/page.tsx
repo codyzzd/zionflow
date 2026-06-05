@@ -1109,13 +1109,13 @@ export default function MinutesPage() {
         />
 
         <div className="space-y-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {canManageMinutes && view === "table" ? (
                 <Button
                   aria-label={minuteSelectionActive ? "Cancelar seleção de atas" : "Selecionar atas"}
                   onClick={() => setMinuteSelectionActive((current) => !current)}
-                  size="icon-sm"
+                  size="icon"
                   variant={minuteSelectionActive ? "secondary" : "outline"}
                 >
                   {minuteSelectionActive ? <X /> : <CheckSquare />}
@@ -1151,9 +1151,8 @@ export default function MinutesPage() {
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <Button size="sm" variant="outline">
+                      <Button aria-label="Exibir colunas da tabela" size="icon" variant="outline">
                         <SlidersHorizontal />
-                        Colunas
                       </Button>
                     }
                   />
@@ -1184,9 +1183,8 @@ export default function MinutesPage() {
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <Button size="sm" variant="outline">
+                      <Button aria-label="Exibir colunas da planilha" size="icon" variant="outline">
                         <SlidersHorizontal />
-                        Colunas
                       </Button>
                     }
                   />

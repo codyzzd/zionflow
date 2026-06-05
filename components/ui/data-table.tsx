@@ -153,11 +153,11 @@ export function DataTable<TData, TValue>({
   return (
     <div className="space-y-4">
       {showToolbar ? (
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="flex-1">{toolbar}</div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {selectionIsOptional && showSelectionToggle ? (
-              <Button aria-label={selectionActive ? "Cancelar seleção" : "Selecionar linhas"} onClick={toggleSelectionMode} size="icon-sm" variant={selectionActive ? "secondary" : "outline"}>
+              <Button aria-label={selectionActive ? "Cancelar seleção" : "Selecionar linhas"} onClick={toggleSelectionMode} size="icon" variant={selectionActive ? "secondary" : "outline"}>
                 {selectionActive ? <X /> : <CheckSquare />}
               </Button>
             ) : null}
@@ -165,9 +165,8 @@ export function DataTable<TData, TValue>({
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <Button size="sm" variant="outline">
+                    <Button aria-label="Exibir colunas" size="icon" variant="outline">
                       <SlidersHorizontal />
-                      Colunas
                     </Button>
                   }
                 />
@@ -226,7 +225,7 @@ export function DataTable<TData, TValue>({
         </Table>
       </div>
 
-      <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 text-sm md:flex-row md:items-start md:justify-between">
         <div className="flex min-h-8 flex-wrap items-center gap-3 text-muted-foreground">
           <p className="tabular-nums">{showSelectionSummary ? `${selectedRows.length} de ${data.length} linha(s) selecionada(s).` : `${data.length} linha(s).`}</p>
           {renderSelectedActions && selectedRows.length ? <div className="flex items-center gap-2">{renderSelectedActions(selectedRows)}</div> : null}

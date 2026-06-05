@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, FileUp } from "lucide-react";
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -25,6 +26,11 @@ type ImportConflict = {
   index: number;
   member: ImportMember;
   reason: string;
+};
+type MemberImportDialogProps = {
+  onOpenChange?: (open: boolean) => void;
+  open?: boolean;
+  trigger?: ReactNode;
 };
 
 const fieldLabels: Array<{ key: ImportFieldKey; label: string; required?: boolean }> = [
@@ -276,15 +282,23 @@ function toImportMembers(csv: CsvData, mapping: Record<ImportFieldKey, string>, 
   return members;
 }
 
-export function MemberImportDialog() {
+export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger }: MemberImportDialogProps) {
   const { currentWard, db, importMembers } = useAppContext();
   const { formatDate } = useDateFormatter();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [csv, setCsv] = useState<CsvData>({ headers: [], rows: [] });
   const [fileName, setFileName] = useState("");
   const [mapping, setMapping] = useState<Record<ImportFieldKey, string>>(buildInitialMapping([]));
   const [nameFormatMode, setNameFormatMode] = useState<NameFormatMode>("preserve");
   const [removeMissing, setRemoveMissing] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+
+  function setDialogOpen(nextOpen: boolean) {
+    if (controlledOpen === undefined) {
+      setUncontrolledOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
+  }
 
   const parsedMembers = useMemo(() => toImportMembers(csv, mapping, nameFormatMode), [csv, mapping, nameFormatMode]);
   const importedFields = useMemo(() => buildImportedFields(mapping), [mapping]);
@@ -302,7 +316,7 @@ export function MemberImportDialog() {
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    setOpen(nextOpen);
+    setDialogOpen(nextOpen);
 
     if (!nextOpen) {
       resetImport();
@@ -334,12 +348,16 @@ export function MemberImportDialog() {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button size="lg" variant="outline">
-          <FileUp />
-          Importar
-        </Button>
-      </DialogTrigger>
+      {trigger !== null ? (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button size="lg" variant="outline">
+              <FileUp />
+              Importar
+            </Button>
+          )}
+        </DialogTrigger>
+      ) : null}
       <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Importar membros</DialogTitle>

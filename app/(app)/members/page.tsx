@@ -1,18 +1,20 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CheckSquare, Eye, MapPin, Mars, Pause, Play, RotateCcw, Skull, SlidersHorizontal, Trash2, Venus, X } from "lucide-react";
+import { CheckSquare, ChevronDown, Download, Eye, FileUp, MapPin, Mars, Pause, Play, RotateCcw, Skull, SlidersHorizontal, Trash2, UserCheck, Venus, X } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { MemberActivityStatusImportDialog } from "@/components/features/members/member-activity-status-import-dialog";
+import { MemberExportDialog } from "@/components/features/members/member-export-dialog";
 import { MemberImportDialog } from "@/components/features/members/member-import-dialog";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -31,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -50,6 +53,7 @@ type DrawerMode = "create" | "view" | "edit";
 type DrawerTab = "data" | "talks";
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
 type MemberStatusFilter = "active" | "archived";
+type MemberActionDialog = "activity" | "export" | "import" | null;
 
 const emptyMemberForm: MemberForm = {
   name: "",
@@ -76,6 +80,12 @@ const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string>
   away: "Afastado",
   attending: "Frequentando",
   not_attending: "Não frequentando",
+};
+
+const coordinatesFilterLabels: Record<CoordinatesFilter, string> = {
+  all: "Todos mapas",
+  mapped: "Com coordenadas",
+  unmapped: "Sem coordenadas",
 };
 
 const sexIconMeta: Record<Member["sex"], { className: string; icon: typeof Mars }> = {
@@ -170,14 +180,17 @@ function memberToForm(member: Member): MemberForm {
 }
 
 export default function MembersPage() {
+  const router = useRouter();
   const { allMembersByWard, currentWard, deleteArchivedMembers, deleteMembers, hasPermission, minutesByWard, restoreMembers, saveMember } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
+  const canExportMembers = canManageMembers || hasPermission("exports.run");
 
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<MemberForm>(emptyMemberForm);
   const [memberSelectionActive, setMemberSelectionActive] = useState(false);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [actionDialog, setActionDialog] = useState<MemberActionDialog>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
@@ -195,6 +208,20 @@ export default function MembersPage() {
   const selectedMemberTalkOccurrences = selectedMember ? (talkOccurrencesByMemberId.get(selectedMember.id) ?? []) : [];
   const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
   const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
+  const advancedFilterChips = useMemo(() => {
+    const chips: string[] = [];
+
+    if (memberStatusFilter !== "active") chips.push("Cadastro: Arquivados");
+    if (sexFilter !== "all") chips.push(`Sexo: ${sexLabels[sexFilter]}`);
+    if (activityStatusFilter !== "all") chips.push(`Frequência: ${churchActivityStatusLabels[activityStatusFilter]}`);
+    if (coordinatesFilter !== "all") chips.push(coordinatesFilterLabels[coordinatesFilter]);
+    if (minimumAge !== null) chips.push(`Idade >= ${minimumAge}`);
+    if (maximumAge !== null) chips.push(`Idade <= ${maximumAge}`);
+    if (talkDurationFilter !== "all") chips.push(`Discurso: ${talkDurationShortLabels[talkDurationFilter]}`);
+
+    return chips;
+  }, [activityStatusFilter, coordinatesFilter, maximumAge, memberStatusFilter, minimumAge, sexFilter, talkDurationFilter]);
+  const hasAdvancedFilters = advancedFilterChips.length > 0;
 
   const filteredMembers = useMemo(
     () =>
@@ -292,6 +319,16 @@ export default function MembersPage() {
     });
 
     toast.success(selectedMembers.length === 1 ? "Membro atualizado." : `${selectedMembers.length} membros atualizados.`);
+  }
+
+  function clearAdvancedFilters() {
+    setMemberStatusFilter("active");
+    setSexFilter("all");
+    setActivityStatusFilter("all");
+    setCoordinatesFilter("all");
+    setMinimumAgeFilter("");
+    setMaximumAgeFilter("");
+    setTalkDurationFilter("all");
   }
 
   const drawerTitle = drawerMode === "create" ? "Novo membro" : drawerMode === "edit" ? "Editar membro" : selectedMember?.name ?? "Membro";
@@ -507,23 +544,58 @@ export default function MembersPage() {
           title="Lista de membros"
           description="Cadastro enxuto com os dados usados pela ata sacramental."
           actions={
-            canManageMembers ? (
+            canManageMembers || canExportMembers ? (
               <>
-                <Button asChild size="lg" variant="outline">
-                  <Link href="/members/geocoding">
-                    <MapPin />
-                    Mapear endereços
-                  </Link>
-                </Button>
-                <MemberActivityStatusImportDialog />
-                <MemberImportDialog />
-                <Button onClick={openCreateDrawer} size="lg">
-                  Novo membro
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger className={cn(buttonVariants({ size: "lg", variant: "outline" }))} type="button">
+                    Ações
+                    <ChevronDown />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>Membros</DropdownMenuLabel>
+                      {canExportMembers ? (
+                        <DropdownMenuItem onClick={() => setActionDialog("export")}>
+                          <Download />
+                          Exportar CSV
+                        </DropdownMenuItem>
+                      ) : null}
+                      {canManageMembers ? (
+                        <>
+                          <DropdownMenuItem onClick={() => router.push("/members/geocoding")}>
+                            <MapPin />
+                            Mapear endereços
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => setActionDialog("activity")}>
+                            <UserCheck />
+                            Atualizar frequência
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setActionDialog("import")}>
+                            <FileUp />
+                            Importar
+                          </DropdownMenuItem>
+                        </>
+                      ) : null}
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {canManageMembers ? (
+                  <Button onClick={openCreateDrawer} size="lg">
+                    Novo membro
+                  </Button>
+                ) : null}
               </>
             ) : null
           }
         />
+        {canExportMembers ? <MemberExportDialog members={allMembersByWard} onOpenChange={(open) => setActionDialog(open ? "export" : null)} open={actionDialog === "export"} trigger={null} /> : null}
+        {canManageMembers ? (
+          <>
+            <MemberActivityStatusImportDialog onOpenChange={(open) => setActionDialog(open ? "activity" : null)} open={actionDialog === "activity"} trigger={null} />
+            <MemberImportDialog onOpenChange={(open) => setActionDialog(open ? "import" : null)} open={actionDialog === "import"} trigger={null} />
+          </>
+        ) : null}
 
         <div className="space-y-4">
           <DataTable
@@ -534,102 +606,157 @@ export default function MembersPage() {
             enableRowSelection={canManageMembers}
             getRowId={(member) => member.id}
             toolbar={
-              <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-                {canManageMembers ? (
-                  <Button
-                    aria-label={memberSelectionActive ? "Cancelar seleção de membros" : "Selecionar membros"}
-                    onClick={() => setMemberSelectionActive((current) => !current)}
-                    size="icon-sm"
-                    variant={memberSelectionActive ? "secondary" : "outline"}
-                  >
-                    {memberSelectionActive ? <X /> : <CheckSquare />}
-                  </Button>
-                ) : null}
-                <SearchInput
-                  className="xl:w-80"
-                  placeholder="Buscar por nome, telefone ou endereço"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6 xl:flex xl:items-center">
-                  <Select value={memberStatusFilter} onValueChange={(value) => setMemberStatusFilter(value as MemberStatusFilter)}>
-                    <SelectTrigger className="w-full xl:w-36">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Ativos</SelectItem>
-                      <SelectItem value="archived">Arquivados</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
-                    <SelectTrigger className="w-full xl:w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os sexos</SelectItem>
-                      <SelectItem value="M">Masculino</SelectItem>
-                      <SelectItem value="F">Feminino</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={activityStatusFilter}
-                    onValueChange={(value) => setActivityStatusFilter(value as "all" | Member["churchActivityStatus"])}
-                  >
-                    <SelectTrigger className="w-full xl:w-48">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos status</SelectItem>
-                      <SelectItem value="attending">{churchActivityStatusLabels.attending}</SelectItem>
-                      <SelectItem value="not_attending">{churchActivityStatusLabels.not_attending}</SelectItem>
-                      <SelectItem value="away">{churchActivityStatusLabels.away}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={coordinatesFilter} onValueChange={(value) => setCoordinatesFilter(value as CoordinatesFilter)}>
-                    <SelectTrigger className="w-full xl:w-44">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos mapas</SelectItem>
-                      <SelectItem value="mapped">Com coordenadas</SelectItem>
-                      <SelectItem value="unmapped">Sem coordenadas</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    className="w-full xl:w-28"
-                    inputMode="numeric"
-                    min={0}
-                    placeholder="Idade mín."
-                    type="number"
-                    value={minimumAgeFilter}
-                    onChange={(event) => setMinimumAgeFilter(event.target.value)}
-                  />
-                  <Input
-                    className="w-full xl:w-28"
-                    inputMode="numeric"
-                    min={0}
-                    placeholder="Idade máx."
-                    type="number"
-                    value={maximumAgeFilter}
-                    onChange={(event) => setMaximumAgeFilter(event.target.value)}
-                  />
-                  <Select
-                    value={talkDurationFilter}
-                    onValueChange={(value) => setTalkDurationFilter(value as "all" | Member["sacramentTalkDuration"])}
-                  >
-                    <SelectTrigger className="w-full xl:w-44">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos discursos</SelectItem>
-                      {TALK_DURATION_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.shortLabel}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <div className="space-y-2">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    {canManageMembers ? (
+                      <Button
+                        aria-label={memberSelectionActive ? "Cancelar seleção de membros" : "Selecionar membros"}
+                        onClick={() => setMemberSelectionActive((current) => !current)}
+                        size="icon"
+                        variant={memberSelectionActive ? "secondary" : "outline"}
+                      >
+                        {memberSelectionActive ? <X /> : <CheckSquare />}
+                      </Button>
+                    ) : null}
+                    <SearchInput
+                      className="min-w-0 flex-1 lg:max-w-sm"
+                      placeholder="Buscar por nome, telefone ou endereço"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button size="default" variant={hasAdvancedFilters ? "secondary" : "outline"}>
+                          <SlidersHorizontal />
+                          Mais filtros
+                          {hasAdvancedFilters ? (
+                            <Badge className="ml-1 h-5 min-w-5 justify-center rounded-full px-1.5 tabular-nums" variant="secondary">
+                              {advancedFilterChips.length}
+                            </Badge>
+                          ) : null}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-[calc(100vw-2rem)] max-w-xl gap-4 p-4">
+                        <PopoverHeader>
+                          <PopoverTitle>Filtros avançados</PopoverTitle>
+                        </PopoverHeader>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label>Cadastro</Label>
+                            <Select value={memberStatusFilter} onValueChange={(value) => setMemberStatusFilter(value as MemberStatusFilter)}>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="active">Ativos</SelectItem>
+                                <SelectItem value="archived">Arquivados</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Sexo</Label>
+                            <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Todos os sexos</SelectItem>
+                                <SelectItem value="M">Masculino</SelectItem>
+                                <SelectItem value="F">Feminino</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Frequência</Label>
+                            <Select
+                              value={activityStatusFilter}
+                              onValueChange={(value) => setActivityStatusFilter(value as "all" | Member["churchActivityStatus"])}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Todos status</SelectItem>
+                                <SelectItem value="attending">{churchActivityStatusLabels.attending}</SelectItem>
+                                <SelectItem value="not_attending">{churchActivityStatusLabels.not_attending}</SelectItem>
+                                <SelectItem value="away">{churchActivityStatusLabels.away}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Mapa</Label>
+                            <Select value={coordinatesFilter} onValueChange={(value) => setCoordinatesFilter(value as CoordinatesFilter)}>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Todos mapas</SelectItem>
+                                <SelectItem value="mapped">Com coordenadas</SelectItem>
+                                <SelectItem value="unmapped">Sem coordenadas</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Discurso</Label>
+                            <Select
+                              value={talkDurationFilter}
+                              onValueChange={(value) => setTalkDurationFilter(value as "all" | Member["sacramentTalkDuration"])}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Todos discursos</SelectItem>
+                                {TALK_DURATION_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.shortLabel}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Idade mínima</Label>
+                            <Input
+                              inputMode="numeric"
+                              min={0}
+                              placeholder="Idade mín."
+                              type="number"
+                              value={minimumAgeFilter}
+                              onChange={(event) => setMinimumAgeFilter(event.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Idade máxima</Label>
+                            <Input
+                              inputMode="numeric"
+                              min={0}
+                              placeholder="Idade máx."
+                              type="number"
+                              value={maximumAgeFilter}
+                              onChange={(event) => setMaximumAgeFilter(event.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                 </div>
+                {hasAdvancedFilters ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {advancedFilterChips.map((chip) => (
+                      <Badge className="h-7 rounded-lg px-2.5 text-sm font-normal" key={chip} variant="secondary">
+                        {chip}
+                      </Badge>
+                    ))}
+                    <Button className="h-7 px-2 text-sm" onClick={clearAdvancedFilters} size="sm" variant="ghost">
+                      Limpar filtros
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             }
             renderSelectedActions={

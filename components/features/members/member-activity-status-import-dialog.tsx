@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, FileUp, UserCheck } from "lucide-react";
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -31,6 +32,11 @@ type ActivityMatchGroup = {
   rawName: string;
 };
 type DuplicateResolution = "ignore" | string;
+type MemberActivityStatusImportDialogProps = {
+  onOpenChange?: (open: boolean) => void;
+  open?: boolean;
+  trigger?: ReactNode;
+};
 
 const nameHeaderAliases = ["nome", "nome-completo", "membro", "member", "name", "full-name"];
 const ignoreDuplicateValue = "__ignore__";
@@ -119,16 +125,24 @@ function analyzeActivityMatches(parsedNames: ParsedActivityName[], members: Memb
   );
 }
 
-export function MemberActivityStatusImportDialog() {
+export function MemberActivityStatusImportDialog({ onOpenChange, open: controlledOpen, trigger }: MemberActivityStatusImportDialogProps) {
   const { currentWard, membersByWard, saveMember } = useAppContext();
   const { formatDate } = useDateFormatter();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [csv, setCsv] = useState<CsvData>({ headers: [], rows: [] });
   const [fileName, setFileName] = useState("");
   const [nameColumn, setNameColumn] = useState(ignoredColumn);
   const [nameFormatMode, setNameFormatMode] = useState<NameFormatMode>("preserve");
   const [markMissingAsNotAttending, setMarkMissingAsNotAttending] = useState(false);
   const [duplicateResolutions, setDuplicateResolutions] = useState<Record<string, DuplicateResolution>>({});
+  const open = controlledOpen ?? uncontrolledOpen;
+
+  function setDialogOpen(nextOpen: boolean) {
+    if (controlledOpen === undefined) {
+      setUncontrolledOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
+  }
 
   const parsedNames = useMemo(() => parseActivityNames(csv, nameColumn, nameFormatMode), [csv, nameColumn, nameFormatMode]);
   const matchAnalysis = useMemo(() => analyzeActivityMatches(parsedNames, membersByWard), [membersByWard, parsedNames]);
@@ -179,7 +193,7 @@ export function MemberActivityStatusImportDialog() {
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    setOpen(nextOpen);
+    setDialogOpen(nextOpen);
 
     if (!nextOpen) {
       resetImport();
@@ -230,12 +244,16 @@ export function MemberActivityStatusImportDialog() {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button size="lg" variant="outline">
-          <UserCheck />
-          Atualizar frequência
-        </Button>
-      </DialogTrigger>
+      {trigger !== null ? (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button size="lg" variant="outline">
+              <UserCheck />
+              Atualizar frequência
+            </Button>
+          )}
+        </DialogTrigger>
+      ) : null}
       <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Atualizar frequência por CSV</DialogTitle>
