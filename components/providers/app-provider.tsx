@@ -251,10 +251,11 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "stake.manage",
   "users.view",
   "users.manage",
-  "roles.manage",
   "map.view",
   "members.view",
   "members.manage",
+  "progress.view",
+  "progress.manage",
   "minutes.view",
   "minutes.manage",
   "hymns.view",
@@ -274,7 +275,6 @@ const FULL_ADMIN_PERMISSIONS: PermissionKey[] = [
   "caravan.manage.manage",
   "patrol.view",
   "patrol.manage",
-  "reports.view",
   "exports.run",
   "audit.view",
 ];
@@ -679,10 +679,13 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
     const timeoutId = window.setTimeout(() => {
       saveDatabase(db).catch((error) => {
-        console.error("Failed to save Supabase data.", error);
+        const errorMessage = describeRemoteError(error);
+        console.error("Failed to save Supabase data.", errorMessage, error);
 
         if (db.session.currentUserId && !saveErrorShownRef.current) {
-          toast.error("Nao foi possivel salvar os dados no Supabase.");
+          toast.error("Nao foi possivel salvar os dados no Supabase.", {
+            description: errorMessage,
+          });
           saveErrorShownRef.current = true;
         }
       });
@@ -2001,9 +2004,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     function updateMemberProgressCategory(memberId: string, category: MemberProgressCategory) {
       const actor = db.users.find((user) => user.id === db.session.currentUserId);
       const member = db.members.find((item) => item.id === memberId);
-      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+      const canManageProgress = Boolean(actor && resolvePermissions(db, actor).includes("progress.manage"));
 
-      if (!actor || !member || !canManageMembers || member.progressCategory === category) return;
+      if (!actor || !member || !canManageProgress || member.progressCategory === category) return;
 
       const updatedMember = withRecordMetadata(
         {
@@ -2057,9 +2060,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const occurredAt = new Date(input.occurredAt);
       const actor = db.users.find((user) => user.id === db.session.currentUserId);
       const member = db.members.find((item) => item.id === memberId);
-      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+      const canManageProgress = Boolean(actor && resolvePermissions(db, actor).includes("progress.manage"));
 
-      if (!text || Number.isNaN(occurredAt.getTime()) || !actor || !member || !canManageMembers) return;
+      if (!text || Number.isNaN(occurredAt.getTime()) || !actor || !member || !canManageProgress) return;
 
       const timestamp = nowIso();
       const note: MemberNote = {
@@ -2097,9 +2100,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const actor = db.users.find((user) => user.id === db.session.currentUserId);
       const existing = db.memberNotes.find((note) => note.id === noteId);
       const member = existing ? db.members.find((item) => item.id === existing.memberId) : undefined;
-      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+      const canManageProgress = Boolean(actor && resolvePermissions(db, actor).includes("progress.manage"));
 
-      if (!text || Number.isNaN(occurredAt.getTime()) || !actor || !existing || !member || !canManageMembers || existing.createdBy !== actor.id) return;
+      if (!text || Number.isNaN(occurredAt.getTime()) || !actor || !existing || !member || !canManageProgress || existing.createdBy !== actor.id) return;
 
       const updatedNote: MemberNote = {
         ...existing,
@@ -2136,9 +2139,9 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       const actor = db.users.find((user) => user.id === db.session.currentUserId);
       const existing = db.memberNotes.find((note) => note.id === noteId);
       const member = existing ? db.members.find((item) => item.id === existing.memberId) : undefined;
-      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+      const canManageProgress = Boolean(actor && resolvePermissions(db, actor).includes("progress.manage"));
 
-      if (!actor || !existing || !member || !canManageMembers || existing.createdBy !== actor.id) return;
+      if (!actor || !existing || !member || !canManageProgress || existing.createdBy !== actor.id) return;
 
       setDb((currentDb) => {
         const currentNote = currentDb.memberNotes.find((note) => note.id === noteId);
@@ -2560,6 +2563,13 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     }
 
     function saveAccessTemplate(input: Omit<Role, "id"> & { id?: string }) {
+      const actor = db.users.find((user) => user.id === db.session.currentUserId);
+
+      if (!isSystemAdmin(actor)) {
+        toast.error("Somente administradores do sistema podem alterar templates de acesso.");
+        return;
+      }
+
       if (input.id && isSystemRoleId(input.id)) {
         toast.error("Templates internos do sistema não podem ser editados.");
         return;
@@ -2599,6 +2609,13 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     }
 
     function deleteAccessTemplate(templateId: string) {
+      const actor = db.users.find((user) => user.id === db.session.currentUserId);
+
+      if (!isSystemAdmin(actor)) {
+        toast.error("Somente administradores do sistema podem apagar templates de acesso.");
+        return;
+      }
+
       if (isSystemRoleId(templateId)) {
         toast.error("Templates internos do sistema não podem ser apagados.");
         return;

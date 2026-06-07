@@ -76,6 +76,16 @@ function attendanceChangeToneClass(percent: number | null) {
   return "text-red-600 dark:text-red-400";
 }
 
+function attendanceShareLabel(attendance: number, activeMemberCount: number) {
+  if (!activeMemberCount || attendance <= 0) return null;
+  return `${attendanceSharePercentLabel(attendance, activeMemberCount)} dos frequentando`;
+}
+
+function attendanceSharePercentLabel(attendance: number, activeMemberCount: number) {
+  if (!activeMemberCount || attendance <= 0) return null;
+  return `${Math.round((attendance / activeMemberCount) * 100)}%`;
+}
+
 function toDateInputValue(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -127,6 +137,44 @@ function projectedAttendanceScenarios(minutes: SacramentMinute[], count: number)
       upper: Math.max(0, normal + uncertainty),
     };
   });
+}
+
+function predictedAttendanceFromPrevious(minutes: SacramentMinute[]) {
+  if (minutes.length < 2) return null;
+
+  const { intercept, slope } = linearRegression(minutes);
+  return Math.max(0, Math.round(intercept + slope * minutes.length));
+}
+
+function retrospectiveAttendanceComparisons(minutes: SacramentMinute[]) {
+  const comparisons = new Map<string, { delta: number; predicted: number }>();
+  const filled = [...minutes]
+    .filter((minute) => minute.form.attendance > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  filled.forEach((minute, index) => {
+    const predicted = predictedAttendanceFromPrevious(filled.slice(0, index));
+    if (predicted === null) return;
+
+    comparisons.set(minute.id, {
+      delta: minute.form.attendance - predicted,
+      predicted,
+    });
+  });
+
+  return comparisons;
+}
+
+function predictionDeltaLabel(delta: number) {
+  if (delta > 0) return `+${delta} acima`;
+  if (delta < 0) return `${delta} abaixo`;
+  return "no previsto";
+}
+
+function predictionDeltaToneClass(delta: number) {
+  if (delta > 0) return "text-emerald-600 dark:text-emerald-400";
+  if (delta < 0) return "text-red-600 dark:text-red-400";
+  return "text-muted-foreground";
 }
 
 function buildLinePath(points: Array<{ x: number; y: number }>) {
@@ -197,50 +245,54 @@ function projectionConfidenceLabel(realCount: number, residualStdDev: number, av
 function predictedTrendTone(label: string) {
   if (label.includes("alta")) {
     return {
-      card: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+      card: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300",
       icon: TrendingUp,
-      iconWrap: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
+      iconWrap: "bg-emerald-100 text-emerald-700 ring-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/25",
     };
   }
 
   if (label.includes("queda")) {
     return {
-      card: "border-red-500/20 bg-red-500/10 text-red-300",
+      card: "border-red-300 bg-red-50 text-red-800 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300",
       icon: TrendingDown,
-      iconWrap: "bg-red-500/15 text-red-300 ring-red-500/25",
+      iconWrap: "bg-red-100 text-red-700 ring-red-300 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-500/25",
     };
   }
 
   return {
-    card: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+    card: "border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300",
     icon: Minus,
-    iconWrap: "bg-sky-500/15 text-sky-300 ring-sky-500/25",
+    iconWrap: "bg-sky-100 text-sky-700 ring-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-500/25",
   };
 }
 
 function confidenceTone(label: string) {
   if (label === "alta") {
     return {
-      card: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
-      iconWrap: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
+      card: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300",
+      iconWrap: "bg-emerald-100 text-emerald-700 ring-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/25",
     };
   }
 
   if (label === "baixa") {
     return {
-      card: "border-red-500/20 bg-red-500/10 text-red-300",
-      iconWrap: "bg-red-500/15 text-red-300 ring-red-500/25",
+      card: "border-red-300 bg-red-50 text-red-800 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300",
+      iconWrap: "bg-red-100 text-red-700 ring-red-300 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-500/25",
     };
   }
 
   return {
-    card: "border-amber-500/20 bg-amber-500/10 text-amber-300",
-    iconWrap: "bg-amber-500/15 text-amber-300 ring-amber-500/25",
+    card: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300",
+    iconWrap: "bg-amber-100 text-amber-700 ring-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/25",
   };
 }
 
+function sentenceCase(value: string) {
+  return value ? value.charAt(0).toLocaleUpperCase("pt-BR") + value.slice(1) : value;
+}
+
 export default function FrequencyPage() {
-  const { currentWard, hasPermission, minutesByWard, saveMinute } = useAppContext();
+  const { currentWard, hasPermission, membersByWard, minutesByWard, saveMinute } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageFrequency = hasPermission("frequency.manage");
 
@@ -276,6 +328,7 @@ export default function FrequencyPage() {
   );
 
   const selectedMinute = selectedMinuteId ? minutesByWard.find((minute) => minute.id === selectedMinuteId) : undefined;
+  const activeMemberCount = membersByWard.filter((member) => member.churchActivityStatus === "attending").length;
   const filledMinutes = sortedMinutes.filter((minute) => minute.form.attendance > 0);
   const pendingMinutes = sortedMinutes.filter((minute) => minute.form.attendance === 0 && minute.date <= todayDate());
   const lastFilledMinute = filledMinutes[0];
@@ -284,8 +337,10 @@ export default function FrequencyPage() {
   const visibleRealTrendMinutes = realTrendMinutes.slice(-8);
   const projectionDates = lastFilledMinute ? nextSundayDates(lastFilledMinute.date, 4) : [];
   const projectionValues = projectedAttendanceScenarios(realTrendMinutes, 4);
+  const nextProjectionShareLabel = projectionValues[0] ? attendanceShareLabel(projectionValues[0].normal, activeMemberCount) : null;
   const expectedAttendance = averageAttendance(realTrendMinutes);
   const { residualStdDev } = linearRegression(realTrendMinutes);
+  const attendanceComparisons = useMemo(() => retrospectiveAttendanceComparisons(sortedMinutes), [sortedMinutes]);
   const trendData: ChartPoint[] = [
     ...visibleRealTrendMinutes.map((minute) => ({
       id: minute.id,
@@ -415,9 +470,27 @@ export default function FrequencyPage() {
       {
         id: "attendance",
         header: () => <div className="text-right">Frequência</div>,
-        cell: ({ row }) => (
-          <div className="text-right font-medium tabular-nums">{attendanceLabel(row.original.form.attendance)}</div>
-        ),
+        cell: ({ row }) => {
+          const attendance = row.original.form.attendance;
+          const comparison = attendanceComparisons.get(row.original.id);
+          const shareLabel = attendanceShareLabel(attendance, activeMemberCount);
+
+          if (attendance <= 0) {
+            return <div className="text-right font-medium tabular-nums">{attendanceLabel(attendance)}</div>;
+          }
+
+          return (
+            <div className="text-right">
+              <p className="font-medium tabular-nums">{attendance}</p>
+              {comparison ? (
+                <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+                  Previsto {comparison.predicted} · <span className={predictionDeltaToneClass(comparison.delta)}>{predictionDeltaLabel(comparison.delta)}</span>
+                </p>
+              ) : null}
+              {shareLabel ? <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">{shareLabel}</p> : null}
+            </div>
+          );
+        },
       },
       {
         id: "actions",
@@ -438,7 +511,7 @@ export default function FrequencyPage() {
         ),
       },
     ],
-    [canManageFrequency, formatDate],
+    [activeMemberCount, attendanceComparisons, canManageFrequency, formatDate],
   );
 
   return (
@@ -667,14 +740,14 @@ export default function FrequencyPage() {
             </div>
 
             {projectionCoordinates.length ? (
-              <div className="mt-4 grid gap-2 border-t border-border pt-4 text-sm md:grid-cols-3">
+              <div className="mt-4 grid gap-2 border-t border-border pt-4 text-sm md:grid-cols-2 xl:grid-cols-4">
                 <div className={cn("flex items-center gap-3 rounded-md border px-3 py-2.5", predictedTrendStyle.card)}>
                   <span className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-md ring-1", predictedTrendStyle.iconWrap)}>
                     <PredictedTrendIcon className="size-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Tendência prevista</p>
-                    <p className="mt-1 text-pretty font-medium leading-snug">{predictedTrendDisplay}</p>
+                    <p className="text-sm font-medium text-current/75">Tendência prevista</p>
+                    <p className="mt-1 text-pretty text-base font-semibold leading-snug">{sentenceCase(predictedTrendDisplay)}</p>
                   </div>
                 </div>
                 <div className={cn("flex items-center gap-3 rounded-md border px-3 py-2.5", confidenceStyle.card)}>
@@ -682,17 +755,34 @@ export default function FrequencyPage() {
                     <Gauge className="size-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Confiança</p>
-                    <p className="mt-1 font-medium capitalize">{confidenceLabel}</p>
+                    <p className="text-sm font-medium text-current/75">Confiança</p>
+                    <p className="mt-1 text-base font-semibold">{sentenceCase(confidenceLabel)}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/10 px-3 py-2.5 text-primary">
-                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/25">
+                <div className="flex items-center gap-3 rounded-md border border-sky-300 bg-sky-50 px-3 py-2.5 text-sky-800 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300">
+                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 ring-1 ring-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-500/25">
                     <UsersRound className="size-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Faixa provável</p>
-                    <p className="mt-1 font-medium tabular-nums">{projectedRangeLabel}</p>
+                    <p className="text-sm font-medium text-current/75">Membros frequentando</p>
+                    <p className="mt-1 text-base font-semibold tabular-nums">{activeMemberCount || "-"}</p>
+                    <p className="mt-0.5 truncate text-sm text-current/75">
+                      {lastFilledMinute && activeMemberCount
+                        ? `Última: ${lastFilledMinute.form.attendance} de ${activeMemberCount} · ${attendanceSharePercentLabel(lastFilledMinute.form.attendance, activeMemberCount)}`
+                        : "Sem base de membros"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2.5 text-cyan-800 dark:border-cyan-500/25 dark:bg-cyan-500/10 dark:text-cyan-300">
+                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 ring-1 ring-cyan-300 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-500/25">
+                    <UsersRound className="size-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-current/75">Faixa provável</p>
+                    <p className="mt-1 text-base font-semibold tabular-nums">{projectedRangeLabel}</p>
+                    <p className="mt-0.5 truncate text-sm text-current/75">
+                      {projectionValues[0] ? `Próxima: ${projectionValues[0].normal}${nextProjectionShareLabel ? ` · ${attendanceSharePercentLabel(projectionValues[0].normal, activeMemberCount)}` : ""}` : "Sem próxima previsão"}
+                    </p>
                   </div>
                 </div>
               </div>

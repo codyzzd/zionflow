@@ -204,7 +204,9 @@ export default function SystemAccessTemplatesPage() {
               <DrawerTitle>
                 {drawerMode === "create" ? "Novo template" : drawerMode === "edit" ? "Editar template" : selectedTemplate ? selectedTemplate.name : "Template"}
               </DrawerTitle>
-              <DrawerDescription>Configure as permissões que serão copiadas para a matriz do usuário ao aplicar este template.</DrawerDescription>
+              <DrawerDescription>
+                Configure as permissões copiadas para a matriz do usuário ao aplicar este template. Alterar o template não muda usuários já configurados.
+              </DrawerDescription>
             </DrawerHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-4">
@@ -227,6 +229,9 @@ export default function SystemAccessTemplatesPage() {
 
                 <div className="space-y-3">
                   <Label>Matriz de acessos</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Este template é um preset de cópia. Usuários que já receberam este template mantêm a matriz individual salva.
+                  </p>
                   <AccessMatrixEditor
                     disabled={isReadOnly}
                     permissions={form.permissions}

@@ -24,6 +24,7 @@ import type {
   PatrolMember,
   PatrolSchedule,
   MemberNote,
+  PermissionKey,
   RecordMetadata,
   Role,
   SacramentMinute,
@@ -58,6 +59,7 @@ const UNKNOWN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const DEFAULT_APP_PREFERENCES: AppPreferences = {
   calendarWeekStartsOn: "sunday",
   dateFormat: "medium",
+  permissionSchemaVersion: 1,
 };
 
 const REMOTE_TABLES = [
@@ -105,6 +107,11 @@ type RemoteSchemaOptions = {
   includeWardLunchPDay?: boolean;
   includeWardMeetingTime?: boolean;
   includeUserAccessLevel?: boolean;
+};
+type RemoteSaveContext = {
+  key: RemoteCollectionKey;
+  table: string;
+  recordCount: number;
 };
 
 type LegacyMetadata = Partial<RecordMetadata> & {
@@ -564,6 +571,23 @@ function normalizeRole(role: Role): Role {
   };
 }
 
+function hasProgressPermission(permissions: unknown) {
+  return Array.isArray(permissions) && permissions.some((permission) => permission === "progress.view" || permission === "progress.manage");
+}
+
+function hasAnyProgressPermission(db: Partial<Database>) {
+  return (
+    db.roles?.some((role) => hasProgressPermission(role.permissions)) ||
+    db.users?.some((user) => hasProgressPermission(user.permissionOverrides))
+  );
+}
+
+function backfillProgressPermissions(permissions: PermissionKey[]) {
+  if (!permissions.includes("members.manage")) return permissions;
+
+  return normalizePermissionSet([...permissions, "progress.view", "progress.manage"]);
+}
+
 function normalizeStakeOwnerRequest(request: StakeOwnerRequest): StakeOwnerRequest {
   return {
     ...request,
@@ -591,10 +615,39 @@ function normalizeMemberNote(note: MemberNote, users: User[]): MemberNote {
   };
 }
 
+function dedupeRecordsById<T extends { id: string }>(records: T[]) {
+  const recordsById = new Map<string, T>();
+
+  records.forEach((record) => {
+    if (record.id) {
+      recordsById.set(record.id, record);
+    }
+  });
+
+  return [...recordsById.values()];
+}
+
 export function normalizeDatabase(db: Database): Database {
   const legacyDb = db as Partial<Database>;
-  const roles = (legacyDb.roles ?? []).map((role) => normalizeRole(role));
-  const users = (legacyDb.users ?? []).map((user) => normalizeUser(user, roles));
+  const shouldBackfillProgressPermissions = !hasAnyProgressPermission(legacyDb);
+  const roles = (legacyDb.roles ?? []).map((role) => {
+    const normalizedRole = normalizeRole(role);
+
+    return {
+      ...normalizedRole,
+      permissions: shouldBackfillProgressPermissions ? backfillProgressPermissions(normalizedRole.permissions) : normalizedRole.permissions,
+    };
+  });
+  const users = (legacyDb.users ?? []).map((user) => {
+    const normalizedUser = normalizeUser(user, roles);
+
+    return {
+      ...normalizedUser,
+      permissionOverrides: shouldBackfillProgressPermissions
+        ? backfillProgressPermissions(normalizedUser.permissionOverrides)
+        : normalizedUser.permissionOverrides,
+    };
+  });
 
   return {
     ...{
@@ -609,7 +662,7 @@ export function normalizeDatabase(db: Database): Database {
     members: (legacyDb.members ?? []).map((member) => normalizeMember(member)),
     memberNotes: (legacyDb.memberNotes ?? []).map((note) => normalizeMemberNote(note, users)),
     sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSacramentMinute(minute)),
-    minuteVersions: legacyDb.minuteVersions ?? [],
+    minuteVersions: dedupeRecordsById(legacyDb.minuteVersions ?? []),
     hymnBooks: (legacyDb.hymnBooks ?? createEmptyDatabase().hymnBooks).map((hymnBook) => normalizeHymnBook(hymnBook)),
     hymns: (legacyDb.hymns ?? []).map((hymn) => normalizeHymn(hymn)),
     missionaryCompanionships: (legacyDb.missionaryCompanionships ?? []).map((companionship) => normalizeCompanionship(companionship)),
@@ -633,6 +686,7 @@ export function normalizeDatabase(db: Database): Database {
         legacyDb.appPreferences?.dateFormat === "long"
           ? legacyDb.appPreferences.dateFormat
           : "medium",
+      permissionSchemaVersion: 1,
     },
     session: legacyDb.session ?? {},
   };
@@ -650,6 +704,7 @@ function normalizeAppPreferences(value: unknown): AppPreferences {
       preferences?.dateFormat === "short" || preferences?.dateFormat === "medium" || preferences?.dateFormat === "long"
         ? preferences.dateFormat
         : DEFAULT_APP_PREFERENCES.dateFormat,
+    permissionSchemaVersion: Math.max(0, asNumber(preferences?.permissionSchemaVersion, DEFAULT_APP_PREFERENCES.permissionSchemaVersion)),
   };
 }
 
@@ -938,6 +993,44 @@ function isMissingRemoteColumn(error: unknown, columnName: string) {
   return message.includes(columnName) && (remoteError.code === "42703" || message.toLocaleLowerCase("pt-BR").includes("column"));
 }
 
+function describeRemoteError(error: unknown) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const remoteError = error as Partial<Record<"message" | "code" | "details" | "hint", unknown>>;
+    const parts = [remoteError.message, remoteError.code, remoteError.details, remoteError.hint].filter(
+      (part): part is string => typeof part === "string" && Boolean(part.trim()),
+    );
+
+    if (parts.length) {
+      return parts.join(" ");
+    }
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  return "Erro desconhecido.";
+}
+
+function createRemoteSaveError(error: unknown, context: RemoteSaveContext) {
+  const message = `Falha ao salvar ${context.key} em ${context.table} (${context.recordCount} registros): ${describeRemoteError(error)}`;
+  const saveError = new Error(message, { cause: error });
+
+  if (error && typeof error === "object") {
+    const remoteError = error as Partial<Record<"code" | "details" | "hint", unknown>>;
+
+    if (typeof remoteError.code === "string") {
+      saveError.name = `SupabaseSaveError:${remoteError.code}`;
+    }
+  }
+
+  return saveError;
+}
+
 function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
   switch (key) {
     case "stakes":
@@ -1142,7 +1235,7 @@ export async function saveDatabase(db: Database): Promise<void> {
   const remoteDb = normalizeDatabase(db);
 
   for (const { key, table } of REMOTE_TABLES_FOR_GLOBAL_SAVE) {
-    const records = remoteDb[key] as Array<{ id: string }>;
+    const records = dedupeRecordsById(remoteDb[key] as Array<{ id: string }>);
 
     if (!records.length) {
       continue;
@@ -1209,7 +1302,7 @@ export async function saveDatabase(db: Database): Promise<void> {
     }
 
     if (upsertError) {
-      throw upsertError;
+      throw createRemoteSaveError(upsertError, { key, table, recordCount: recordsForUpsert.length });
     }
   }
 }

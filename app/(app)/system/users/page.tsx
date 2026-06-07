@@ -482,7 +482,9 @@ export default function SystemUsersPage() {
           <DrawerContent className="sm:max-w-2xl" direction="right">
             <DrawerHeader className="border-b">
               <DrawerTitle>{editingId ? "Editar usuário" : "Novo usuário"}</DrawerTitle>
-              <DrawerDescription>Configure a ala do usuário e a matriz global de acessos.</DrawerDescription>
+              <DrawerDescription>
+                Configure a ala do usuário e a matriz global de acessos. Templates copiam permissões para este usuário e não sincronizam mudanças futuras.
+              </DrawerDescription>
             </DrawerHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-4">
@@ -529,7 +531,7 @@ export default function SystemUsersPage() {
                   {accessTemplates.length ? (
                     <Select value={selectedAccessTemplateId} onValueChange={applyAccessTemplate}>
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Aplicar template de acesso" />
+                        <SelectValue placeholder="Copiar permissões de um template" />
                       </SelectTrigger>
                       <SelectContent>
                         {accessTemplates.map((template) => (
@@ -542,6 +544,9 @@ export default function SystemUsersPage() {
                   ) : (
                     <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">Nenhum template cadastrado.</div>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    Aplicar um template substitui a matriz abaixo por uma cópia das permissões atuais do template.
+                  </p>
                   <AccessMatrixEditor
                     permissions={form.permissionOverrides}
                     onChange={(permissionOverrides) => setForm((current) => ({ ...current, permissionOverrides }))}

@@ -6,10 +6,11 @@ export type PermissionKey =
   | "stake.manage"
   | "users.view"
   | "users.manage"
-  | "roles.manage"
   | "map.view"
   | "members.view"
   | "members.manage"
+  | "progress.view"
+  | "progress.manage"
   | "minutes.view"
   | "minutes.manage"
   | "hymns.view"
@@ -29,7 +30,6 @@ export type PermissionKey =
   | "caravan.manage.manage"
   | "patrol.view"
   | "patrol.manage"
-  | "reports.view"
   | "exports.run"
   | "audit.view";
 
@@ -386,6 +386,7 @@ export interface SessionState {
 export interface AppPreferences {
   calendarWeekStartsOn: CalendarWeekStartsOn;
   dateFormat: DateFormat;
+  permissionSchemaVersion: number;
 }
 
 export interface Database {

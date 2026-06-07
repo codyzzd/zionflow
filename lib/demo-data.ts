@@ -71,6 +71,7 @@ export function createSeedDatabase(): Database {
     appPreferences: {
       calendarWeekStartsOn: "sunday",
       dateFormat: "medium",
+      permissionSchemaVersion: 1,
     },
     session: {},
   };

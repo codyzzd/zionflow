@@ -182,6 +182,8 @@ export default function MembersPage() {
   } = useAppContext();
   const { formatDate, formatDateTime } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
+  const canViewProgress = hasPermission("progress.view");
+  const canManageProgress = hasPermission("progress.manage");
   const canExportMembers = canManageMembers || hasPermission("exports.run");
 
   const [search, setSearch] = useState("");
@@ -251,7 +253,7 @@ export default function MembersPage() {
         params.delete("member");
       }
 
-      if (memberId && tab === "progress" && canManageMembers) {
+      if (memberId && tab === "progress" && canViewProgress) {
         params.set("tab", "progress");
       } else {
         params.delete("tab");
@@ -260,7 +262,7 @@ export default function MembersPage() {
       const query = params.toString();
       router.replace(query ? `/members?${query}` : "/members", { scroll: false });
     },
-    [canManageMembers, router, searchParams],
+    [canViewProgress, router, searchParams],
   );
 
   const filteredMembers = useMemo(
@@ -362,7 +364,7 @@ export default function MembersPage() {
     }
 
     const nextTab: DrawerTab =
-      requestedTab === "progress" && canManageMembers
+      requestedTab === "progress" && canViewProgress
         ? "progress"
         : selectedMember?.id === requestedMemberId && drawerOpen
           ? drawerTab
@@ -377,7 +379,7 @@ export default function MembersPage() {
       return;
     }
 
-    if (requestedTab === "progress" && !canManageMembers) {
+    if (requestedTab === "progress" && !canViewProgress) {
       replaceMemberQuery(requestedMember.id);
       return;
     }
@@ -386,9 +388,11 @@ export default function MembersPage() {
       const timeoutId = window.setTimeout(() => showMemberDrawer(requestedMember, nextTab), 0);
       return () => window.clearTimeout(timeoutId);
     }
-  }, [allMembersByWard, canManageMembers, drawerOpen, drawerTab, ready, replaceMemberQuery, searchParams, selectedMember?.id, showMemberDrawer]);
+  }, [allMembersByWard, canViewProgress, drawerOpen, drawerTab, ready, replaceMemberQuery, searchParams, selectedMember?.id, showMemberDrawer]);
 
   function startEditingProgress(note: MemberNote) {
+    if (!canManageProgress) return;
+
     const nextForm = memberProgressToForm(note);
     setEditingProgressId(note.id);
     setProgressOccurredAt(nextForm.occurredAt);
@@ -396,7 +400,7 @@ export default function MembersPage() {
   }
 
   function saveProgress() {
-    if (!selectedMember || !progressText.trim() || !progressOccurredAt) return;
+    if (!canManageProgress || !selectedMember || !progressText.trim() || !progressOccurredAt) return;
 
     const input = {
       occurredAt: new Date(progressOccurredAt).toISOString(),
@@ -413,7 +417,7 @@ export default function MembersPage() {
   }
 
   function changeProgressCategory(category: MemberProgressCategory) {
-    if (!selectedMember || selectedMember.progressCategory === category) return;
+    if (!canManageProgress || !selectedMember || selectedMember.progressCategory === category) return;
 
     updateMemberProgressCategory(selectedMember.id, category);
     setSelectedMember((current) => (current ? { ...current, progressCategory: category } : current));
@@ -1025,7 +1029,7 @@ export default function MembersPage() {
                       >
                         Discursos
                       </Button>
-                      {canManageMembers ? (
+                      {canViewProgress ? (
                         <Button
                           aria-selected={drawerTab === "progress"}
                           className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "progress" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
@@ -1251,6 +1255,7 @@ export default function MembersPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Label htmlFor="member-progress-category">Categoria</Label>
                         <Select
+                          disabled={!canManageProgress}
                           value={selectedMember?.progressCategory ?? "disconnected"}
                           onValueChange={(value) => value && changeProgressCategory(value as MemberProgressCategory)}
                         >
@@ -1267,45 +1272,47 @@ export default function MembersPage() {
                         </Select>
                       </div>
 
-                      <section className="space-y-3 rounded-lg border bg-muted/20 p-4">
-                        <div>
-                          <h3 className="text-sm font-semibold">{editingProgressId ? "Editar progresso" : "Registrar progresso"}</h3>
-                          <p className="text-xs text-muted-foreground">O registro será associado automaticamente ao seu usuário.</p>
-                        </div>
-                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem]">
-                          <div className="space-y-2">
-                            <Label htmlFor="member-progress-text">Descrição</Label>
-                            <Textarea
-                              className="min-h-28 resize-y"
-                              id="member-progress-text"
-                              placeholder="Registre acompanhamentos, orientações ou qualquer evolução relevante."
-                              value={progressText}
-                              onChange={(event) => setProgressText(event.target.value)}
-                            />
+                      {canManageProgress ? (
+                        <section className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                          <div>
+                            <h3 className="text-sm font-semibold">{editingProgressId ? "Editar progresso" : "Registrar progresso"}</h3>
+                            <p className="text-xs text-muted-foreground">O registro será associado automaticamente ao seu usuário.</p>
                           </div>
-                          <div className="flex flex-col gap-3">
+                          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem]">
                             <div className="space-y-2">
-                              <Label htmlFor="member-progress-date">Data e hora</Label>
-                              <Input
-                                id="member-progress-date"
-                                type="datetime-local"
-                                value={progressOccurredAt}
-                                onChange={(event) => setProgressOccurredAt(event.target.value)}
+                              <Label htmlFor="member-progress-text">Descrição</Label>
+                              <Textarea
+                                className="min-h-28 resize-y"
+                                id="member-progress-text"
+                                placeholder="Registre acompanhamentos, orientações ou qualquer evolução relevante."
+                                value={progressText}
+                                onChange={(event) => setProgressText(event.target.value)}
                               />
                             </div>
-                            <div className="mt-auto flex flex-col gap-2">
-                              <Button disabled={!progressOccurredAt || !progressText.trim()} onClick={saveProgress} type="button">
-                                {editingProgressId ? "Salvar alteração" : "Registrar progresso"}
-                              </Button>
-                              {editingProgressId ? (
-                                <Button onClick={resetProgressForm} type="button" variant="ghost">
-                                  Cancelar edição
+                            <div className="flex flex-col gap-3">
+                              <div className="space-y-2">
+                                <Label htmlFor="member-progress-date">Data e hora</Label>
+                                <Input
+                                  id="member-progress-date"
+                                  type="datetime-local"
+                                  value={progressOccurredAt}
+                                  onChange={(event) => setProgressOccurredAt(event.target.value)}
+                                />
+                              </div>
+                              <div className="mt-auto flex flex-col gap-2">
+                                <Button disabled={!progressOccurredAt || !progressText.trim()} onClick={saveProgress} type="button">
+                                  {editingProgressId ? "Salvar alteração" : "Registrar progresso"}
                                 </Button>
-                              ) : null}
+                                {editingProgressId ? (
+                                  <Button onClick={resetProgressForm} type="button" variant="ghost">
+                                    Cancelar edição
+                                  </Button>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </section>
+                        </section>
+                      ) : null}
 
                       <section className="space-y-3">
                         <div>
@@ -1330,7 +1337,7 @@ export default function MembersPage() {
                                         </p>
                                       ) : null}
                                     </div>
-                                    {isAuthor ? (
+                                    {isAuthor && canManageProgress ? (
                                       <div className="flex shrink-0 items-center gap-1">
                                         <TableActionButton label="Editar progresso" onClick={() => startEditingProgress(note)}>
                                           <Pencil />

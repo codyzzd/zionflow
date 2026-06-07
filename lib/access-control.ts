@@ -13,7 +13,20 @@ export type AccessArea = {
 };
 
 export type AccessAreaCategory = "general" | "organization" | "minutes" | "support" | "caravan" | "admin";
-export type AccessAreaIcon = "building" | "bus" | "file-text" | "handshake" | "key" | "landmark" | "layout-dashboard" | "map" | "shield" | "utensils" | "users";
+export type AccessAreaIcon =
+  | "building"
+  | "bus"
+  | "download"
+  | "file-text"
+  | "handshake"
+  | "key"
+  | "landmark"
+  | "layout-dashboard"
+  | "map"
+  | "notebook-tabs"
+  | "shield"
+  | "utensils"
+  | "users";
 
 export const ACCESS_LEVEL_LABELS: Record<AccessLevel, string> = {
   hidden: "Não pode visualizar",
@@ -74,6 +87,15 @@ export const ACCESS_MATRIX_AREAS: AccessArea[] = [
     label: "Membros",
     viewPermission: "members.view",
     managePermission: "members.manage",
+  },
+  {
+    category: "organization",
+    description: "Acompanhamento, categoria e histórico de progresso dos membros.",
+    icon: "notebook-tabs",
+    id: "progress",
+    label: "Progresso",
+    viewPermission: "progress.view",
+    managePermission: "progress.manage",
   },
   {
     category: "organization",
@@ -162,6 +184,22 @@ export const ACCESS_MATRIX_AREAS: AccessArea[] = [
     label: "Usuários e acessos",
     viewPermission: "users.view",
     managePermission: "users.manage",
+  },
+  {
+    category: "admin",
+    description: "Consulta do histórico de alterações realizadas no sistema.",
+    icon: "file-text",
+    id: "audit",
+    label: "Auditoria",
+    viewPermission: "audit.view",
+  },
+  {
+    category: "admin",
+    description: "Permite executar exportações de dados nas telas que oferecem essa ação.",
+    icon: "download",
+    id: "exports",
+    label: "Exportações",
+    viewPermission: "exports.run",
   },
 ];
 
@@ -339,7 +377,7 @@ export function permissionsFromLegacyRole(roleId: string, permissions: Permissio
   }
 
   if (roleId === "role_admin" || roleId === "role_bishopric") {
-    permissions.push("ward.view", "ward.manage", "stake.view", "stake.manage", "users.view", "users.manage", "roles.manage", "map.view");
+    permissions.push("ward.view", "ward.manage", "stake.view", "stake.manage", "users.view", "users.manage", "map.view");
   }
 
   return normalizePermissionSet(permissions);

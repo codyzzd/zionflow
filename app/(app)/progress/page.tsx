@@ -36,8 +36,9 @@ type MemberProgressRow = {
 };
 
 export default function ProgressPage() {
-  const { memberNotesByWard, membersByWard } = useAppContext();
+  const { hasPermission, memberNotesByWard, membersByWard } = useAppContext();
   const { formatDateTime } = useDateFormatter();
+  const canManageProgress = hasPermission("progress.manage");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProgressStatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<ProgressCategoryFilter>("all");
@@ -135,26 +136,30 @@ export default function ProgressPage() {
             <Badge variant="secondary">Em dia</Badge>
           ),
       },
-      {
-        id: "actions",
-        header: () => <span className="sr-only">Ações</span>,
-        enableHiding: false,
-        cell: ({ row }) => (
-          <div className="text-right">
-            <TableActionButton asChild label="Registrar progresso">
-              <Link href={`/members?member=${encodeURIComponent(row.original.member.id)}&tab=progress`}>
-                <Plus />
-              </Link>
-            </TableActionButton>
-          </div>
-        ),
-      },
+      ...(canManageProgress
+        ? [
+            {
+              id: "actions",
+              header: () => <span className="sr-only">Ações</span>,
+              enableHiding: false,
+              cell: ({ row }) => (
+                <div className="text-right">
+                  <TableActionButton asChild label="Registrar progresso">
+                    <Link href={`/members?member=${encodeURIComponent(row.original.member.id)}&tab=progress`}>
+                      <Plus />
+                    </Link>
+                  </TableActionButton>
+                </div>
+              ),
+            } satisfies ColumnDef<MemberProgressRow>,
+          ]
+        : []),
     ],
-    [formatDateTime],
+    [canManageProgress, formatDateTime],
   );
 
   return (
-    <PermissionGuard permission="members.manage">
+    <PermissionGuard permission="progress.view">
       <div>
         <PageHeader
           eyebrow="Membros"
