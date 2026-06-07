@@ -14,8 +14,20 @@ import {
 } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
+import { memberProgressCategoryLabels } from "@/lib/member-progress-category";
 import { canSpeakWithTalkDuration, normalizeTalkDuration } from "@/lib/member-talk-duration";
-import { createEmptyDatabase, deleteMemberSnapshot, deleteMinuteSnapshot, loadDatabase, normalizeHymnTags, saveDatabase, saveMemberSnapshot, saveMinuteSnapshot } from "@/lib/storage";
+import {
+  createEmptyDatabase,
+  deleteMemberNoteSnapshot,
+  deleteMemberSnapshot,
+  deleteMinuteSnapshot,
+  loadDatabase,
+  normalizeHymnTags,
+  saveDatabase,
+  saveMemberNoteSnapshot,
+  saveMemberSnapshot,
+  saveMinuteSnapshot,
+} from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
@@ -37,6 +49,7 @@ import type {
   LunchSchedule,
   Member,
   MemberNote,
+  MemberProgressCategory,
   MinuteFormData,
   MissionaryCompanionship,
   PatrolMember,
@@ -85,6 +98,11 @@ type ImportMembersInput = {
   members: Array<Omit<Member, "id" | "wardId">>;
   importedFields: Array<keyof Omit<Member, "id" | "wardId">>;
   removeMissing: boolean;
+};
+
+type SaveMemberNoteInput = {
+  occurredAt: string;
+  text: string;
 };
 
 type ImportHymnsInput = {
@@ -183,7 +201,10 @@ type AppContextValue = {
   deleteArchivedMembers: (memberIds: string[]) => void;
   restoreMembers: (memberIds: string[]) => void;
   importMembers: (input: ImportMembersInput) => void;
-  addMemberNote: (memberId: string, text: string) => void;
+  updateMemberProgressCategory: (memberId: string, category: MemberProgressCategory) => void;
+  addMemberNote: (memberId: string, input: SaveMemberNoteInput) => void;
+  updateMemberNote: (noteId: string, input: SaveMemberNoteInput) => void;
+  deleteMemberNote: (noteId: string) => void;
   saveUser: (input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) => void;
   requestStakeOwnership: (input?: RequestStakeOwnershipInput) => void;
   approveStakeOwnershipRequest: (requestId: string) => void;
@@ -681,7 +702,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     const usersByWard = db.users.filter((user) => user.wardId === currentWardId && !user.archivedAt);
     const allMembersByWard = db.members.filter((member) => member.wardId === currentWardId);
     const membersByWard = allMembersByWard.filter((member) => !member.archivedAt);
-    const memberIds = new Set(membersByWard.map((member) => member.id));
+    const memberIds = new Set(allMembersByWard.map((member) => member.id));
     const memberNotesByWard = db.memberNotes.filter((note) => memberIds.has(note.memberId));
     const minutesByWard = db.sacramentMinutes.filter((minute) => minute.wardId === currentWardId && !minute.archivedAt);
     const allCompanionshipsByWard = db.missionaryCompanionships.filter((companionship) => companionship.wardId === currentWardId);
@@ -1887,6 +1908,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           ...member,
           birthDate: normalizeDateInput(member.birthDate),
           canSpeak: canSpeakWithTalkDuration(normalizeTalkDuration(member.sacramentTalkDuration)),
+          progressCategory: member.progressCategory ?? "disconnected",
           sacramentTalkDuration: normalizeTalkDuration(member.sacramentTalkDuration),
         }));
 
@@ -1976,38 +1998,174 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success(`${importedMembers.length} ${importedMembers.length === 1 ? "membro importado" : "membros importados"}.`);
     }
 
-    function addMemberNote(memberId: string, text: string) {
-      if (!text.trim()) return;
-      const memberExists = db.members.some((member) => member.id === memberId);
-      if (!memberExists) return;
+    function updateMemberProgressCategory(memberId: string, category: MemberProgressCategory) {
+      const actor = db.users.find((user) => user.id === db.session.currentUserId);
+      const member = db.members.find((item) => item.id === memberId);
+      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+
+      if (!actor || !member || !canManageMembers || member.progressCategory === category) return;
+
+      const updatedMember = withRecordMetadata(
+        {
+          ...member,
+          progressCategory: category,
+        },
+        member,
+        actor.id,
+      );
 
       setDb((currentDb) => {
-        const member = currentDb.members.find((item) => item.id === memberId);
-        if (!member) return currentDb;
+        const currentMember = currentDb.members.find((item) => item.id === memberId);
+        if (!currentMember || currentMember.progressCategory === category) return currentDb;
 
-        const note: MemberNote = {
-          id: uid("note"),
-          memberId,
-          createdAt: nowIso(),
-          createdBy: currentDb.session.currentUserId ?? "system",
-          text: text.trim(),
+        const nextDb = {
+          ...currentDb,
+          members: currentDb.members.map((item) => (item.id === memberId ? updatedMember : item)),
         };
 
+        return withAuditLog(nextDb, actor.id, {
+          wardId: member.wardId,
+          action: "UPDATE_MEMBER_PROGRESS_CATEGORY",
+          module: "membros",
+          itemLabel: member.name,
+          summary: `Alterou a categoria de acompanhamento para ${memberProgressCategoryLabels[category]}.`,
+        });
+      });
+
+      void saveMemberSnapshot(updatedMember).catch((error) => {
+        console.error("Failed to save member progress category directly.", error);
+        if (!saveErrorShownRef.current) {
+          toast.error("Nao foi possivel salvar a categoria de acompanhamento.");
+          saveErrorShownRef.current = true;
+        }
+      });
+      toast.success("Categoria de acompanhamento atualizada.");
+    }
+
+    function persistMemberNote(note: MemberNote) {
+      void saveMemberNoteSnapshot(note).catch((error) => {
+        console.error("Failed to save member progress directly.", error);
+        if (!saveErrorShownRef.current) {
+          toast.error("Nao foi possivel salvar o progresso no Supabase.");
+          saveErrorShownRef.current = true;
+        }
+      });
+    }
+
+    function addMemberNote(memberId: string, input: SaveMemberNoteInput) {
+      const text = input.text.trim();
+      const occurredAt = new Date(input.occurredAt);
+      const actor = db.users.find((user) => user.id === db.session.currentUserId);
+      const member = db.members.find((item) => item.id === memberId);
+      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+
+      if (!text || Number.isNaN(occurredAt.getTime()) || !actor || !member || !canManageMembers) return;
+
+      const timestamp = nowIso();
+      const note: MemberNote = {
+        id: uid("note"),
+        memberId,
+        occurredAt: occurredAt.toISOString(),
+        createdAt: timestamp,
+        createdBy: actor.id,
+        createdByName: actor.name,
+        text,
+      };
+
+      setDb((currentDb) => {
         const nextDb = {
           ...currentDb,
           memberNotes: [note, ...currentDb.memberNotes],
         };
 
-        return withAuditLog(nextDb, currentDb.session.currentUserId, {
+        return withAuditLog(nextDb, actor.id, {
           wardId: member.wardId,
-          action: "CREATE_MEMBER_NOTE",
+          action: "CREATE_MEMBER_PROGRESS",
           module: "membros",
           itemLabel: member.name,
-          summary: "Adicionou anotação administrativa ao membro.",
+          summary: "Registrou progresso na ficha do membro.",
         });
       });
 
-      toast.success("Anotação adicionada.");
+      persistMemberNote(note);
+      toast.success("Progresso registrado.");
+    }
+
+    function updateMemberNote(noteId: string, input: SaveMemberNoteInput) {
+      const text = input.text.trim();
+      const occurredAt = new Date(input.occurredAt);
+      const actor = db.users.find((user) => user.id === db.session.currentUserId);
+      const existing = db.memberNotes.find((note) => note.id === noteId);
+      const member = existing ? db.members.find((item) => item.id === existing.memberId) : undefined;
+      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+
+      if (!text || Number.isNaN(occurredAt.getTime()) || !actor || !existing || !member || !canManageMembers || existing.createdBy !== actor.id) return;
+
+      const updatedNote: MemberNote = {
+        ...existing,
+        occurredAt: occurredAt.toISOString(),
+        text,
+        updatedAt: nowIso(),
+        updatedBy: actor.id,
+        updatedByName: actor.name,
+      };
+
+      setDb((currentDb) => {
+        const currentNote = currentDb.memberNotes.find((note) => note.id === noteId);
+        if (!currentNote || currentNote.createdBy !== actor.id) return currentDb;
+
+        const nextDb = {
+          ...currentDb,
+          memberNotes: currentDb.memberNotes.map((note) => (note.id === noteId ? updatedNote : note)),
+        };
+
+        return withAuditLog(nextDb, actor.id, {
+          wardId: member.wardId,
+          action: "UPDATE_MEMBER_PROGRESS",
+          module: "membros",
+          itemLabel: member.name,
+          summary: "Editou um registro de progresso da própria autoria.",
+        });
+      });
+
+      persistMemberNote(updatedNote);
+      toast.success("Progresso atualizado.");
+    }
+
+    function deleteMemberNote(noteId: string) {
+      const actor = db.users.find((user) => user.id === db.session.currentUserId);
+      const existing = db.memberNotes.find((note) => note.id === noteId);
+      const member = existing ? db.members.find((item) => item.id === existing.memberId) : undefined;
+      const canManageMembers = Boolean(actor && resolvePermissions(db, actor).includes("members.manage"));
+
+      if (!actor || !existing || !member || !canManageMembers || existing.createdBy !== actor.id) return;
+
+      setDb((currentDb) => {
+        const currentNote = currentDb.memberNotes.find((note) => note.id === noteId);
+        if (!currentNote || currentNote.createdBy !== actor.id) return currentDb;
+
+        const nextDb = {
+          ...currentDb,
+          memberNotes: currentDb.memberNotes.filter((note) => note.id !== noteId),
+        };
+
+        return withAuditLog(nextDb, actor.id, {
+          wardId: member.wardId,
+          action: "DELETE_MEMBER_PROGRESS",
+          module: "membros",
+          itemLabel: member.name,
+          summary: "Excluiu um registro de progresso da própria autoria.",
+        });
+      });
+
+      void deleteMemberNoteSnapshot(noteId).catch((error) => {
+        console.error("Failed to delete member progress directly.", error);
+        if (!saveErrorShownRef.current) {
+          toast.error("Nao foi possivel excluir o progresso no Supabase.");
+          saveErrorShownRef.current = true;
+        }
+      });
+      toast.success("Progresso excluido.");
     }
 
     function saveUser(input: Omit<User, "id" | "createdAt" | "lastAccessAt" | "accountType"> & { id?: string; accountType?: UserAccountType }) {
@@ -3427,7 +3585,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       deleteArchivedMembers,
       restoreMembers,
       importMembers,
+      updateMemberProgressCategory,
       addMemberNote,
+      updateMemberNote,
+      deleteMemberNote,
       saveUser,
       requestStakeOwnership,
       approveStakeOwnershipRequest,

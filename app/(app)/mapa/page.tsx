@@ -433,7 +433,7 @@ function MemberListButton({ member, onSelect, selected }: { member: Member; onSe
         <button className="truncate text-left" onClick={() => onSelect(member)} type="button">
           {mapped ? `${member.latitude}, ${member.longitude}` : "Não mapeado"}
         </button>
-        <Link className="shrink-0 font-medium text-foreground hover:underline" href={`/members/${member.id}`}>
+        <Link className="shrink-0 font-medium text-foreground hover:underline" href={`/members?member=${encodeURIComponent(member.id)}`}>
           Abrir
         </Link>
       </div>

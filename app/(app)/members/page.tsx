@@ -1,15 +1,21 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CheckSquare, ChevronDown, Download, Eye, FileUp, MapPin, Mars, Pause, Play, RotateCcw, Skull, SlidersHorizontal, Trash2, UserCheck, Venus, X } from "lucide-react";
+import { CheckSquare, ChevronDown, Download, Eye, FileUp, MapPin, Pencil, RotateCcw, SlidersHorizontal, Trash2, UserCheck, X } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { MemberActivityStatusImportDialog } from "@/components/features/members/member-activity-status-import-dialog";
 import { MemberExportDialog } from "@/components/features/members/member-export-dialog";
 import { MemberImportDialog } from "@/components/features/members/member-import-dialog";
+import {
+  MemberActivityStatusIcon,
+  MemberSexIcon,
+  memberActivityStatusLabels as churchActivityStatusLabels,
+  memberSexLabels as sexLabels,
+} from "@/components/features/members/member-visual-indicators";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
@@ -40,17 +46,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
+import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { parseCoordinateInput } from "@/lib/coordinates";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
+import { MEMBER_PROGRESS_CATEGORY_OPTIONS } from "@/lib/member-progress-category";
 import { buildBrazilWhatsAppUrl } from "@/lib/phone";
 import { cn, normalizeDateInput } from "@/lib/utils";
-import type { Member } from "@/types/domain";
+import type { Member, MemberNote, MemberProgressCategory } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
 type DrawerMode = "create" | "view" | "edit";
-type DrawerTab = "data" | "talks";
+type DrawerTab = "data" | "talks" | "progress";
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
 type MemberStatusFilter = "active" | "archived";
 type MemberActionDialog = "activity" | "export" | "import" | null;
@@ -59,9 +67,11 @@ const emptyMemberForm: MemberForm = {
   name: "",
   phone: "",
   address: "",
+  observation: "",
   latitude: undefined,
   longitude: undefined,
   churchActivityStatus: "attending",
+  progressCategory: "disconnected",
   birthDate: "",
   organization: "",
   sex: "M",
@@ -71,55 +81,11 @@ const emptyMemberForm: MemberForm = {
   canConduct: false,
 };
 
-const sexLabels: Record<Member["sex"], string> = {
-  M: "Masculino",
-  F: "Feminino",
-};
-
-const churchActivityStatusLabels: Record<Member["churchActivityStatus"], string> = {
-  away: "Afastado",
-  attending: "Frequentando",
-  not_attending: "Não frequentando",
-};
-
 const coordinatesFilterLabels: Record<CoordinatesFilter, string> = {
   all: "Todos mapas",
   mapped: "Com coordenadas",
   unmapped: "Sem coordenadas",
 };
-
-const sexIconMeta: Record<Member["sex"], { className: string; icon: typeof Mars }> = {
-  M: { className: "text-blue-500", icon: Mars },
-  F: { className: "text-pink-500", icon: Venus },
-};
-
-const churchActivityStatusIconMeta: Record<Member["churchActivityStatus"], { className: string; icon: typeof Play }> = {
-  away: { className: "text-muted-foreground", icon: Skull },
-  attending: { className: "text-emerald-600 dark:text-emerald-400", icon: Play },
-  not_attending: { className: "text-red-600 dark:text-red-400", icon: Pause },
-};
-
-function MemberSexIcon({ sex }: { sex: Member["sex"] }) {
-  const meta = sexIconMeta[sex];
-  const Icon = meta.icon;
-
-  return (
-    <span aria-label={sexLabels[sex]} className={cn("inline-flex size-5 items-center justify-center", meta.className)} title={sexLabels[sex]}>
-      <Icon aria-hidden="true" className="size-3.5" />
-    </span>
-  );
-}
-
-function MemberActivityStatusIcon({ status }: { status: Member["churchActivityStatus"] }) {
-  const meta = churchActivityStatusIconMeta[status];
-  const Icon = meta.icon;
-
-  return (
-    <span aria-label={churchActivityStatusLabels[status]} className={cn("inline-flex size-5 items-center justify-center", meta.className)} title={churchActivityStatusLabels[status]}>
-      <Icon aria-hidden="true" className="size-3.5" />
-    </span>
-  );
-}
 
 function buildGoogleMapsAddressUrl(address: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
@@ -161,14 +127,29 @@ function hasValidCoordinates(member: Member) {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
 }
 
+function toDateTimeLocalValue(value = new Date()) {
+  const pad = (part: number) => String(part).padStart(2, "0");
+
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+}
+
+function memberProgressToForm(note: MemberNote) {
+  return {
+    occurredAt: toDateTimeLocalValue(new Date(note.occurredAt)),
+    text: note.text,
+  };
+}
+
 function memberToForm(member: Member): MemberForm {
   return {
     name: member.name,
     phone: member.phone,
     address: member.address,
+    observation: member.observation,
     latitude: member.latitude,
     longitude: member.longitude,
     churchActivityStatus: member.churchActivityStatus,
+    progressCategory: member.progressCategory,
     birthDate: member.birthDate,
     organization: member.organization,
     sex: member.sex,
@@ -181,8 +162,25 @@ function memberToForm(member: Member): MemberForm {
 
 export default function MembersPage() {
   const router = useRouter();
-  const { allMembersByWard, currentWard, deleteArchivedMembers, deleteMembers, hasPermission, minutesByWard, restoreMembers, saveMember } = useAppContext();
-  const { formatDate } = useDateFormatter();
+  const searchParams = useSearchParams();
+  const {
+    addMemberNote,
+    allMembersByWard,
+    currentUser,
+    currentWard,
+    deleteArchivedMembers,
+    deleteMemberNote,
+    deleteMembers,
+    hasPermission,
+    memberNotesByWard,
+    minutesByWard,
+    ready,
+    restoreMembers,
+    saveMember,
+    updateMemberProgressCategory,
+    updateMemberNote,
+  } = useAppContext();
+  const { formatDate, formatDateTime } = useDateFormatter();
   const canManageMembers = hasPermission("members.manage");
   const canExportMembers = canManageMembers || hasPermission("exports.run");
 
@@ -194,6 +192,11 @@ export default function MembersPage() {
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
+  const [progressOccurredAt, setProgressOccurredAt] = useState(() => toDateTimeLocalValue());
+  const [progressText, setProgressText] = useState("");
+  const [editingProgressId, setEditingProgressId] = useState<string | null>(null);
+  const ignoreMemberQueryRef = useRef(false);
+  const pendingDrawerTabRef = useRef<DrawerTab | null>(null);
   const [sexFilter, setSexFilter] = useState<"all" | Member["sex"]>("all");
   const [memberStatusFilter, setMemberStatusFilter] = useState<MemberStatusFilter>("active");
   const [activityStatusFilter, setActivityStatusFilter] = useState<"all" | Member["churchActivityStatus"]>("all");
@@ -206,6 +209,15 @@ export default function MembersPage() {
   const talkOccurrencesByMemberId = useMemo(() => buildMemberTalkOccurrences(minutesByWard), [minutesByWard]);
   const selectedMemberTalkHistory = selectedMember ? talkHistoryByMemberId.get(selectedMember.id) : undefined;
   const selectedMemberTalkOccurrences = selectedMember ? (talkOccurrencesByMemberId.get(selectedMember.id) ?? []) : [];
+  const selectedMemberProgress = useMemo(
+    () =>
+      selectedMember
+        ? memberNotesByWard
+            .filter((note) => note.memberId === selectedMember.id)
+            .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+        : [],
+    [memberNotesByWard, selectedMember],
+  );
   const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
   const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
   const advancedFilterChips = useMemo(() => {
@@ -222,6 +234,34 @@ export default function MembersPage() {
     return chips;
   }, [activityStatusFilter, coordinatesFilter, maximumAge, memberStatusFilter, minimumAge, sexFilter, talkDurationFilter]);
   const hasAdvancedFilters = advancedFilterChips.length > 0;
+
+  const resetProgressForm = useCallback(() => {
+    setEditingProgressId(null);
+    setProgressOccurredAt(toDateTimeLocalValue());
+    setProgressText("");
+  }, []);
+
+  const replaceMemberQuery = useCallback(
+    (memberId?: string, tab?: DrawerTab) => {
+      const params = new URLSearchParams(searchParams.toString());
+
+      if (memberId) {
+        params.set("member", memberId);
+      } else {
+        params.delete("member");
+      }
+
+      if (memberId && tab === "progress" && canManageMembers) {
+        params.set("tab", "progress");
+      } else {
+        params.delete("tab");
+      }
+
+      const query = params.toString();
+      router.replace(query ? `/members?${query}` : "/members", { scroll: false });
+    },
+    [canManageMembers, router, searchParams],
+  );
 
   const filteredMembers = useMemo(
     () =>
@@ -251,14 +291,21 @@ export default function MembersPage() {
     setDrawerOpen(open);
 
     if (!open) {
+      ignoreMemberQueryRef.current = true;
+      pendingDrawerTabRef.current = null;
+      replaceMemberQuery();
       setForm(emptyMemberForm);
       setSelectedMember(null);
       setDrawerMode("create");
       setDrawerTab("data");
+      resetProgressForm();
     }
   }
 
   function openCreateDrawer() {
+    ignoreMemberQueryRef.current = true;
+    pendingDrawerTabRef.current = null;
+    replaceMemberQuery();
     setForm(emptyMemberForm);
     setSelectedMember(null);
     setDrawerMode("create");
@@ -266,13 +313,112 @@ export default function MembersPage() {
     setDrawerOpen(true);
   }
 
-  const openViewDrawer = useCallback((member: Member) => {
+  const showMemberDrawer = useCallback((member: Member, tab: DrawerTab = "data") => {
     setSelectedMember(member);
     setForm(memberToForm(member));
     setDrawerMode("view");
-    setDrawerTab("data");
+    setDrawerTab(tab);
     setDrawerOpen(true);
-  }, []);
+    resetProgressForm();
+  }, [resetProgressForm]);
+
+  const openViewDrawer = useCallback((member: Member) => {
+    ignoreMemberQueryRef.current = false;
+    pendingDrawerTabRef.current = null;
+    replaceMemberQuery(member.id);
+    showMemberDrawer(member, "data");
+  }, [replaceMemberQuery, showMemberDrawer]);
+
+  function selectDrawerTab(tab: DrawerTab) {
+    pendingDrawerTabRef.current = tab;
+    setDrawerTab(tab);
+    if (selectedMember) {
+      replaceMemberQuery(selectedMember.id, tab);
+    }
+  }
+
+  useEffect(() => {
+    const requestedMemberId = searchParams.get("member");
+    if (!requestedMemberId) {
+      ignoreMemberQueryRef.current = false;
+      return;
+    }
+    if (!ready || ignoreMemberQueryRef.current) return;
+
+    const requestedMember = allMembersByWard.find((member) => member.id === requestedMemberId);
+    const requestedTab = searchParams.get("tab");
+    const pendingDrawerTab = pendingDrawerTabRef.current;
+
+    if (pendingDrawerTab) {
+      const queryMatchesPendingTab =
+        (pendingDrawerTab === "progress" && requestedTab === "progress") ||
+        (pendingDrawerTab !== "progress" && !requestedTab);
+
+      if (queryMatchesPendingTab) {
+        pendingDrawerTabRef.current = null;
+      }
+
+      return;
+    }
+
+    const nextTab: DrawerTab =
+      requestedTab === "progress" && canManageMembers
+        ? "progress"
+        : selectedMember?.id === requestedMemberId && drawerOpen
+          ? drawerTab
+          : "data";
+    if (!requestedMember) {
+      replaceMemberQuery();
+      return;
+    }
+
+    if (requestedTab && requestedTab !== "progress") {
+      replaceMemberQuery(requestedMember.id);
+      return;
+    }
+
+    if (requestedTab === "progress" && !canManageMembers) {
+      replaceMemberQuery(requestedMember.id);
+      return;
+    }
+
+    if (selectedMember?.id !== requestedMember.id || !drawerOpen || drawerTab !== nextTab) {
+      const timeoutId = window.setTimeout(() => showMemberDrawer(requestedMember, nextTab), 0);
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [allMembersByWard, canManageMembers, drawerOpen, drawerTab, ready, replaceMemberQuery, searchParams, selectedMember?.id, showMemberDrawer]);
+
+  function startEditingProgress(note: MemberNote) {
+    const nextForm = memberProgressToForm(note);
+    setEditingProgressId(note.id);
+    setProgressOccurredAt(nextForm.occurredAt);
+    setProgressText(nextForm.text);
+  }
+
+  function saveProgress() {
+    if (!selectedMember || !progressText.trim() || !progressOccurredAt) return;
+
+    const input = {
+      occurredAt: new Date(progressOccurredAt).toISOString(),
+      text: progressText,
+    };
+
+    if (editingProgressId) {
+      updateMemberNote(editingProgressId, input);
+    } else {
+      addMemberNote(selectedMember.id, input);
+    }
+
+    resetProgressForm();
+  }
+
+  function changeProgressCategory(category: MemberProgressCategory) {
+    if (!selectedMember || selectedMember.progressCategory === category) return;
+
+    updateMemberProgressCategory(selectedMember.id, category);
+    setSelectedMember((current) => (current ? { ...current, progressCategory: category } : current));
+    setForm((current) => ({ ...current, progressCategory: category }));
+  }
 
   function openEditDrawer(member: Member) {
     setSelectedMember(member);
@@ -296,6 +442,7 @@ export default function MembersPage() {
       address: form.address.trim(),
       birthDate: form.birthDate.trim(),
       name: form.name.trim(),
+      observation: form.observation.trim(),
       organization: form.organization.trim(),
       phone: form.phone.trim(),
     });
@@ -859,7 +1006,7 @@ export default function MembersPage() {
                       <Button
                         aria-selected={drawerTab === "data"}
                         className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "data" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
-                        onClick={() => setDrawerTab("data")}
+                        onClick={() => selectDrawerTab("data")}
                         role="tab"
                         size="sm"
                         type="button"
@@ -870,7 +1017,7 @@ export default function MembersPage() {
                       <Button
                         aria-selected={drawerTab === "talks"}
                         className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "talks" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
-                        onClick={() => setDrawerTab("talks")}
+                        onClick={() => selectDrawerTab("talks")}
                         role="tab"
                         size="sm"
                         type="button"
@@ -878,136 +1025,191 @@ export default function MembersPage() {
                       >
                         Discursos
                       </Button>
+                      {canManageMembers ? (
+                        <Button
+                          aria-selected={drawerTab === "progress"}
+                          className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "progress" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+                          onClick={() => selectDrawerTab("progress")}
+                          role="tab"
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Progresso
+                        </Button>
+                      ) : null}
                     </div>
                   ) : null}
 
                   {drawerTab === "data" ? (
-                    <>
-                      <div className="section-grid">
+                    <div className="space-y-6">
+                      <section className="space-y-3">
                         <div>
-                          <Label>Nome completo</Label>
-                          <Input
-                            disabled={isReadOnly}
-                            value={form.name}
-                            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                          />
+                          <h3 className="text-sm font-semibold text-foreground">Dados pessoais</h3>
+                          <p className="text-xs text-muted-foreground">Identificação e informações básicas do membro.</p>
                         </div>
-                        <div>
-                          <Label>Telefone</Label>
-                          <Input
-                            disabled={isReadOnly}
-                            inputMode="tel"
-                            placeholder="ex: (00) 00000-0000"
-                            value={form.phone}
-                            onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <Label>Condição na igreja</Label>
-                          <Select
-                            disabled={isReadOnly}
-                            value={form.churchActivityStatus}
-                            onValueChange={(value) => value && setForm((current) => ({ ...current, churchActivityStatus: value as Member["churchActivityStatus"] }))}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="attending">Frequentando</SelectItem>
-                              <SelectItem value="not_attending">Não frequentando</SelectItem>
-                              <SelectItem value="away">Afastado</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="sm:col-span-2">
-                          <Label>Endereço</Label>
-                          <Input
-                            disabled={isReadOnly}
-                            placeholder="ex: Rua, número, bairro, cidade"
-                            value={form.address}
-                            onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <Label>Latitude</Label>
-                          <Input
-                            disabled={isReadOnly}
-                            inputMode="decimal"
-                            placeholder="ex: -3.7319"
-                            value={form.latitude ?? ""}
-                            onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))}
-                          />
-                        </div>
-                        <div>
-                          <Label>Longitude</Label>
-                          <Input
-                            disabled={isReadOnly}
-                            inputMode="decimal"
-                            placeholder="ex: -38.5267"
-                            value={form.longitude ?? ""}
-                            onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))}
-                          />
-                        </div>
-                        <div>
-                          <Label>Data de nascimento</Label>
-                          <DatePicker
-                            disabled={isReadOnly}
-                            value={form.birthDate}
-                            onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))}
-                          />
-                        </div>
-                        <div>
-                          <Label>Sexo</Label>
-                          <Select disabled={isReadOnly} value={form.sex} onValueChange={(value) => value && setForm((current) => ({ ...current, sex: value as Member["sex"] }))}>
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Selecione o sexo" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="M">Masculino</SelectItem>
-                              <SelectItem value="F">Feminino</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <Label>Nível de discurso</Label>
-                          <Select
-                            disabled={isReadOnly}
-                            value={form.sacramentTalkDuration}
-                            onValueChange={(value) =>
-                              value && setForm((current) => ({ ...current, sacramentTalkDuration: value as Member["sacramentTalkDuration"] }))
-                            }
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Selecione o tempo" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TALK_DURATION_OPTIONS.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {selectedMember ? (
+                        <div className="section-grid">
                           <div>
-                            <Label>Último discurso</Label>
-                            <div className="rounded-md border bg-background px-3 py-2 text-sm">
-                              {selectedMemberTalkHistory ? (
-                                <>
-                                  <p className="font-medium">{selectedMemberTalkHistory.summary}</p>
-                                  <p className="text-xs text-muted-foreground">{formatDate(selectedMemberTalkHistory.lastTalkDate)}</p>
-                                </>
-                              ) : (
-                                <p className="text-muted-foreground">Sem discurso registrado</p>
-                              )}
-                            </div>
+                            <Label>Nome completo</Label>
+                            <Input
+                              disabled={isReadOnly}
+                              value={form.name}
+                              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                            />
                           </div>
-                        ) : null}
-                      </div>
+                          <div>
+                            <Label>Data de nascimento</Label>
+                            <DatePicker
+                              disabled={isReadOnly}
+                              value={form.birthDate}
+                              onChange={(value) => setForm((current) => ({ ...current, birthDate: value }))}
+                            />
+                          </div>
+                          <div>
+                            <Label>Sexo</Label>
+                            <Select
+                              disabled={isReadOnly}
+                              value={form.sex}
+                              onValueChange={(value) => value && setForm((current) => ({ ...current, sex: value as Member["sex"] }))}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Selecione o sexo" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="M">Masculino</SelectItem>
+                                <SelectItem value="F">Feminino</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </section>
 
-                    </>
-                  ) : (
+                      <section className="space-y-3 border-t pt-5">
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">Contato e localização</h3>
+                          <p className="text-xs text-muted-foreground">Telefone, endereço e dados usados no mapa.</p>
+                        </div>
+                        <div className="section-grid">
+                          <div>
+                            <Label>Telefone</Label>
+                            <Input
+                              disabled={isReadOnly}
+                              inputMode="tel"
+                              placeholder="ex: (00) 00000-0000"
+                              value={form.phone}
+                              onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <Label>Endereço</Label>
+                            <Input
+                              disabled={isReadOnly}
+                              placeholder="ex: Rua, número, bairro, cidade"
+                              value={form.address}
+                              onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <Label>Latitude</Label>
+                            <Input
+                              disabled={isReadOnly}
+                              inputMode="decimal"
+                              placeholder="ex: -3.7319"
+                              value={form.latitude ?? ""}
+                              onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))}
+                            />
+                          </div>
+                          <div>
+                            <Label>Longitude</Label>
+                            <Input
+                              disabled={isReadOnly}
+                              inputMode="decimal"
+                              placeholder="ex: -38.5267"
+                              value={form.longitude ?? ""}
+                              onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))}
+                            />
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="space-y-3 border-t pt-5">
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">Participação na igreja</h3>
+                          <p className="text-xs text-muted-foreground">Frequência e informações relacionadas a discursos.</p>
+                        </div>
+                        <div className="section-grid">
+                          <div>
+                            <Label>Condição na igreja</Label>
+                            <Select
+                              disabled={isReadOnly}
+                              value={form.churchActivityStatus}
+                              onValueChange={(value) =>
+                                value && setForm((current) => ({ ...current, churchActivityStatus: value as Member["churchActivityStatus"] }))
+                              }
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="attending">Frequentando</SelectItem>
+                                <SelectItem value="not_attending">Não frequentando</SelectItem>
+                                <SelectItem value="away">Afastado</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label>Nível de discurso</Label>
+                            <Select
+                              disabled={isReadOnly}
+                              value={form.sacramentTalkDuration}
+                              onValueChange={(value) =>
+                                value && setForm((current) => ({ ...current, sacramentTalkDuration: value as Member["sacramentTalkDuration"] }))
+                              }
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Selecione o tempo" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {TALK_DURATION_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {selectedMember ? (
+                            <div>
+                              <Label>Último discurso</Label>
+                              <div className="rounded-md border bg-background px-3 py-2 text-sm">
+                                {selectedMemberTalkHistory ? (
+                                  <>
+                                    <p className="font-medium">{selectedMemberTalkHistory.summary}</p>
+                                    <p className="text-xs text-muted-foreground">{formatDate(selectedMemberTalkHistory.lastTalkDate)}</p>
+                                  </>
+                                ) : (
+                                  <p className="text-muted-foreground">Sem discurso registrado</p>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </section>
+
+                      <section className="space-y-3 border-t pt-5">
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">Observações</h3>
+                          <p className="text-xs text-muted-foreground">Informações complementares sobre o membro.</p>
+                        </div>
+                        <Textarea
+                          disabled={isReadOnly}
+                          placeholder="Informações adicionais sobre o membro"
+                          value={form.observation}
+                          onChange={(event) => setForm((current) => ({ ...current, observation: event.target.value }))}
+                        />
+                      </section>
+                    </div>
+                  ) : drawerTab === "talks" ? (
                     <div className="rounded-lg border">
                       {selectedMemberTalkOccurrences.length ? (
                         <Table>
@@ -1044,6 +1246,119 @@ export default function MembersPage() {
                         <div className="px-4 py-10 text-center text-sm text-muted-foreground">Nenhum discurso vinculado nas atas.</div>
                       )}
                     </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Label htmlFor="member-progress-category">Categoria</Label>
+                        <Select
+                          value={selectedMember?.progressCategory ?? "disconnected"}
+                          onValueChange={(value) => value && changeProgressCategory(value as MemberProgressCategory)}
+                        >
+                          <SelectTrigger className="w-44" id="member-progress-category">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MEMBER_PROGRESS_CATEGORY_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <section className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                        <div>
+                          <h3 className="text-sm font-semibold">{editingProgressId ? "Editar progresso" : "Registrar progresso"}</h3>
+                          <p className="text-xs text-muted-foreground">O registro será associado automaticamente ao seu usuário.</p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem]">
+                          <div className="space-y-2">
+                            <Label htmlFor="member-progress-text">Descrição</Label>
+                            <Textarea
+                              className="min-h-28 resize-y"
+                              id="member-progress-text"
+                              placeholder="Registre acompanhamentos, orientações ou qualquer evolução relevante."
+                              value={progressText}
+                              onChange={(event) => setProgressText(event.target.value)}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-3">
+                            <div className="space-y-2">
+                              <Label htmlFor="member-progress-date">Data e hora</Label>
+                              <Input
+                                id="member-progress-date"
+                                type="datetime-local"
+                                value={progressOccurredAt}
+                                onChange={(event) => setProgressOccurredAt(event.target.value)}
+                              />
+                            </div>
+                            <div className="mt-auto flex flex-col gap-2">
+                              <Button disabled={!progressOccurredAt || !progressText.trim()} onClick={saveProgress} type="button">
+                                {editingProgressId ? "Salvar alteração" : "Registrar progresso"}
+                              </Button>
+                              {editingProgressId ? (
+                                <Button onClick={resetProgressForm} type="button" variant="ghost">
+                                  Cancelar edição
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="space-y-3">
+                        <div>
+                          <h3 className="text-sm font-semibold">Histórico</h3>
+                          <p className="text-xs text-muted-foreground">Registros mais recentes aparecem primeiro.</p>
+                        </div>
+                        {selectedMemberProgress.length ? (
+                          <div className="space-y-3">
+                            {selectedMemberProgress.map((note) => {
+                              const isAuthor = note.createdBy === currentUser?.id;
+
+                              return (
+                                <article className="rounded-lg border bg-background p-4" key={note.id}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="font-medium tabular-nums">{formatDateTime(note.occurredAt)}</p>
+                                      <p className="text-xs text-muted-foreground">Registrado por {note.createdByName}</p>
+                                      {note.updatedAt ? (
+                                        <p className="text-xs text-muted-foreground">
+                                          Editado em {formatDateTime(note.updatedAt)}
+                                          {note.updatedByName ? ` por ${note.updatedByName}` : ""}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                    {isAuthor ? (
+                                      <div className="flex shrink-0 items-center gap-1">
+                                        <TableActionButton label="Editar progresso" onClick={() => startEditingProgress(note)}>
+                                          <Pencil />
+                                        </TableActionButton>
+                                        <DeleteTableActionButton
+                                          confirmLabel="Excluir progresso"
+                                          description="Excluir este registro de progresso? Essa ação não pode ser desfeita."
+                                          label="Excluir progresso"
+                                          onConfirm={() => {
+                                            deleteMemberNote(note.id);
+                                            if (editingProgressId === note.id) resetProgressForm();
+                                          }}
+                                        />
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <p className="mt-3 whitespace-pre-wrap text-sm text-foreground">{note.text}</p>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+                            Nenhum progresso registrado para este membro.
+                          </div>
+                        )}
+                      </section>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1053,7 +1368,7 @@ export default function MembersPage() {
                   <Button onClick={closeDrawer} variant="ghost">
                     {isReadOnly ? "Fechar" : "Cancelar"}
                   </Button>
-                  {canManageMembers && selectedMember?.archivedAt ? (
+                  {drawerTab !== "progress" && canManageMembers && selectedMember?.archivedAt ? (
                     <DeleteConfirmationDialog
                       confirmLabel="Apagar definitivamente"
                       description={`Apagar definitivamente ${selectedMember.name}? Essa ação remove o membro arquivado e não pode ser desfeita.`}
@@ -1068,7 +1383,7 @@ export default function MembersPage() {
                       </Button>
                     </DeleteConfirmationDialog>
                   ) : null}
-                  {isReadOnly && canManageMembers && selectedMember ? (
+                  {drawerTab !== "progress" && isReadOnly && canManageMembers && selectedMember ? (
                     <Button onClick={() => openEditDrawer(selectedMember)}>Editar membro</Button>
                   ) : null}
                   {!isReadOnly ? (

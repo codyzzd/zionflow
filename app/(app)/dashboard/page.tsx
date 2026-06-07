@@ -1,181 +1,439 @@
 "use client";
 
-import { AlertTriangle, CalendarRange, FileText, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, TrendingDown, TrendingUp, Users } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { formatRelativeDay } from "@/lib/utils";
-import type { ConfirmationStatus, PatrolSchedule } from "@/types/domain";
+import { cn, todayDate } from "@/lib/utils";
+import type { ChurchActivityStatus, LunchSchedule, MissionaryCompanionship, SacramentMinute, Weekday } from "@/types/domain";
 
-const confirmationLabels: Record<ConfirmationStatus, string> = {
-  not_viewed: "Não visualizado",
-  viewed: "Visualizado",
-  accepted: "Aceito",
-  declined: "Recusado",
-};
+const weekdaysByIndex: Weekday[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-function resolveSacramentalMemberIds(schedule: PatrolSchedule) {
-  if (schedule.sacramentalMemberIds?.length) return schedule.sacramentalMemberIds;
-  return schedule.primaryPatrolMemberId ? [schedule.primaryPatrolMemberId] : [];
+const memberStatusMeta: Array<{
+  status: ChurchActivityStatus;
+  label: string;
+  barClassName: string;
+  dotClassName: string;
+  textClassName: string;
+}> = [
+  {
+    status: "attending",
+    label: "Frequentando",
+    barClassName: "bg-emerald-500",
+    dotClassName: "bg-emerald-500",
+    textClassName: "text-emerald-600 dark:text-emerald-400",
+  },
+  {
+    status: "not_attending",
+    label: "Não frequentando",
+    barClassName: "bg-red-500",
+    dotClassName: "bg-red-500",
+    textClassName: "text-red-600 dark:text-red-400",
+  },
+  {
+    status: "away",
+    label: "Afastados",
+    barClassName: "bg-zinc-400 dark:bg-zinc-500",
+    dotClassName: "bg-zinc-400 dark:bg-zinc-500",
+    textClassName: "text-muted-foreground",
+  },
+];
+
+function distributePercentages(values: number[]) {
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (!total) return values.map(() => 0);
+
+  const exact = values.map((value) => (value / total) * 100);
+  const roundedDown = exact.map(Math.floor);
+  const remaining = 100 - roundedDown.reduce((sum, value) => sum + value, 0);
+  const remainderOrder = exact
+    .map((value, index) => ({ index, remainder: value - roundedDown[index] }))
+    .sort((a, b) => b.remainder - a.remainder);
+
+  for (let index = 0; index < remaining; index += 1) {
+    roundedDown[remainderOrder[index].index] += 1;
+  }
+
+  return roundedDown;
 }
 
-function resolveClassMemberIds(schedule: PatrolSchedule) {
-  if (schedule.classMemberIds?.length) return schedule.classMemberIds;
-  return schedule.secondaryPatrolMemberId ? [schedule.secondaryPatrolMemberId] : [];
+function dateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function StatCard({
-  title,
-  value,
-  helper,
-  icon,
+function currentMonthDates() {
+  const currentDate = new Date(`${todayDate()}T12:00:00`);
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  return {
+    dates: Array.from({ length: daysInMonth }, (_, index) => new Date(year, month, index + 1)),
+    label: new Intl.DateTimeFormat("pt-BR", {
+      month: "long",
+      year: "numeric",
+      timeZone: "America/Fortaleza",
+    }).format(currentDate),
+  };
+}
+
+function calculateLunchCoverage(
+  companionships: MissionaryCompanionship[],
+  lunches: LunchSchedule[],
+  pDayWeekday: Weekday,
+) {
+  const activeCompanionships = companionships.filter((companionship) => companionship.status === "active");
+  const activeIds = new Set(activeCompanionships.map((companionship) => companionship.id));
+  const { dates, label } = currentMonthDates();
+
+  if (!activeCompanionships.length) {
+    return { completeDays: 0, eligibleDays: 0, incompleteDays: 0, label, progressPercent: 0 };
+  }
+
+  const lunchesByDate = lunches.reduce<Map<string, LunchSchedule[]>>((map, lunch) => {
+    const current = map.get(lunch.date) ?? [];
+    map.set(lunch.date, [...current, lunch]);
+    return map;
+  }, new Map());
+
+  const totals = dates.reduce(
+    (result, date) => {
+      if (weekdaysByIndex[date.getDay()] === pDayWeekday) return result;
+
+      const coveredIds = new Set(
+        (lunchesByDate.get(dateKey(date)) ?? [])
+          .flatMap((lunch) => lunch.companionshipIds)
+          .filter((companionshipId) => activeIds.has(companionshipId)),
+      );
+      const complete = activeCompanionships.every((companionship) => coveredIds.has(companionship.id));
+
+      return {
+        eligibleDays: result.eligibleDays + 1,
+        completeDays: result.completeDays + (complete ? 1 : 0),
+        incompleteDays: result.incompleteDays + (complete ? 0 : 1),
+      };
+    },
+    { completeDays: 0, eligibleDays: 0, incompleteDays: 0 },
+  );
+
+  return {
+    ...totals,
+    label,
+    progressPercent: totals.eligibleDays ? Math.round((totals.completeDays / totals.eligibleDays) * 100) : 0,
+  };
+}
+
+function attendanceChange(minutes: SacramentMinute[]) {
+  const [latest, previous] = minutes;
+  if (!latest || !previous || previous.form.attendance <= 0) return null;
+  return Math.round(((latest.form.attendance - previous.form.attendance) / previous.form.attendance) * 100);
+}
+
+function buildAttendanceChart(minutes: SacramentMinute[]) {
+  const chronological = [...minutes].reverse();
+  if (!chronological.length) return { path: "", points: [] };
+
+  const values = chronological.map((minute) => minute.form.attendance);
+  const padding = Math.max(4, Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 0.06));
+  const minimum = Math.max(0, Math.min(...values) - padding);
+  const maximum = Math.max(...values) + padding;
+  const range = Math.max(1, maximum - minimum);
+
+  const points = chronological.map((minute, index) => ({
+    minute,
+    x: chronological.length === 1 ? 50 : 6 + (index / (chronological.length - 1)) * 88,
+    y: 32 - ((minute.form.attendance - minimum) / range) * 24,
+  }));
+
+  return {
+    path: points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" "),
+    points,
+  };
+}
+
+function shortDate(date: string) {
+  const [, month, day] = date.split("-");
+  return day && month ? `${day}/${month}` : date;
+}
+
+function DashboardLinkCard({
+  children,
+  href,
+  label,
+  className,
 }: {
-  title: string;
-  value: string;
-  helper: string;
-  icon: ReactNode;
+  children: ReactNode;
+  href: string;
+  label: string;
+  className?: string;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between space-y-0">
-        <div>
-          <CardDescription>{title}</CardDescription>
-          <CardTitle className="mt-2 text-3xl tabular-nums">{value}</CardTitle>
-        </div>
-        <div className="rounded-lg bg-secondary p-2.5 text-primary">{icon}</div>
-      </CardHeader>
-      <CardContent className="text-sm text-muted-foreground">{helper}</CardContent>
-    </Card>
+    <Link
+      aria-label={label}
+      className={cn("group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2", className)}
+      href={href}
+    >
+      <Card className="h-full transition-colors group-hover:border-primary/35">
+        {children}
+      </Card>
+    </Link>
   );
 }
 
 export default function DashboardPage() {
-  const { currentWard, lunchSchedulesByWard, membersByWard, minutesByWard, patrolMembersByWard, patrolSchedulesByWard, usersByWard } = useAppContext();
+  const { companionshipsByWard, currentWard, lunchSchedulesByWard, membersByWard, minutesByWard } = useAppContext();
   const { formatDate } = useDateFormatter();
 
-  const nextLunches = [...lunchSchedulesByWard].sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).slice(0, 3);
-  const nextPatrols = [...patrolSchedulesByWard].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
-  const recentMinutes = [...minutesByWard].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
-  const patrolMembersById = new Map<string, { name: string }>();
-  patrolMembersByWard.forEach((member) => patrolMembersById.set(member.id, { name: member.name }));
-  membersByWard.forEach((member) => patrolMembersById.set(member.id, { name: member.name }));
-  const alerts = [
-    ...lunchSchedulesByWard
-      .filter((item) => item.confirmationStatus !== "accepted")
-      .map((item) => `Almoço missionário sem confirmação aceita em ${formatDate(item.date)} às ${item.time}.`),
-    ...patrolSchedulesByWard
-      .filter((item) => !resolveSacramentalMemberIds(item).length || !resolveClassMemberIds(item).length)
-      .map((item) => `Ronda em ${formatDate(item.date)} sem irmãos para sacramental ou aulas.`),
-  ].slice(0, 4);
+  const memberCounts = memberStatusMeta.map(({ status }) => membersByWard.filter((member) => member.churchActivityStatus === status).length);
+  const memberPercentages = distributePercentages(memberCounts);
+  const rawMemberPercentages = memberCounts.map((count) => (membersByWard.length ? (count / membersByWard.length) * 100 : 0));
+  const lunchCoverage = calculateLunchCoverage(
+    companionshipsByWard,
+    lunchSchedulesByWard,
+    currentWard?.lunchPDayWeekday ?? "monday",
+  );
+  const recentAttendance = [...minutesByWard]
+    .filter((minute) => minute.form.attendance > 0)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 8);
+  const latestAttendance = recentAttendance[0];
+  const change = attendanceChange(recentAttendance);
+  const attendanceChart = buildAttendanceChart(recentAttendance);
+  const ChangeIcon = change !== null && change < 0 ? TrendingDown : TrendingUp;
 
   return (
     <PermissionGuard permission="dashboard.view">
       <div>
-      <PageHeader
-        eyebrow="Dashboard"
-        title={currentWard ? `${currentWard.name}` : "Dashboard da Ala"}
-        description="Visão rápida do que precisa de atenção nesta semana, com pendências operacionais, atas e agendas principais."
-      />
+        <PageHeader
+          eyebrow="Dashboard"
+          title={currentWard?.name ?? "Dashboard da Ala"}
+          description="Visão rápida da participação dos membros, da cobertura dos almoços e da frequência sacramental."
+        />
 
-      <div className="grid gap-4 xl:grid-cols-4 md:grid-cols-2">
-        <StatCard title="Membros ativos" value={`${membersByWard.length}`} helper="Base pesquisável da ala" icon={<Users className="size-5" />} />
-        <StatCard title="Usuários com acesso" value={`${usersByWard.filter((user) => user.status === "active").length}`} helper="Acessos ativos no sistema" icon={<ShieldCheck className="size-5" />} />
-        <StatCard title="Atas registradas" value={`${minutesByWard.length}`} helper="Registros salvos da reunião sacramental" icon={<FileText className="size-5" />} />
-        <StatCard title="Próximas escalas" value={`${patrolSchedulesByWard.length}`} helper="Escala de segurança organizada por data" icon={<CalendarRange className="size-5" />} />
-      </div>
-
-      <div className="mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Pendências e alertas</CardTitle>
-            <CardDescription>Itens que merecem atenção imediata da liderança.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {alerts.length ? (
-              alerts.map((alert) => (
-                <div key={alert} className="flex items-start gap-3 rounded-lg border bg-secondary/35 p-4 text-sm">
-                  <AlertTriangle className="mt-0.5 size-4 text-amber-600 dark:text-amber-400" />
-                  <span>{alert}</span>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-lg border bg-secondary/35 p-4 text-sm text-muted-foreground">
-                Nenhuma pendência crítica no momento.
+        <div className="grid gap-4 xl:grid-cols-2">
+          <DashboardLinkCard href="/members" label="Abrir membros">
+            <CardHeader className="grid-cols-[1fr_auto]">
+              <div>
+                <CardTitle>Situação dos membros</CardTitle>
+                <CardDescription>Distribuição atual da frequência cadastrada</CardDescription>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Atas recentes</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {recentMinutes.map((minute) => (
-              <div key={minute.id} className="rounded-lg border p-4">
-                <p className="font-medium">{formatDate(minute.date)}</p>
+              <div className="flex size-10 items-center justify-center rounded-lg bg-secondary text-primary">
+                <Users className="size-5" />
               </div>
-            ))}
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col">
+              {membersByWard.length ? (
+                <>
+                  <div className="mb-3 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-3xl font-semibold tabular-nums">{membersByWard.length}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">membros cadastrados</p>
+                    </div>
+                    <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                  </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Próximos almoços missionários</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {nextLunches.map((lunch) => (
-              <div key={lunch.id} className="rounded-lg border p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-medium">{formatRelativeDay(lunch.date)}</p>
-                  <Badge variant={lunch.confirmationStatus === "accepted" ? "default" : "secondary"}>{confirmationLabels[lunch.confirmationStatus]}</Badge>
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground tabular-nums">{`${formatDate(lunch.date)} às ${lunch.time}`}</p>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+                  <div
+                    aria-label={`${memberCounts[0]} frequentando, ${memberCounts[1]} não frequentando e ${memberCounts[2]} afastados`}
+                    className="flex h-4 w-full overflow-hidden rounded-full bg-muted"
+                    role="img"
+                  >
+                    {memberStatusMeta.map((item, index) => (
+                      <span
+                        className={cn("h-full first:rounded-l-full last:rounded-r-full", item.barClassName)}
+                        key={item.status}
+                        style={{ width: `${rawMemberPercentages[index]}%` }}
+                      />
+                    ))}
+                  </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Próximas rondas</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {nextPatrols.map((schedule) => (
-              <div key={schedule.id} className="rounded-lg border p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-medium">{formatRelativeDay(schedule.date)}</p>
-                  <Badge variant={schedule.status === "confirmed" ? "default" : "outline"}>{schedule.status}</Badge>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    {memberStatusMeta.map((item, index) => (
+                      <div className="rounded-lg bg-muted/45 p-3" key={item.status}>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span className={cn("size-2 rounded-full", item.dotClassName)} />
+                          <span>{item.label}</span>
+                        </div>
+                        <div className="mt-2 flex items-baseline justify-between gap-2">
+                          <span className={cn("text-xl font-semibold tabular-nums", item.textClassName)}>{memberCounts[index]}</span>
+                          <span className="text-xs text-muted-foreground tabular-nums">{memberPercentages[index]}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-44 flex-1 items-center justify-center rounded-lg bg-muted/40 px-4 text-center text-sm text-muted-foreground">
+                  Nenhum membro cadastrado para gerar a distribuição.
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">{formatDate(schedule.date)}</p>
-                <div className="mt-3 space-y-1 text-sm">
-                  <p>
-                    Sacramental:{" "}
-                    {resolveSacramentalMemberIds(schedule)
-                      .map((id) => patrolMembersById.get(id)?.name)
-                      .filter(Boolean)
-                      .join(", ") || "sem irmãos"}
-                  </p>
-                  <p className="text-muted-foreground">
-                    Aulas:{" "}
-                    {resolveClassMemberIds(schedule)
-                      .map((id) => patrolMembersById.get(id)?.name)
-                      .filter(Boolean)
-                      .join(", ") || "sem irmãos"}
-                  </p>
-                </div>
+              )}
+            </CardContent>
+          </DashboardLinkCard>
+
+          <DashboardLinkCard href="/lunch-calendar" label="Abrir calendário de almoços">
+            <CardHeader className="grid-cols-[1fr_auto]">
+              <div>
+                <CardTitle>Almoços missionários</CardTitle>
+                <CardDescription className="capitalize">Cobertura de {lunchCoverage.label}</CardDescription>
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
+              <div className="flex size-10 items-center justify-center rounded-lg bg-secondary text-primary">
+                <CalendarDays className="size-5" />
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col">
+              {companionshipsByWard.some((companionship) => companionship.status === "active") ? (
+                <>
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className={cn("text-3xl font-semibold tabular-nums", lunchCoverage.incompleteDays ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}>
+                        {lunchCoverage.incompleteDays}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {lunchCoverage.incompleteDays === 1 ? "dia ainda está incompleto" : "dias ainda estão incompletos"}
+                      </p>
+                    </div>
+                    <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                  </div>
+
+                  <div className="mt-auto pt-8">
+                    <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground">Dias completos</span>
+                      <span className="font-medium tabular-nums">
+                        {lunchCoverage.completeDays} de {lunchCoverage.eligibleDays}
+                      </span>
+                    </div>
+                    <div
+                      aria-label={`${lunchCoverage.progressPercent}% dos dias disponíveis estão completos`}
+                      className="h-3 overflow-hidden rounded-full bg-muted"
+                      role="progressbar"
+                      aria-valuemax={100}
+                      aria-valuemin={0}
+                      aria-valuenow={lunchCoverage.progressPercent}
+                    >
+                      <div
+                        className="h-full rounded-full bg-emerald-500 transition-[width]"
+                        style={{ width: `${lunchCoverage.progressPercent}%` }}
+                      />
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      P-DAY excluído. Um dia só fica completo quando todas as duplas ativas têm almoço.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-44 flex-1 items-center justify-center rounded-lg bg-muted/40 px-4 text-center text-sm text-muted-foreground">
+                  Nenhuma dupla ativa cadastrada para calcular a cobertura.
+                </div>
+              )}
+            </CardContent>
+          </DashboardLinkCard>
+
+          <DashboardLinkCard className="xl:col-span-2" href="/frequency" label="Abrir frequência sacramental">
+            <CardHeader className="grid-cols-[1fr_auto]">
+              <div>
+                <CardTitle>Frequência sacramental</CardTitle>
+                <CardDescription>Últimos domingos com frequência preenchida</CardDescription>
+              </div>
+              <ArrowRight className="mt-2 size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            </CardHeader>
+            <CardContent>
+              {latestAttendance ? (
+                <div className="grid gap-6 md:grid-cols-[220px_1fr] md:items-end">
+                  <div>
+                    <p className="text-4xl font-semibold tabular-nums">{latestAttendance.form.attendance}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{formatDate(latestAttendance.date)}</p>
+                    <div
+                      className={cn(
+                        "mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium",
+                        change === null || change === 0
+                          ? "bg-muted text-muted-foreground"
+                          : change > 0
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "bg-red-500/10 text-red-600 dark:text-red-400",
+                      )}
+                    >
+                      {change === null || change === 0 ? null : <ChangeIcon className="size-4" />}
+                      {change === null ? "Sem domingo anterior" : change === 0 ? "Sem mudança" : `${change > 0 ? "+" : ""}${change}% vs domingo anterior`}
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 rounded-lg bg-muted/35 px-3 pb-2 pt-3">
+                    <div
+                      aria-label={`Tendência das últimas ${recentAttendance.length} frequências preenchidas`}
+                      className="relative h-40 w-full"
+                      role="img"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        className="absolute inset-0 size-full overflow-visible"
+                        preserveAspectRatio="none"
+                        viewBox="0 0 100 40"
+                      >
+                        <line className="stroke-border" strokeDasharray="2 3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" x1="4" x2="96" y1="34" y2="34" />
+                        <line className="stroke-border" strokeDasharray="2 3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" x1="4" x2="96" y1="20" y2="20" />
+                        <line className="stroke-border" strokeDasharray="2 3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" x1="4" x2="96" y1="7" y2="7" />
+                        {attendanceChart.path ? (
+                          <path
+                            className="fill-none stroke-primary"
+                            d={attendanceChart.path}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2.5"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        ) : null}
+                      </svg>
+
+                      {attendanceChart.points.map((point, index) => {
+                        const isLatest = index === attendanceChart.points.length - 1;
+
+                        return (
+                          <div
+                            className="absolute z-10 flex size-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+                            key={point.minute.id}
+                            style={{ left: `${point.x}%`, top: `${(point.y / 40) * 100}%` }}
+                            title={`${formatDate(point.minute.date)}: ${point.minute.form.attendance}`}
+                          >
+                            <span className="absolute -top-4 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium text-foreground tabular-nums">
+                              {point.minute.form.attendance}
+                            </span>
+                            <span
+                              className={cn(
+                                "block size-3 rounded-full border-[2.5px]",
+                                isLatest ? "border-background bg-primary" : "border-primary bg-background",
+                              )}
+                            />
+                          </div>
+                        );
+                      })}
+
+                      {attendanceChart.points.map((point) => (
+                        <span
+                          className="pointer-events-none absolute bottom-0 -translate-x-1/2 whitespace-nowrap text-[10px] text-muted-foreground tabular-nums"
+                          key={`date-${point.minute.id}`}
+                          style={{ left: `${point.x}%` }}
+                        >
+                          {shortDate(point.minute.date)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-44 items-center justify-center rounded-lg bg-muted/40 px-4 text-center text-sm text-muted-foreground">
+                  Preencha a frequência de uma ata sacramental para visualizar a tendência.
+                </div>
+              )}
+            </CardContent>
+          </DashboardLinkCard>
+        </div>
       </div>
     </PermissionGuard>
   );

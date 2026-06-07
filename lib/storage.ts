@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { createEmptyMinuteForm, createSeedDatabase } from "@/lib/demo-data";
 import { normalizePermissionSet, normalizeUserAccessLevel, permissionsFromLegacyRole } from "@/lib/access-control";
+import { normalizeMemberProgressCategory } from "@/lib/member-progress-category";
 import { canSpeakWithTalkDuration, normalizeTalkDuration } from "@/lib/member-talk-duration";
 import { DEFAULT_HYMN_BOOK_IDS, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
 import { normalizeDateInput } from "@/lib/utils";
@@ -22,6 +23,7 @@ import type {
   LunchSchedule,
   PatrolMember,
   PatrolSchedule,
+  MemberNote,
   RecordMetadata,
   Role,
   SacramentMinute,
@@ -277,6 +279,7 @@ function normalizeMember(member: Member): Member {
     name: member.name,
     phone: asOptionalString(member.phone),
     address: asOptionalString(member.address),
+    observation: asOptionalString(member.observation),
     latitude,
     longitude,
     geocodingAttemptedAt: hasCoordinates ? undefined : asOptionalString(member.geocodingAttemptedAt),
@@ -289,6 +292,7 @@ function normalizeMember(member: Member): Member {
           ? member.geocodingStatus
           : "not_attempted",
     churchActivityStatus: normalizeChurchActivityStatus(member.churchActivityStatus),
+    progressCategory: normalizeMemberProgressCategory(member.progressCategory),
     birthDate: normalizeDateInput(member.birthDate ?? ""),
     organization,
     sex: member.sex === "F" ? "F" : "M",
@@ -568,9 +572,29 @@ function normalizeStakeOwnerRequest(request: StakeOwnerRequest): StakeOwnerReque
   };
 }
 
+function normalizeMemberNote(note: MemberNote, users: User[]): MemberNote {
+  const createdAt = asString(note.createdAt) ?? UNKNOWN_TIMESTAMP;
+  const createdBy = asString(note.createdBy) ?? "system";
+  const updatedBy = asString(note.updatedBy);
+
+  return {
+    id: note.id,
+    memberId: note.memberId,
+    occurredAt: asString(note.occurredAt) ?? createdAt,
+    createdAt,
+    createdBy,
+    createdByName: asString(note.createdByName) ?? users.find((user) => user.id === createdBy)?.name ?? "Usuário não identificado",
+    updatedAt: asString(note.updatedAt),
+    updatedBy,
+    updatedByName: asString(note.updatedByName) ?? users.find((user) => user.id === updatedBy)?.name,
+    text: asOptionalString(note.text),
+  };
+}
+
 export function normalizeDatabase(db: Database): Database {
   const legacyDb = db as Partial<Database>;
   const roles = (legacyDb.roles ?? []).map((role) => normalizeRole(role));
+  const users = (legacyDb.users ?? []).map((user) => normalizeUser(user, roles));
 
   return {
     ...{
@@ -580,10 +604,10 @@ export function normalizeDatabase(db: Database): Database {
       stakes: (legacyDb.stakes ?? []).map((stake) => normalizeStake(stake)),
       wards: (legacyDb.wards ?? []).map((ward) => normalizeWard(ward)),
     },
-    users: (legacyDb.users ?? []).map((user) => normalizeUser(user, roles)),
+    users,
     stakeOwnerRequests: (legacyDb.stakeOwnerRequests ?? []).map((request) => normalizeStakeOwnerRequest(request)),
     members: (legacyDb.members ?? []).map((member) => normalizeMember(member)),
-    memberNotes: legacyDb.memberNotes ?? [],
+    memberNotes: (legacyDb.memberNotes ?? []).map((note) => normalizeMemberNote(note, users)),
     sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSacramentMinute(minute)),
     minuteVersions: legacyDb.minuteVersions ?? [],
     hymnBooks: (legacyDb.hymnBooks ?? createEmptyDatabase().hymnBooks).map((hymnBook) => normalizeHymnBook(hymnBook)),
@@ -1263,6 +1287,40 @@ export async function deleteMemberSnapshot(memberId: string): Promise<void> {
 
   const supabase = createClient();
   const { error } = await supabase.from("members").delete().eq("id", memberId);
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function saveMemberNoteSnapshot(note: MemberNote): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const supabase = createClient();
+  const normalizedNote = normalizeMemberNote(note, []);
+  const { error } = await supabase.from("member_notes").upsert(
+    {
+      id: normalizedNote.id,
+      data: normalizedNote,
+      member_id: optionalUuid(normalizedNote.memberId),
+    },
+    { onConflict: "id" },
+  );
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function deleteMemberNoteSnapshot(noteId: string): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const supabase = createClient();
+  const { error } = await supabase.from("member_notes").delete().eq("id", noteId);
 
   if (error) {
     throw error;

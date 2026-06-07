@@ -19,7 +19,7 @@ import type { Member, RecordMetadataKey } from "@/types/domain";
 
 type ImportFieldKey = keyof Omit<
   Member,
-  "id" | "wardId" | "geocodingAttemptedAt" | "geocodingError" | "geocodingQuery" | "geocodingStatus" | RecordMetadataKey
+  "id" | "wardId" | "progressCategory" | "geocodingAttemptedAt" | "geocodingError" | "geocodingQuery" | "geocodingStatus" | RecordMetadataKey
 >;
 type ImportMember = Omit<Member, "id" | "wardId" | "geocodingAttemptedAt" | "geocodingError" | "geocodingQuery" | "geocodingStatus" | RecordMetadataKey>;
 type ImportConflict = {
@@ -49,6 +49,7 @@ const headerAliases: Record<ImportFieldKey, string[]> = {
   phone: ["telefone", "celular", "phone", "mobile", "whatsapp", "whats-app"],
   birthDate: ["data-de-nascimento", "nascimento", "birthdate", "birth-date", "birthday", "data-nascimento"],
   address: ["endereco", "endereço", "address", "logradouro", "moradia"],
+  observation: ["observacao", "observação", "obs", "notes", "note"],
   latitude: ["latitude", "lat"],
   longitude: ["longitude", "lng", "long"],
   churchActivityStatus: ["condicao-na-igreja", "condição-na-igreja", "frequencia", "frequência", "atividade", "activity-status"],
@@ -64,9 +65,11 @@ const emptyImportMember: ImportMember = {
   name: "",
   phone: "",
   address: "",
+  observation: "",
   latitude: undefined,
   longitude: undefined,
   churchActivityStatus: "not_attending",
+  progressCategory: "disconnected",
   birthDate: "",
   organization: "",
   sex: "M",
@@ -264,9 +267,11 @@ function toImportMembers(csv: CsvData, mapping: Record<ImportFieldKey, string>, 
       name,
       phone: read("phone").trim(),
       address: read("address").trim(),
+      observation: read("observation").trim(),
       latitude: parseOptionalNumber(read("latitude")),
       longitude: parseOptionalNumber(read("longitude")),
       churchActivityStatus: "not_attending",
+      progressCategory: "disconnected",
       birthDate: normalizeDateInput(read("birthDate")),
       organization: "",
       sex: parseSex(read("sex")),

@@ -48,6 +48,7 @@ export type CalendarWeekStartsOn = "sunday" | "monday";
 export type DateFormat = "short" | "medium" | "long";
 export type ChurchActivityStatus = "attending" | "not_attending" | "away";
 export type MemberGeocodingStatus = "not_attempted" | "no_result" | "error" | "skipped";
+export type MemberProgressCategory = "disconnected" | "rescue" | "follow_up" | "integration" | "need" | "missionary";
 
 export const MEMBER_ORGANIZATION_OPTIONS = [
   "Quorum de Elderes",
@@ -134,8 +135,13 @@ export interface StakeOwnerRequest extends RecordMetadata {
 export interface MemberNote {
   id: string;
   memberId: string;
+  occurredAt: string;
   createdAt: string;
   createdBy: string;
+  createdByName: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
   text: string;
 }
 
@@ -145,6 +151,7 @@ export interface Member extends RecordMetadata {
   name: string;
   phone: string;
   address: string;
+  observation: string;
   latitude?: number;
   longitude?: number;
   geocodingAttemptedAt?: string;
@@ -152,6 +159,7 @@ export interface Member extends RecordMetadata {
   geocodingQuery?: string;
   geocodingStatus?: MemberGeocodingStatus;
   churchActivityStatus: ChurchActivityStatus;
+  progressCategory: MemberProgressCategory;
   birthDate: string;
   organization: string;
   sex: "M" | "F";
