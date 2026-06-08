@@ -21,6 +21,7 @@ import type {
   HymnBook,
   LunchCompanionshipSnapshot,
   LunchSchedule,
+  MemberAttendanceRecord,
   PatrolMember,
   PatrolSchedule,
   MemberNote,
@@ -55,6 +56,8 @@ export type LockedMinuteSaveResult = {
 };
 
 const APP_PREFERENCES_STORAGE_KEY = "superala-preferences-v1";
+const REMOTE_SELECT_PAGE_SIZE = 500;
+const REMOTE_UPSERT_BATCH_SIZE = 300;
 const UNKNOWN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const DEFAULT_APP_PREFERENCES: AppPreferences = {
   calendarWeekStartsOn: "sunday",
@@ -69,6 +72,7 @@ const REMOTE_TABLES = [
   { key: "users", table: "users" },
   { key: "stakeOwnerRequests", table: "stake_owner_requests" },
   { key: "members", table: "members" },
+  { key: "memberAttendanceRecords", table: "member_attendance_records" },
   { key: "memberNotes", table: "member_notes" },
   { key: "sacramentMinutes", table: "sacrament_minutes" },
   { key: "minuteVersions", table: "minute_versions" },
@@ -308,6 +312,19 @@ function normalizeMember(member: Member): Member {
     canPreside: typeof member.canPreside === "boolean" ? member.canPreside : isBishopric,
     canConduct: typeof member.canConduct === "boolean" ? member.canConduct : isBishopric || isSecretary,
     ...normalizeRecordMetadata(member),
+  };
+}
+
+function normalizeMemberAttendanceRecord(record: MemberAttendanceRecord): MemberAttendanceRecord {
+  return {
+    id: record.id,
+    wardId: record.wardId,
+    memberId: record.memberId,
+    date: normalizeDateInput(record.date ?? ""),
+    present: record.present === true,
+    source: "csv",
+    importedName: asString(record.importedName),
+    ...normalizeRecordMetadata(record),
   };
 }
 
@@ -627,9 +644,49 @@ function dedupeRecordsById<T extends { id: string }>(records: T[]) {
   return [...recordsById.values()];
 }
 
+function chunkRecords<T>(records: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < records.length; index += size) {
+    chunks.push(records.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+function dedupeMemberAttendanceRecords(records: MemberAttendanceRecord[]) {
+  const recordsByKey = new Map<string, MemberAttendanceRecord>();
+
+  records.forEach((record) => {
+    if (!record.wardId || !record.memberId || !record.date) return;
+
+    const key = `${record.wardId}::${record.memberId}::${record.date}`;
+    const existing = recordsByKey.get(key);
+    const existingTimestamp = existing?.updatedAt ?? existing?.createdAt ?? "";
+    const recordTimestamp = record.updatedAt ?? record.createdAt ?? "";
+
+    if (!existing || recordTimestamp >= existingTimestamp) {
+      recordsByKey.set(key, record);
+    }
+  });
+
+  return [...recordsByKey.values()];
+}
+
+function filterMemberAttendanceRecordsForMembers(records: MemberAttendanceRecord[], members: Member[]) {
+  const membersById = new Map(members.map((member) => [member.id, member]));
+
+  return records.filter((record) => {
+    const member = membersById.get(record.memberId);
+
+    return Boolean(member && member.wardId === record.wardId);
+  });
+}
+
 export function normalizeDatabase(db: Database): Database {
   const legacyDb = db as Partial<Database>;
   const shouldBackfillProgressPermissions = !hasAnyProgressPermission(legacyDb);
+  const members = (legacyDb.members ?? []).map((member) => normalizeMember(member));
   const roles = (legacyDb.roles ?? []).map((role) => {
     const normalizedRole = normalizeRole(role);
 
@@ -659,7 +716,13 @@ export function normalizeDatabase(db: Database): Database {
     },
     users,
     stakeOwnerRequests: (legacyDb.stakeOwnerRequests ?? []).map((request) => normalizeStakeOwnerRequest(request)),
-    members: (legacyDb.members ?? []).map((member) => normalizeMember(member)),
+    members,
+    memberAttendanceRecords: dedupeMemberAttendanceRecords(
+      filterMemberAttendanceRecordsForMembers(
+        (legacyDb.memberAttendanceRecords ?? []).map((record) => normalizeMemberAttendanceRecord(record)),
+        members,
+      ),
+    ),
     memberNotes: (legacyDb.memberNotes ?? []).map((note) => normalizeMemberNote(note, users)),
     sacramentMinutes: (legacyDb.sacramentMinutes ?? []).map((minute) => normalizeSacramentMinute(minute)),
     minuteVersions: dedupeRecordsById(legacyDb.minuteVersions ?? []),
@@ -830,6 +893,13 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
       };
     case "members":
       return { ward_id: optionalUuid(record.wardId) };
+    case "memberAttendanceRecords":
+      return {
+        ward_id: optionalUuid(record.wardId),
+        member_id: optionalUuid(record.memberId),
+        date: optionalText(record.date),
+        present: record.present === true,
+      };
     case "memberNotes":
       return { member_id: optionalUuid(record.memberId) };
     case "sacramentMinutes":
@@ -971,10 +1041,35 @@ function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOpti
       return "id,data,name,emoji,created_at,updated_at";
     case "hymns":
       return "id,data,hymn_book_id,number,title,category,tags,active";
+    case "memberAttendanceRecords":
+      return "id,data,ward_id,member_id,date,present,created_at,updated_at";
     case "sacramentMinutes":
       return "id,data,locked_by,locked_at,lock_expires_at,version,updated_at";
     default:
       return "id,data";
+  }
+}
+
+async function selectRemoteRows(supabase: ReturnType<typeof createClient>, table: string, columns: string) {
+  const rows: RemoteRecord[] = [];
+
+  for (let from = 0; ; from += REMOTE_SELECT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .order("id", { ascending: true })
+      .range(from, from + REMOTE_SELECT_PAGE_SIZE - 1);
+
+    if (error) {
+      return { data: rows, error };
+    }
+
+    const page = ((data ?? []) as unknown as RemoteRecord[]);
+    rows.push(...page);
+
+    if (page.length < REMOTE_SELECT_PAGE_SIZE) {
+      return { data: rows, error: null };
+    }
   }
 }
 
@@ -991,6 +1086,22 @@ function isMissingRemoteColumn(error: unknown, columnName: string) {
     .join(" ");
 
   return message.includes(columnName) && (remoteError.code === "42703" || message.toLocaleLowerCase("pt-BR").includes("column"));
+}
+
+function isMissingRemoteTable(error: unknown, tableName: string) {
+  if (!error || typeof error !== "object") return false;
+
+  const remoteError = error as Partial<Record<"code" | "message" | "details" | "hint", unknown>>;
+  const message = [remoteError.message, remoteError.details, remoteError.hint]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLocaleLowerCase("pt-BR");
+
+  return (
+    remoteError.code === "PGRST205" ||
+    remoteError.code === "42P01" ||
+    (message.includes(tableName) && (message.includes("could not find the table") || message.includes("does not exist")))
+  );
 }
 
 function describeRemoteError(error: unknown) {
@@ -1112,6 +1223,25 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         archivedByUserId: rowOptionalString(row, "archived_by_user_id", "archivedByUserId"),
       };
     }
+    case "memberAttendanceRecords": {
+      const data = asDataObject(row);
+
+      return {
+        id: row.id,
+        wardId: rowString(row, "ward_id", "wardId"),
+        memberId: rowString(row, "member_id", "memberId"),
+        date: normalizeDateInput(rowString(row, "date", "date")),
+        present: rowBoolean(row, "present", "present", false),
+        source: "csv",
+        importedName: asString(data.importedName),
+        createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
+        createdByUserId: asString(data.createdByUserId),
+        updatedAt: asString(row.updated_at) ?? asString(data.updatedAt) ?? UNKNOWN_TIMESTAMP,
+        updatedByUserId: asString(data.updatedByUserId),
+        archivedAt: asString(data.archivedAt),
+        archivedByUserId: asString(data.archivedByUserId),
+      };
+    }
     case "hymnBooks": {
       const data = asDataObject(row);
 
@@ -1153,68 +1283,102 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
   }
 }
 
+export async function loadRemoteMembersByWard(wardId: string): Promise<Member[]> {
+  if (typeof window === "undefined" || !wardId) {
+    return [];
+  }
+
+  const supabase = createClient();
+  const rows: RemoteRecord[] = [];
+
+  for (let from = 0; ; from += REMOTE_SELECT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("members")
+      .select(remoteSelectColumns("members"))
+      .eq("ward_id", wardId)
+      .order("id", { ascending: true })
+      .range(from, from + REMOTE_SELECT_PAGE_SIZE - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    const page = ((data ?? []) as unknown as RemoteRecord[]);
+    rows.push(...page);
+
+    if (page.length < REMOTE_SELECT_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return rows.map((row) => normalizeMember(remoteRowToRecord("members", row) as unknown as Member));
+}
+
 export async function loadDatabase(): Promise<Database> {
   if (typeof window === "undefined") {
     return createEmptyDatabase();
   }
 
   const supabase = createClient();
-  const entries = await Promise.all(
-    REMOTE_TABLES.map(async ({ key, table }) => {
-      let { data, error } = await supabase.from(table).select(remoteSelectColumns(key));
+  const entries: Array<readonly [RemoteCollectionKey, unknown[]]> = [];
 
-      if (key === "wards") {
-        const missingWardLunchPDay = isMissingRemoteColumn(error, "lunch_p_day_weekday");
-        const missingWardMeetingTime = isMissingRemoteColumn(error, "meeting_time");
-        const missingWardCoordinates =
-          isMissingRemoteColumn(error, "address") || isMissingRemoteColumn(error, "latitude") || isMissingRemoteColumn(error, "longitude");
+  for (const { key, table } of REMOTE_TABLES) {
+    let { data, error } = await selectRemoteRows(supabase, table, remoteSelectColumns(key));
 
-        if (missingWardLunchPDay || missingWardMeetingTime || missingWardCoordinates) {
-          const fallback = await supabase
-            .from(table)
-            .select(
-              remoteSelectColumns(key, {
-                includeWardCoordinates: !missingWardCoordinates,
-                includeWardLunchPDay: !missingWardLunchPDay,
-                includeWardMeetingTime: !missingWardMeetingTime,
-              }),
-            );
-          data = fallback.data;
-          error = fallback.error;
+    if (key === "wards") {
+      const missingWardLunchPDay = isMissingRemoteColumn(error, "lunch_p_day_weekday");
+      const missingWardMeetingTime = isMissingRemoteColumn(error, "meeting_time");
+      const missingWardCoordinates =
+        isMissingRemoteColumn(error, "address") || isMissingRemoteColumn(error, "latitude") || isMissingRemoteColumn(error, "longitude");
 
-          if (
-            key === "wards" &&
-            (isMissingRemoteColumn(error, "lunch_p_day_weekday") ||
-              isMissingRemoteColumn(error, "meeting_time") ||
-              isMissingRemoteColumn(error, "address") ||
-              isMissingRemoteColumn(error, "latitude") ||
-              isMissingRemoteColumn(error, "longitude"))
-          ) {
-            const broadFallback = await supabase
-              .from(table)
-              .select(remoteSelectColumns(key, { includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }));
-            data = broadFallback.data;
-            error = broadFallback.error;
-          }
-        }
-      }
-
-      if (key === "users" && isMissingRemoteColumn(error, "access_level")) {
-        const fallback = await supabase.from(table).select(remoteSelectColumns(key, { includeUserAccessLevel: false }));
+      if (missingWardLunchPDay || missingWardMeetingTime || missingWardCoordinates) {
+        const fallback = await selectRemoteRows(
+          supabase,
+          table,
+          remoteSelectColumns(key, {
+            includeWardCoordinates: !missingWardCoordinates,
+            includeWardLunchPDay: !missingWardLunchPDay,
+            includeWardMeetingTime: !missingWardMeetingTime,
+          }),
+        );
         data = fallback.data;
         error = fallback.error;
-      }
 
-      if (error) {
-        throw error;
+        if (
+          isMissingRemoteColumn(error, "lunch_p_day_weekday") ||
+          isMissingRemoteColumn(error, "meeting_time") ||
+          isMissingRemoteColumn(error, "address") ||
+          isMissingRemoteColumn(error, "latitude") ||
+          isMissingRemoteColumn(error, "longitude")
+        ) {
+          const broadFallback = await selectRemoteRows(
+            supabase,
+            table,
+            remoteSelectColumns(key, { includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }),
+          );
+          data = broadFallback.data;
+          error = broadFallback.error;
+        }
       }
+    }
 
-      return [
-        key,
-        ((data ?? []) as unknown as RemoteRecord[]).map((row) => remoteRowToRecord(key, row)),
-      ] as const;
-    }),
-  );
+    if (key === "users" && isMissingRemoteColumn(error, "access_level")) {
+      const fallback = await selectRemoteRows(supabase, table, remoteSelectColumns(key, { includeUserAccessLevel: false }));
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (key === "memberAttendanceRecords" && isMissingRemoteTable(error, table)) {
+      entries.push([key, []] as const);
+      continue;
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    entries.push([key, ((data ?? []) as RemoteRecord[]).map((row) => remoteRowToRecord(key, row))] as const);
+  }
 
   const remoteDb = {
     ...createEmptyDatabase(),
@@ -1235,7 +1399,10 @@ export async function saveDatabase(db: Database): Promise<void> {
   const remoteDb = normalizeDatabase(db);
 
   for (const { key, table } of REMOTE_TABLES_FOR_GLOBAL_SAVE) {
-    const records = dedupeRecordsById(remoteDb[key] as Array<{ id: string }>);
+    const records =
+      key === "memberAttendanceRecords"
+        ? dedupeMemberAttendanceRecords(remoteDb[key] as MemberAttendanceRecord[])
+        : dedupeRecordsById(remoteDb[key] as Array<{ id: string }>);
 
     if (!records.length) {
       continue;
@@ -1253,14 +1420,27 @@ export async function saveDatabase(db: Database): Promise<void> {
           })
         : records;
 
-    const buildUpsertPayload = (options?: RemoteSchemaOptions) =>
-      recordsForUpsert.map((record) => ({
+    const buildUpsertPayload = (batch: typeof recordsForUpsert, options?: RemoteSchemaOptions) =>
+      batch.map((record) => ({
         id: record.id,
         ...(usesStructuredColumns(key) ? {} : { data: record }),
         ...relationColumns(key, record, options),
       }));
 
-    let { error: upsertError } = await supabase.from(table).upsert(buildUpsertPayload(), { onConflict: "id" });
+    const onConflict = key === "memberAttendanceRecords" ? "ward_id,member_id,date" : "id";
+    const upsertInBatches = async (options?: RemoteSchemaOptions, conflict = onConflict) => {
+      for (const batch of chunkRecords(recordsForUpsert, REMOTE_UPSERT_BATCH_SIZE)) {
+        const { error } = await supabase.from(table).upsert(buildUpsertPayload(batch, options), { onConflict: conflict });
+
+        if (error) {
+          return error;
+        }
+      }
+
+      return null;
+    };
+
+    let upsertError = await upsertInBatches();
 
     if (key === "wards") {
       const missingWardLunchPDay = isMissingRemoteColumn(upsertError, "lunch_p_day_weekday");
@@ -1272,7 +1452,7 @@ export async function saveDatabase(db: Database): Promise<void> {
         const fallback = await supabase
           .from(table)
           .upsert(
-            buildUpsertPayload({
+            buildUpsertPayload(recordsForUpsert, {
               includeWardCoordinates: !missingWardCoordinates,
               includeWardLunchPDay: !missingWardLunchPDay,
               includeWardMeetingTime: !missingWardMeetingTime,
@@ -1290,15 +1470,14 @@ export async function saveDatabase(db: Database): Promise<void> {
         ) {
           const broadFallback = await supabase
             .from(table)
-            .upsert(buildUpsertPayload({ includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }), { onConflict: "id" });
+            .upsert(buildUpsertPayload(recordsForUpsert, { includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }), { onConflict: "id" });
           upsertError = broadFallback.error;
         }
       }
     }
 
     if (key === "users" && isMissingRemoteColumn(upsertError, "access_level")) {
-      const fallback = await supabase.from(table).upsert(buildUpsertPayload({ includeUserAccessLevel: false }), { onConflict: "id" });
-      upsertError = fallback.error;
+      upsertError = await upsertInBatches({ includeUserAccessLevel: false }, "id");
     }
 
     if (upsertError) {

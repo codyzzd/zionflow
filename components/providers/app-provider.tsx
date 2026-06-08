@@ -14,7 +14,15 @@ import {
 } from "@/lib/access-control";
 import { findBlockingCaravanForPersonArchive } from "@/lib/caravan-rules";
 import { createEmptyMinuteForm } from "@/lib/demo-data";
+import {
+  compareMemberFreshness,
+  groupMembersByStrongIdentity,
+  groupMembersByWeakIdentity,
+  memberStrongIdentityKey,
+  memberWeakIdentityKey,
+} from "@/lib/member-identity";
 import { memberProgressCategoryLabels } from "@/lib/member-progress-category";
+import { resolveMemberFrequencyStatus } from "@/lib/member-attendance";
 import { canSpeakWithTalkDuration, normalizeTalkDuration } from "@/lib/member-talk-duration";
 import {
   createEmptyDatabase,
@@ -22,6 +30,7 @@ import {
   deleteMemberSnapshot,
   deleteMinuteSnapshot,
   loadDatabase,
+  loadRemoteMembersByWard,
   normalizeHymnTags,
   saveDatabase,
   saveMemberNoteSnapshot,
@@ -30,7 +39,7 @@ import {
 } from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
-import { normalizeDateInput, nowIso, slugify, todayDate, uid } from "@/lib/utils";
+import { normalizeDateInput, nowIso, todayDate, uid } from "@/lib/utils";
 import type {
   AuditLog,
   AppPreferences,
@@ -48,6 +57,7 @@ import type {
   LunchCompanionshipSnapshot,
   LunchSchedule,
   Member,
+  MemberAttendanceRecord,
   MemberNote,
   MemberProgressCategory,
   MinuteFormData,
@@ -98,6 +108,10 @@ type ImportMembersInput = {
   members: Array<Omit<Member, "id" | "wardId">>;
   importedFields: Array<keyof Omit<Member, "id" | "wardId">>;
   removeMissing: boolean;
+};
+
+type ImportMemberAttendanceRecordsInput = {
+  records: Array<Omit<MemberAttendanceRecord, "id" | "source"> & { id?: string; source?: MemberAttendanceRecord["source"] }>;
 };
 
 type SaveMemberNoteInput = {
@@ -163,6 +177,7 @@ type AppContextValue = {
   usersByWard: User[];
   allMembersByWard: Member[];
   membersByWard: Member[];
+  memberAttendanceRecordsByWard: MemberAttendanceRecord[];
   memberNotesByWard: MemberNote[];
   minutesByWard: SacramentMinute[];
   allCompanionshipsByWard: MissionaryCompanionship[];
@@ -200,7 +215,8 @@ type AppContextValue = {
   deleteMembers: (memberIds: string[]) => void;
   deleteArchivedMembers: (memberIds: string[]) => void;
   restoreMembers: (memberIds: string[]) => void;
-  importMembers: (input: ImportMembersInput) => void;
+  importMembers: (input: ImportMembersInput) => Promise<boolean>;
+  importMemberAttendanceRecords: (input: ImportMemberAttendanceRecordsInput) => void;
   updateMemberProgressCategory: (memberId: string, category: MemberProgressCategory) => void;
   addMemberNote: (memberId: string, input: SaveMemberNoteInput) => void;
   updateMemberNote: (noteId: string, input: SaveMemberNoteInput) => void;
@@ -512,6 +528,31 @@ function withArchiveMetadata<T extends RecordMetadata>(record: T, archived: bool
   };
 }
 
+function mergeMembersById(...memberGroups: Member[][]) {
+  const membersById = new Map<string, Member>();
+
+  memberGroups.flat().forEach((member) => {
+    const existing = membersById.get(member.id);
+
+    if (!existing || compareMemberFreshness(member, existing) >= 0) {
+      membersById.set(member.id, member);
+    }
+  });
+
+  return [...membersById.values()];
+}
+
+function formatMemberIdentityConflict(member: Pick<Member, "name" | "birthDate">) {
+  return member.birthDate ? `${member.name} (${member.birthDate})` : `${member.name} (sem nascimento)`;
+}
+
+function formatImportConflictToast(conflicts: string[]) {
+  const preview = conflicts.slice(0, 3).join("; ");
+  const suffix = conflicts.length > 3 ? ` e mais ${conflicts.length - 3}` : "";
+
+  return `Importação bloqueada para evitar duplicados: ${preview}${suffix}.`;
+}
+
 function withAuditLog(db: Database, actorUserId: string | undefined, entry: Omit<AuditLog, "id" | "actorUserId" | "createdAt">) {
   if (!actorUserId) {
     return db;
@@ -556,6 +597,7 @@ function clearDeletedMemberReferences(db: Database, memberIds: Set<string>, acto
 
   return {
     ...db,
+    memberAttendanceRecords: db.memberAttendanceRecords.filter((record) => !memberIds.has(record.memberId)),
     memberNotes: db.memberNotes.filter((note) => !memberIds.has(note.memberId)),
     users: db.users.map((user) =>
       user.memberId && memberIds.has(user.memberId) ? withRecordMetadata({ ...user, memberId: undefined }, user, actorUserId) : user,
@@ -706,6 +748,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
     const allMembersByWard = db.members.filter((member) => member.wardId === currentWardId);
     const membersByWard = allMembersByWard.filter((member) => !member.archivedAt);
     const memberIds = new Set(allMembersByWard.map((member) => member.id));
+    const memberAttendanceRecordsByWard = db.memberAttendanceRecords.filter((record) => record.wardId === currentWardId && memberIds.has(record.memberId));
     const memberNotesByWard = db.memberNotes.filter((note) => memberIds.has(note.memberId));
     const minutesByWard = db.sacramentMinutes.filter((minute) => minute.wardId === currentWardId && !minute.archivedAt);
     const allCompanionshipsByWard = db.missionaryCompanionships.filter((companionship) => companionship.wardId === currentWardId);
@@ -1833,79 +1876,33 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       toast.success(restoredCount === 1 ? "Membro restaurado." : `${restoredCount} membros restaurados.`);
     }
 
-    function importMembers(input: ImportMembersInput) {
+    async function importMembers(input: ImportMembersInput) {
       const targetWardId = currentWardId ?? currentUser?.wardId;
       if (!targetWardId) {
         toast.error("Selecione uma ala antes de importar membros.");
-        return;
+        return false;
       }
 
       const importedMembers = input.members.filter((member) => member.name.trim());
-      if (!importedMembers.length) return;
+      if (!importedMembers.length) return false;
       const importedFields = new Set(input.importedFields);
 
-      const buildMemberNameKey = (member: Pick<Member, "name"> | Omit<Member, "id" | "wardId">) => slugify(member.name);
-      const buildMemberIdentityKey = (member: Pick<Member, "name" | "birthDate"> | Omit<Member, "id" | "wardId">) => {
-        const birthDate = normalizeDateInput(member.birthDate);
-
-        return birthDate ? `${buildMemberNameKey(member)}::${birthDate}` : "";
-      };
-      const countBy = <T,>(items: T[], getKey: (item: T) => string) => {
-        const counts = new Map<string, number>();
-
-        items.forEach((item) => {
-          const key = getKey(item);
-          counts.set(key, (counts.get(key) ?? 0) + 1);
-        });
-
-        return counts;
-      };
-      const currentWardMembers = db.members.filter((member) => member.wardId === targetWardId);
-      const importedNameCounts = countBy(importedMembers, buildMemberNameKey);
-      const importedIdentityCounts = countBy(
-        importedMembers.filter((member) => normalizeDateInput(member.birthDate)),
-        buildMemberIdentityKey,
-      );
-      const currentMembersByName = new Map<string, Member[]>();
-      const currentMembersByIdentity = new Map<string, Member[]>();
-
-      currentWardMembers.forEach((member) => {
-        const nameKey = buildMemberNameKey(member);
-        currentMembersByName.set(nameKey, [...(currentMembersByName.get(nameKey) ?? []), member]);
-
-        const identityKey = buildMemberIdentityKey(member);
-        if (identityKey) {
-          currentMembersByIdentity.set(identityKey, [...(currentMembersByIdentity.get(identityKey) ?? []), member]);
-        }
-      });
-
-      const hasConflict = importedMembers.some((member) => {
-        const nameKey = buildMemberNameKey(member);
-        const identityKey = buildMemberIdentityKey(member);
-
-        if (!identityKey) {
-          return (importedNameCounts.get(nameKey) ?? 0) > 1 || (currentMembersByName.get(nameKey) ?? []).length > 0;
-        }
-
-        return (importedIdentityCounts.get(identityKey) ?? 0) > 1 || (currentMembersByIdentity.get(identityKey) ?? []).length > 1;
-      });
-
-      if (hasConflict) {
-        toast.error("Corrija os conflitos de nome e nascimento antes de importar membros.");
-        return;
+      let remoteWardMembers: Member[] = [];
+      try {
+        remoteWardMembers = await loadRemoteMembersByWard(targetWardId);
+      } catch (error) {
+        console.error("Failed to load remote ward members before import.", error);
+        toast.error("Não foi possível conferir os membros atuais no Supabase antes da importação.");
+        return false;
       }
+
+      let applied = false;
+      let blockingConflicts: string[] = [];
 
       setDb((currentDb) => {
         const actorUserId = getActorUserId(currentDb);
-        const membersByIdentity = new Map<string, Member>();
-        currentDb.members
-          .filter((member) => member.wardId === targetWardId)
-          .forEach((member) => {
-            const identityKey = buildMemberIdentityKey(member);
-            if (identityKey) {
-              membersByIdentity.set(identityKey, member);
-            }
-          });
+        const currentWardMembers = currentDb.members.filter((member) => member.wardId === targetWardId);
+        const combinedWardMembers = mergeMembersById(remoteWardMembers, currentWardMembers);
 
         const normalizedImportedMembers = importedMembers.map((member) => ({
           ...member,
@@ -1915,10 +1912,46 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           sacramentTalkDuration: normalizeTalkDuration(member.sacramentTalkDuration),
         }));
 
+        const conflicts: string[] = [];
+        const existingWeakGroups = groupMembersByWeakIdentity(combinedWardMembers);
+        const importedMembersWithWard = normalizedImportedMembers.map((member) => ({ ...member, wardId: targetWardId }));
+        const importedStrongGroups = groupMembersByStrongIdentity(importedMembersWithWard);
+        const importedWeakGroups = groupMembersByWeakIdentity(importedMembersWithWard);
+
+        normalizedImportedMembers.forEach((member) => {
+          const memberWithWard = { ...member, wardId: targetWardId };
+          const strongKey = memberStrongIdentityKey(memberWithWard);
+          const weakKey = memberWeakIdentityKey(memberWithWard);
+
+          if (strongKey) {
+            if ((importedStrongGroups.get(strongKey) ?? []).length > 1) {
+              conflicts.push(`${formatMemberIdentityConflict(member)}: repetido no CSV`);
+            }
+            return;
+          }
+
+          if ((importedWeakGroups.get(weakKey) ?? []).length > 1) {
+            conflicts.push(`${formatMemberIdentityConflict(member)}: nome repetido no CSV sem data de nascimento`);
+          }
+
+          if ((existingWeakGroups.get(weakKey) ?? []).length > 0) {
+            conflicts.push(`${formatMemberIdentityConflict(member)}: já existe membro com esse nome; informe nascimento para atualizar`);
+          }
+        });
+
+        if (conflicts.length) {
+          blockingConflicts = [...new Set(conflicts)];
+          return currentDb;
+        }
+
+        const membersByIdentity = groupMembersByStrongIdentity(combinedWardMembers);
+
         let createdCount = 0;
         let updatedCount = 0;
         const importedRecords = normalizedImportedMembers.map((member) => {
-          const existing = member.birthDate ? membersByIdentity.get(buildMemberIdentityKey(member)) : undefined;
+          const identityKey = memberStrongIdentityKey({ ...member, wardId: targetWardId });
+          const identityMatches = identityKey ? membersByIdentity.get(identityKey) ?? [] : [];
+          const existing = identityMatches.length === 1 ? identityMatches[0] : undefined;
 
           if (existing) {
             const memberPatch = input.importedFields.reduce(
@@ -1964,8 +1997,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
 
         const importedRecordIds = new Set(importedRecords.map((member) => member.id));
         const untouchedMemberIds = new Set(
-          currentDb.members
-            .filter((member) => member.wardId === targetWardId && !member.archivedAt && !importedRecordIds.has(member.id))
+          combinedWardMembers
+            .filter((member) => !member.archivedAt && !importedRecordIds.has(member.id))
             .map((member) => member.id),
         );
         const archivedMissingMemberIds = input.removeMissing ? untouchedMemberIds : new Set<string>();
@@ -1973,7 +2006,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           ...currentDb,
           members: [
             ...importedRecords,
-            ...currentDb.members.flatMap((member) => {
+            ...currentDb.members.filter((member) => member.wardId !== targetWardId),
+            ...combinedWardMembers.flatMap((member) => {
               if (member.wardId !== targetWardId) return [member];
               if (importedRecordIds.has(member.id)) return [];
               if (!input.removeMissing || !untouchedMemberIds.has(member.id)) return [member];
@@ -1987,6 +2021,8 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
           nextDb = clearDeletedMemberReferences(nextDb, archivedMissingMemberIds, actorUserId);
         }
 
+        applied = true;
+
         return withAuditLog(nextDb, currentDb.session.currentUserId, {
           wardId: targetWardId,
           action: "IMPORT_MEMBERS",
@@ -1998,7 +2034,115 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         });
       });
 
+      if (blockingConflicts.length) {
+        toast.error(formatImportConflictToast(blockingConflicts));
+        return false;
+      }
+
+      if (!applied) {
+        return false;
+      }
+
       toast.success(`${importedMembers.length} ${importedMembers.length === 1 ? "membro importado" : "membros importados"}.`);
+      return true;
+    }
+
+    function importMemberAttendanceRecords(input: ImportMemberAttendanceRecordsInput) {
+      const targetWardId = currentWardId ?? currentUser?.wardId;
+      if (!targetWardId) {
+        toast.error("Selecione uma ala antes de importar frequência.");
+        return;
+      }
+
+      const currentWardMemberIds = new Set(db.members.filter((member) => member.wardId === targetWardId).map((member) => member.id));
+      const validRecords = input.records
+        .map((record) => ({
+          ...record,
+          date: normalizeDateInput(record.date),
+          wardId: targetWardId,
+        }))
+        .filter((record) => record.memberId && currentWardMemberIds.has(record.memberId) && record.date);
+
+      if (!validRecords.length) return;
+
+      setDb((currentDb) => {
+        const actorUserId = getActorUserId(currentDb);
+        const currentDbWardMemberIds = new Set(currentDb.members.filter((member) => member.wardId === targetWardId).map((member) => member.id));
+        const currentRecordsByKey = new Map<string, MemberAttendanceRecord>();
+        currentDb.memberAttendanceRecords.forEach((record) => {
+          currentRecordsByKey.set(`${record.wardId}::${record.memberId}::${record.date}`, record);
+        });
+
+        const importedRecordsByKey = new Map<string, MemberAttendanceRecord>();
+        validRecords.filter((record) => currentDbWardMemberIds.has(record.memberId)).forEach((record) => {
+          const key = `${targetWardId}::${record.memberId}::${record.date}`;
+          const existing = currentRecordsByKey.get(key);
+          const attendanceRecord: MemberAttendanceRecord = {
+            id: existing?.id ?? record.id ?? uid("member-attendance"),
+            wardId: targetWardId,
+            memberId: record.memberId,
+            date: record.date,
+            present: record.present === true,
+            source: "csv",
+            importedName: record.importedName,
+          };
+
+          importedRecordsByKey.set(
+            key,
+            withRecordMetadata(attendanceRecord, existing, actorUserId),
+          );
+        });
+
+        const importedKeys = new Set(importedRecordsByKey.keys());
+        const nextRecords = [
+          ...currentDb.memberAttendanceRecords.filter((record) => !importedKeys.has(`${record.wardId}::${record.memberId}::${record.date}`)),
+          ...importedRecordsByKey.values(),
+        ];
+
+        if (!importedRecordsByKey.size) {
+          return currentDb;
+        }
+
+        const importedMemberIds = new Set(Array.from(importedRecordsByKey.values()).map((record) => record.memberId));
+        const nextRecordsByMemberId = new Map<string, MemberAttendanceRecord[]>();
+        nextRecords.forEach((record) => {
+          if (record.wardId !== targetWardId || !importedMemberIds.has(record.memberId)) return;
+          nextRecordsByMemberId.set(record.memberId, [...(nextRecordsByMemberId.get(record.memberId) ?? []), record]);
+        });
+        const nextMembers = currentDb.members.map((member) => {
+          if (member.wardId !== targetWardId || !importedMemberIds.has(member.id) || member.churchActivityStatus === "away") return member;
+
+          const nextStatus = resolveMemberFrequencyStatus(member, nextRecordsByMemberId.get(member.id) ?? []).status;
+          if (member.churchActivityStatus === nextStatus) return member;
+
+          return withRecordMetadata(
+            {
+              ...member,
+              churchActivityStatus: nextStatus,
+            },
+            member,
+            actorUserId,
+          );
+        });
+
+        return withAuditLog(
+          {
+            ...currentDb,
+            memberAttendanceRecords: nextRecords,
+            members: nextMembers,
+          },
+          currentDb.session.currentUserId,
+          {
+            wardId: targetWardId,
+            action: "IMPORT_MEMBER_ATTENDANCE",
+            module: "frequência",
+            itemLabel: `${importedRecordsByKey.size} registros`,
+            summary: `Importou ${importedRecordsByKey.size} registros históricos de frequência.`,
+          },
+        );
+      });
+
+      toast.success(`${validRecords.length} ${validRecords.length === 1 ? "registro de frequência importado" : "registros de frequência importados"}.`);
     }
 
     function updateMemberProgressCategory(memberId: string, category: MemberProgressCategory) {
@@ -3564,6 +3708,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       usersByWard,
       allMembersByWard,
       membersByWard,
+      memberAttendanceRecordsByWard,
       memberNotesByWard,
       minutesByWard,
       allCompanionshipsByWard,
@@ -3602,6 +3747,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
       deleteArchivedMembers,
       restoreMembers,
       importMembers,
+      importMemberAttendanceRecords,
       updateMemberProgressCategory,
       addMemberNote,
       updateMemberNote,

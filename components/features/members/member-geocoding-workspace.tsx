@@ -117,6 +117,7 @@ export function MemberGeocodingWorkspace() {
   const { membersByWard, saveMember } = useAppContext();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [batchMembers, setBatchMembers] = useState<Member[]>([]);
   const [statesByMemberId, setStatesByMemberId] = useState<Record<string, MemberGeocodeState>>({});
   const [addressDraftsByMemberId, setAddressDraftsByMemberId] = useState<Record<string, string>>({});
   const [addressSaveStatusesByMemberId, setAddressSaveStatusesByMemberId] = useState<Record<string, AddressSaveStatus>>({});
@@ -162,8 +163,13 @@ export function MemberGeocodingWorkspace() {
       }),
     [activityStatusFilter, addressDraftsByMemberId, candidates, maximumAge, minimumAge, search, sexFilter, statusFilter, talkDurationFilter],
   );
-  const selectedMembers = useMemo(() => filteredCandidates.filter((member) => selectedIds.has(member.id)), [filteredCandidates, selectedIds]);
-  const selectedMember = filteredCandidates.find((member) => member.id === selectedMemberId) ?? selectedMembers[0] ?? filteredCandidates[0];
+  const hasBatchSnapshot = batchMembers.length > 0;
+  const listMembers = hasBatchSnapshot ? batchMembers : filteredCandidates;
+  const selectedMembers = useMemo(
+    () => (hasBatchSnapshot ? batchMembers : filteredCandidates.filter((member) => selectedIds.has(member.id))),
+    [batchMembers, filteredCandidates, hasBatchSnapshot, selectedIds],
+  );
+  const selectedMember = listMembers.find((member) => member.id === selectedMemberId) ?? selectedMembers[0] ?? listMembers[0];
   const selectedState = selectedMember ? getMemberDisplayState(selectedMember, statesByMemberId) : undefined;
   const selectedAddress = selectedMember ? addressDraftsByMemberId[selectedMember.id] ?? selectedMember.address : "";
   const selectedNormalizedAddress = normalizeAddress(selectedAddress);
@@ -175,20 +181,65 @@ export function MemberGeocodingWorkspace() {
   const selectedCoordinatesValid = typeof selectedLatitude === "number" && typeof selectedLongitude === "number";
   const selectedCoordinateSaveStatus = selectedMember ? coordinateSaveStatusesByMemberId[selectedMember.id] ?? "idle" : "idle";
   const selectedMembersWithEmptyAddress = selectedMembers.filter((member) => !normalizeAddress(addressDraftsByMemberId[member.id] ?? member.address));
+  const metricMembers = hasBatchSnapshot ? batchMembers : filteredCandidates;
   const selectedProcessedCount = selectedMembers.filter((member) => processedStatuses.has(getMemberDisplayState(member, statesByMemberId).status)).length;
-  const foundCount = filteredCandidates.filter((member) => getMemberDisplayState(member, statesByMemberId).status === "found").length;
-  const savedCount = Object.values(statesByMemberId).filter((state) => state.status === "saved").length;
-  const issueCount = filteredCandidates.filter((member) => {
+  const foundCount = metricMembers.filter((member) => {
+    const runtimeState = getMemberDisplayState(member, statesByMemberId);
+
+    return Boolean(runtimeState.result) && (runtimeState.status === "found" || runtimeState.status === "saved");
+  }).length;
+  const savedCount = metricMembers.filter((member) => getMemberDisplayState(member, statesByMemberId).status === "saved").length;
+  const issueCount = metricMembers.filter((member) => {
     const runtimeStatus = getMemberDisplayState(member, statesByMemberId).status;
 
     return runtimeStatus === "empty" || runtimeStatus === "error";
   }).length;
   const progressPercent = selectedMembers.length ? Math.round((selectedProcessedCount / selectedMembers.length) * 100) : 0;
-  const allSelected = filteredCandidates.length > 0 && selectedMembers.length === filteredCandidates.length;
+  const allSelected = listMembers.length > 0 && selectedMembers.length === listMembers.length;
   const someSelected = selectedMembers.length > 0 && !allSelected;
 
   function setMemberState(memberId: string, state: MemberGeocodeState) {
     setStatesByMemberId((current) => ({ ...current, [memberId]: state }));
+  }
+
+  function clearBatchSnapshot() {
+    if (!batchMembers.length) return;
+    setBatchMembers([]);
+  }
+
+  function updateSearch(value: string) {
+    clearBatchSnapshot();
+    setSearch(value);
+  }
+
+  function updateStatusFilter(value: GeocodingFilter) {
+    clearBatchSnapshot();
+    setStatusFilter(value);
+  }
+
+  function updateSexFilter(value: "all" | Member["sex"]) {
+    clearBatchSnapshot();
+    setSexFilter(value);
+  }
+
+  function updateActivityStatusFilter(value: "all" | Member["churchActivityStatus"]) {
+    clearBatchSnapshot();
+    setActivityStatusFilter(value);
+  }
+
+  function updateMinimumAgeFilter(value: string) {
+    clearBatchSnapshot();
+    setMinimumAgeFilter(value);
+  }
+
+  function updateMaximumAgeFilter(value: string) {
+    clearBatchSnapshot();
+    setMaximumAgeFilter(value);
+  }
+
+  function updateTalkDurationFilter(value: "all" | Member["sacramentTalkDuration"]) {
+    clearBatchSnapshot();
+    setTalkDurationFilter(value);
   }
 
   function draftAddressFor(member: Member) {
@@ -350,6 +401,7 @@ export function MemberGeocodingWorkspace() {
   }
 
   function toggleMemberSelection(memberId: string, checked: boolean) {
+    clearBatchSnapshot();
     setSelectedIds((current) => {
       const next = new Set(current);
       if (checked) next.add(memberId);
@@ -360,14 +412,15 @@ export function MemberGeocodingWorkspace() {
   }
 
   function toggleAllSelection(checked: boolean) {
+    clearBatchSnapshot();
     setSelectedIds(checked ? new Set(filteredCandidates.map((member) => member.id)) : new Set());
   }
 
   function selectNext(currentMemberId: string) {
-    const currentIndex = filteredCandidates.findIndex((member) => member.id === currentMemberId);
-    const nextMember = filteredCandidates.find((member, index) => index > currentIndex && statesByMemberId[member.id]?.status !== "saved");
+    const currentIndex = listMembers.findIndex((member) => member.id === currentMemberId);
+    const nextMember = listMembers.find((member, index) => index > currentIndex && statesByMemberId[member.id]?.status !== "saved");
 
-    setSelectedMemberId(nextMember?.id ?? filteredCandidates.find((member) => member.id !== currentMemberId)?.id ?? "");
+    setSelectedMemberId(nextMember?.id ?? listMembers.find((member) => member.id !== currentMemberId)?.id ?? "");
   }
 
   async function runGeocode(member: Member, options: RunGeocodeOptions = {}): Promise<MemberGeocodeState> {
@@ -471,10 +524,12 @@ export function MemberGeocodingWorkspace() {
   async function processSelectedMembers() {
     if (!selectedMembers.length || batchRunning) return;
 
+    const membersToProcess = selectedMembers;
     stopRequestedRef.current = false;
+    setBatchMembers(membersToProcess);
     setBatchRunning(true);
 
-    for (const member of selectedMembers) {
+    for (const member of membersToProcess) {
       if (stopRequestedRef.current) break;
       const currentState = statesByMemberId[member.id];
       if (currentState?.status === "saved") continue;
@@ -553,9 +608,9 @@ export function MemberGeocodingWorkspace() {
         <SearchInput
           placeholder="Buscar por nome ou endereço"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => updateSearch(event.target.value)}
         />
-        <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as GeocodingFilter)}>
+        <Select value={statusFilter} onValueChange={(value) => updateStatusFilter(value as GeocodingFilter)}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -567,7 +622,7 @@ export function MemberGeocodingWorkspace() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as "all" | Member["sex"])}>
+        <Select value={sexFilter} onValueChange={(value) => updateSexFilter(value as "all" | Member["sex"])}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -577,7 +632,7 @@ export function MemberGeocodingWorkspace() {
             <SelectItem value="F">Feminino</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={activityStatusFilter} onValueChange={(value) => setActivityStatusFilter(value as "all" | Member["churchActivityStatus"])}>
+        <Select value={activityStatusFilter} onValueChange={(value) => updateActivityStatusFilter(value as "all" | Member["churchActivityStatus"])}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -594,7 +649,7 @@ export function MemberGeocodingWorkspace() {
           placeholder="Idade mín."
           type="number"
           value={minimumAgeFilter}
-          onChange={(event) => setMinimumAgeFilter(event.target.value)}
+          onChange={(event) => updateMinimumAgeFilter(event.target.value)}
         />
         <Input
           inputMode="numeric"
@@ -602,9 +657,9 @@ export function MemberGeocodingWorkspace() {
           placeholder="Idade máx."
           type="number"
           value={maximumAgeFilter}
-          onChange={(event) => setMaximumAgeFilter(event.target.value)}
+          onChange={(event) => updateMaximumAgeFilter(event.target.value)}
         />
-        <Select value={talkDurationFilter} onValueChange={(value) => setTalkDurationFilter(value as "all" | Member["sacramentTalkDuration"])}>
+        <Select value={talkDurationFilter} onValueChange={(value) => updateTalkDurationFilter(value as "all" | Member["sacramentTalkDuration"])}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -647,12 +702,14 @@ export function MemberGeocodingWorkspace() {
               <Checkbox checked={allSelected || (someSelected && "indeterminate")} onCheckedChange={(checked) => toggleAllSelection(checked === true)} />
               Selecionar filtrados
             </label>
-            <p className="mt-1 text-xs text-muted-foreground">{filteredCandidates.length} de {candidates.length} membros com endereço e sem coordenadas</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {hasBatchSnapshot ? `${listMembers.length} membros no ultimo lote` : `${filteredCandidates.length} de ${candidates.length} membros com endereço e sem coordenadas`}
+            </p>
           </div>
           <div className="h-[560px] overflow-y-auto p-2">
-            {filteredCandidates.length ? (
+            {listMembers.length ? (
               <div className="space-y-1">
-                {filteredCandidates.map((member) => {
+                {listMembers.map((member) => {
                   const state = getMemberDisplayState(member, statesByMemberId);
 
                   return (
@@ -686,7 +743,9 @@ export function MemberGeocodingWorkspace() {
                 })}
               </div>
             ) : (
-              <div className="px-3 py-10 text-center text-sm text-muted-foreground">Nenhum membro pendente de mapeamento.</div>
+              <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                {hasBatchSnapshot ? "Nenhum membro no lote." : "Nenhum membro pendente de mapeamento."}
+              </div>
             )}
           </div>
         </section>

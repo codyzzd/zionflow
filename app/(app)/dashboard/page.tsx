@@ -189,7 +189,13 @@ function DashboardLinkCard({
 }
 
 export default function DashboardPage() {
-  const { companionshipsByWard, currentWard, lunchSchedulesByWard, membersByWard, minutesByWard } = useAppContext();
+  const {
+    companionshipsByWard,
+    currentWard,
+    lunchSchedulesByWard,
+    membersByWard,
+    minutesByWard,
+  } = useAppContext();
   const { formatDate } = useDateFormatter();
 
   const memberCounts = memberStatusMeta.map(({ status }) => membersByWard.filter((member) => member.churchActivityStatus === status).length);

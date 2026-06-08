@@ -12,7 +12,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { cellValue, columnValue, formatImportedName, ignoredColumn, memberNameKey, parseCsv, type CsvData, type NameFormatMode } from "@/lib/member-csv";
+import { cellValue, columnValue, formatImportedName, ignoredColumn, parseCsv, type CsvData, type NameFormatMode } from "@/lib/member-csv";
+import {
+  findStrongIdentityDuplicateGroups,
+  groupMembersByStrongIdentity,
+  groupMembersByWeakIdentity,
+  memberStrongIdentityKey,
+  memberWeakIdentityKey,
+} from "@/lib/member-identity";
 import { talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { normalizeDateInput, slugify } from "@/lib/utils";
 import type { Member, RecordMetadataKey } from "@/types/domain";
@@ -170,37 +177,25 @@ function countBy<T>(items: T[], getKey: (item: T) => string) {
   return counts;
 }
 
-function memberIdentityKey(member: Pick<Member, "name" | "birthDate"> | Pick<ImportMember, "name" | "birthDate">) {
-  const birthDate = normalizeDateInput(member.birthDate);
-
-  return birthDate ? `${memberNameKey(member.name)}::${birthDate}` : "";
-}
-
-function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Member[]) {
-  const currentMembersByName = new Map<string, Member[]>();
-  const currentMembersByIdentity = new Map<string, Member[]>();
-  const importedNameCounts = countBy(importMembers, (member) => memberNameKey(member.name));
+function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Member[], wardId: string) {
+  const currentMembersByName = groupMembersByWeakIdentity(currentMembers);
+  const currentMembersByIdentity = groupMembersByStrongIdentity(currentMembers);
+  const importMembersWithWard = importMembers.map((member) => ({ ...member, wardId }));
+  const importedNameCounts = countBy(importMembersWithWard, memberWeakIdentityKey);
   const importedIdentityCounts = countBy(
-    importMembers.filter((member) => member.birthDate),
-    memberIdentityKey,
+    importMembersWithWard.filter((member) => member.birthDate),
+    memberStrongIdentityKey,
   );
+  const existingDuplicateGroups = findStrongIdentityDuplicateGroups(currentMembers);
   const conflicts: ImportConflict[] = [];
   let createdCount = 0;
   let updatedCount = 0;
-
-  currentMembers.forEach((member) => {
-    const nameKey = memberNameKey(member.name);
-    currentMembersByName.set(nameKey, [...(currentMembersByName.get(nameKey) ?? []), member]);
-
-    const identityKey = memberIdentityKey(member);
-    if (identityKey) {
-      currentMembersByIdentity.set(identityKey, [...(currentMembersByIdentity.get(identityKey) ?? []), member]);
-    }
-  });
+  let missingBirthDateExistingNameCount = 0;
 
   importMembers.forEach((member, index) => {
-    const nameKey = memberNameKey(member.name);
-    const identityKey = memberIdentityKey(member);
+    const memberWithWard = { ...member, wardId };
+    const nameKey = memberWeakIdentityKey(memberWithWard);
+    const identityKey = memberStrongIdentityKey(memberWithWard);
 
     if (!identityKey) {
       if ((importedNameCounts.get(nameKey) ?? 0) > 1) {
@@ -209,6 +204,7 @@ function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Memb
       }
 
       if ((currentMembersByName.get(nameKey) ?? []).length > 0) {
+        missingBirthDateExistingNameCount += 1;
         conflicts.push({ index, member, reason: "Ja existe membro com este nome. Informe a data de nascimento para atualizar com segurança." });
         return;
       }
@@ -223,12 +219,7 @@ function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Memb
     }
 
     const identityMatches = currentMembersByIdentity.get(identityKey) ?? [];
-    if (identityMatches.length > 1) {
-      conflicts.push({ index, member, reason: "Mais de um membro existente tem este mesmo nome e nascimento." });
-      return;
-    }
-
-    if (identityMatches.length === 1) {
+    if (identityMatches.length >= 1) {
       updatedCount += 1;
       return;
     }
@@ -236,7 +227,7 @@ function analyzeMemberImport(importMembers: ImportMember[], currentMembers: Memb
     createdCount += 1;
   });
 
-  return { conflicts, createdCount, updatedCount };
+  return { conflicts, createdCount, existingDuplicateGroups, missingBirthDateExistingNameCount, updatedCount };
 }
 
 function buildImportedFields(mapping: Record<ImportFieldKey, string>) {
@@ -296,6 +287,7 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
   const [mapping, setMapping] = useState<Record<ImportFieldKey, string>>(buildInitialMapping([]));
   const [nameFormatMode, setNameFormatMode] = useState<NameFormatMode>("preserve");
   const [removeMissing, setRemoveMissing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
 
   function setDialogOpen(nextOpen: boolean) {
@@ -309,7 +301,7 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
   const importedFields = useMemo(() => buildImportedFields(mapping), [mapping]);
   const invalidDateCount = useMemo(() => countInvalidDates(csv, mapping), [csv, mapping]);
   const currentWardMembers = useMemo(() => (currentWard ? db.members.filter((member) => member.wardId === currentWard.id) : []), [currentWard, db.members]);
-  const importAnalysis = useMemo(() => analyzeMemberImport(parsedMembers, currentWardMembers), [currentWardMembers, parsedMembers]);
+  const importAnalysis = useMemo(() => analyzeMemberImport(parsedMembers, currentWardMembers, currentWard?.id ?? ""), [currentWard?.id, currentWardMembers, parsedMembers]);
   const canImport = Boolean(currentWard && mapping.name !== ignoredColumn && parsedMembers.length && !importAnalysis.conflicts.length);
 
   function resetImport() {
@@ -318,6 +310,7 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
     setMapping(buildInitialMapping([]));
     setNameFormatMode("preserve");
     setRemoveMissing(false);
+    setImporting(false);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -339,16 +332,22 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
     setMapping(buildInitialMapping(nextCsv.headers));
   }
 
-  function applyImport() {
-    if (!currentWard || !canImport) return;
+  async function applyImport() {
+    if (!currentWard || !canImport || importing) return;
 
-    importMembers({
+    setImporting(true);
+    const imported = await importMembers({
       wardId: currentWard.id,
       members: parsedMembers,
       importedFields,
       removeMissing,
     });
-    handleOpenChange(false);
+
+    if (imported) {
+      handleOpenChange(false);
+    } else {
+      setImporting(false);
+    }
   }
 
   return (
@@ -401,7 +400,8 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
                 <p className="font-medium">Corrija os conflitos no CSV antes de importar.</p>
                 {importAnalysis.conflicts.slice(0, 4).map((conflict) => (
                   <p className="text-xs" key={`${conflict.index}-${conflict.member.name}`}>
-                    Linha {conflict.index + 2}: {conflict.member.name} - {conflict.reason}
+                    {conflict.index >= 0 ? `Linha ${conflict.index + 2}: ` : ""}
+                    {conflict.member.name} - {conflict.reason}
                   </p>
                 ))}
                 {importAnalysis.conflicts.length > 4 ? <p className="text-xs">Mais {importAnalysis.conflicts.length - 4} conflito(s).</p> : null}
@@ -468,6 +468,8 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
                   <span>{parsedMembers.length} membros válidos</span>
                   <span>{importAnalysis.createdCount} serão criados</span>
                   <span>{importAnalysis.updatedCount} serão atualizados</span>
+                  <span>{importAnalysis.existingDuplicateGroups.length} já existem duplicados</span>
+                  <span>{importAnalysis.missingBirthDateExistingNameCount} sem nascimento e com nome já existente</span>
                   <span>{importAnalysis.conflicts.length} conflitos</span>
                   {invalidDateCount ? <span>{invalidDateCount} datas ignoradas</span> : null}
                   <span>{removeMissing ? "Arquiva ausentes da minha ala" : "Atualização parcial"}</span>
@@ -503,8 +505,8 @@ export function MemberImportDialog({ onOpenChange, open: controlledOpen, trigger
           <Button onClick={() => handleOpenChange(false)} variant="ghost">
             Cancelar
           </Button>
-          <Button disabled={!canImport} onClick={applyImport}>
-            Incluir
+          <Button disabled={!canImport || importing} onClick={() => void applyImport()}>
+            {importing ? "Conferindo..." : "Incluir"}
           </Button>
         </DialogFooter>
       </DialogContent>

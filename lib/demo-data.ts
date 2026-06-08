@@ -49,6 +49,7 @@ export function createSeedDatabase(): Database {
     users: [],
     stakeOwnerRequests: [],
     members: [],
+    memberAttendanceRecords: [],
     memberNotes: [],
     sacramentMinutes: [],
     minuteVersions: [],

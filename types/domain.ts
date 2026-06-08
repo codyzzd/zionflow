@@ -145,6 +145,16 @@ export interface MemberNote {
   text: string;
 }
 
+export interface MemberAttendanceRecord extends RecordMetadata {
+  id: string;
+  wardId: string;
+  memberId: string;
+  date: string;
+  present: boolean;
+  source: "csv";
+  importedName?: string;
+}
+
 export interface Member extends RecordMetadata {
   id: string;
   wardId: string;
@@ -396,6 +406,7 @@ export interface Database {
   users: User[];
   stakeOwnerRequests: StakeOwnerRequest[];
   members: Member[];
+  memberAttendanceRecords: MemberAttendanceRecord[];
   memberNotes: MemberNote[];
   sacramentMinutes: SacramentMinute[];
   minuteVersions: SacramentMinuteVersion[];

@@ -6,7 +6,8 @@
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "members:duplicates": "node scripts/member-duplicates-report.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

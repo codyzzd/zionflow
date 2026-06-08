@@ -49,16 +49,17 @@ import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { parseCoordinateInput } from "@/lib/coordinates";
+import { resolvePersistedMemberFrequencyStatus } from "@/lib/member-attendance";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
 import { MEMBER_PROGRESS_CATEGORY_OPTIONS } from "@/lib/member-progress-category";
 import { buildBrazilWhatsAppUrl } from "@/lib/phone";
 import { cn, normalizeDateInput } from "@/lib/utils";
-import type { Member, MemberNote, MemberProgressCategory } from "@/types/domain";
+import type { Member, MemberAttendanceRecord, MemberNote, MemberProgressCategory } from "@/types/domain";
 
 type MemberForm = Omit<Member, "id" | "wardId">;
 type DrawerMode = "create" | "view" | "edit";
-type DrawerTab = "data" | "talks" | "progress";
+type DrawerTab = "data" | "attendance" | "talks" | "progress";
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
 type MemberStatusFilter = "active" | "archived";
 type MemberActionDialog = "activity" | "export" | "import" | null;
@@ -172,6 +173,7 @@ export default function MembersPage() {
     deleteMemberNote,
     deleteMembers,
     hasPermission,
+    memberAttendanceRecordsByWard,
     memberNotesByWard,
     minutesByWard,
     ready,
@@ -209,8 +211,26 @@ export default function MembersPage() {
   const isReadOnly = drawerMode === "view";
   const talkHistoryByMemberId = useMemo(() => buildMemberTalkHistory(minutesByWard), [minutesByWard]);
   const talkOccurrencesByMemberId = useMemo(() => buildMemberTalkOccurrences(minutesByWard), [minutesByWard]);
+  const attendanceRecordsByMemberId = useMemo(() => {
+    const recordsByMemberId = new Map<string, MemberAttendanceRecord[]>();
+
+    memberAttendanceRecordsByWard.forEach((record) => {
+      recordsByMemberId.set(record.memberId, [...(recordsByMemberId.get(record.memberId) ?? []), record]);
+    });
+
+    return recordsByMemberId;
+  }, [memberAttendanceRecordsByWard]);
+  const getMemberFrequencyResolution = useCallback(
+    (member: Member) => resolvePersistedMemberFrequencyStatus(member, attendanceRecordsByMemberId.get(member.id) ?? []),
+    [attendanceRecordsByMemberId],
+  );
   const selectedMemberTalkHistory = selectedMember ? talkHistoryByMemberId.get(selectedMember.id) : undefined;
   const selectedMemberTalkOccurrences = selectedMember ? (talkOccurrencesByMemberId.get(selectedMember.id) ?? []) : [];
+  const selectedMemberAttendanceRecords = useMemo(
+    () => (selectedMember ? [...(attendanceRecordsByMemberId.get(selectedMember.id) ?? [])].sort((a, b) => b.date.localeCompare(a.date)) : []),
+    [attendanceRecordsByMemberId, selectedMember],
+  );
+  const selectedMemberFrequencyResolution = selectedMember ? getMemberFrequencyResolution(selectedMember) : undefined;
   const selectedMemberProgress = useMemo(
     () =>
       selectedMember
@@ -277,7 +297,8 @@ export default function MembersPage() {
           member.phone.toLowerCase().includes(normalizedSearch);
         const age = calculateAge(member.birthDate);
         const matchesSex = sexFilter === "all" || member.sex === sexFilter;
-        const matchesActivityStatus = activityStatusFilter === "all" || member.churchActivityStatus === activityStatusFilter;
+        const frequencyStatus = getMemberFrequencyResolution(member).status;
+        const matchesActivityStatus = activityStatusFilter === "all" || frequencyStatus === activityStatusFilter;
         const memberHasCoordinates = hasValidCoordinates(member);
         const matchesCoordinates =
           coordinatesFilter === "all" || (coordinatesFilter === "mapped" && memberHasCoordinates) || (coordinatesFilter === "unmapped" && !memberHasCoordinates);
@@ -286,7 +307,7 @@ export default function MembersPage() {
 
         return matchesMemberStatus && matchesSearch && matchesSex && matchesActivityStatus && matchesCoordinates && matchesAge && matchesTalkDuration;
       }),
-    [activityStatusFilter, allMembersByWard, coordinatesFilter, maximumAge, memberStatusFilter, minimumAge, search, sexFilter, talkDurationFilter],
+    [activityStatusFilter, allMembersByWard, coordinatesFilter, getMemberFrequencyResolution, maximumAge, memberStatusFilter, minimumAge, search, sexFilter, talkDurationFilter],
   );
 
   function handleDrawerOpenChange(open: boolean) {
@@ -525,13 +546,14 @@ export default function MembersPage() {
         ),
         cell: ({ row }) => {
           const member = row.original;
+          const frequencyStatus = getMemberFrequencyResolution(member).status;
 
           return (
             <div className="space-y-1">
               <TablePrimaryAction onClick={() => openViewDrawer(member)}>{member.name}</TablePrimaryAction>
               <div className="flex items-center gap-1">
                 <MemberSexIcon sex={member.sex} />
-                <MemberActivityStatusIcon status={member.churchActivityStatus} />
+                <MemberActivityStatusIcon status={frequencyStatus} />
                 {member.archivedAt ? <Badge variant="secondary">Arquivado</Badge> : null}
               </div>
             </div>
@@ -684,7 +706,7 @@ export default function MembersPage() {
         },
       },
     ],
-    [canManageMembers, deleteArchivedMembers, deleteMembers, formatDate, openViewDrawer, restoreMembers, talkHistoryByMemberId],
+    [canManageMembers, deleteArchivedMembers, deleteMembers, formatDate, getMemberFrequencyResolution, openViewDrawer, restoreMembers, talkHistoryByMemberId],
   );
 
   return (
@@ -1019,6 +1041,17 @@ export default function MembersPage() {
                         Dados
                       </Button>
                       <Button
+                        aria-selected={drawerTab === "attendance"}
+                        className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "attendance" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+                        onClick={() => selectDrawerTab("attendance")}
+                        role="tab"
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Frequência
+                      </Button>
+                      <Button
                         aria-selected={drawerTab === "talks"}
                         className={`rounded-none border-b-2 px-0 sm:px-3 ${drawerTab === "talks" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
                         onClick={() => selectDrawerTab("talks")}
@@ -1197,6 +1230,20 @@ export default function MembersPage() {
                               </div>
                             </div>
                           ) : null}
+                          {selectedMemberFrequencyResolution ? (
+                            <div>
+                              <Label>Frequência cadastrada</Label>
+                              <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
+                                <MemberActivityStatusIcon status={selectedMemberFrequencyResolution.status} />
+                                <span className="font-medium">{churchActivityStatusLabels[selectedMemberFrequencyResolution.status]}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {selectedMemberFrequencyResolution.consideredRecords.length
+                                    ? `${selectedMemberFrequencyResolution.consideredRecords.length} domingo(s)`
+                                    : "Sem histórico"}
+                                </span>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       </section>
 
@@ -1212,6 +1259,59 @@ export default function MembersPage() {
                           onChange={(event) => setForm((current) => ({ ...current, observation: event.target.value }))}
                         />
                       </section>
+                    </div>
+                  ) : drawerTab === "attendance" ? (
+                    <div className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-md border bg-muted/20 px-3 py-2">
+                          <p className="text-xs text-muted-foreground">Status</p>
+                          <div className="mt-1 flex items-center gap-2 text-sm font-medium">
+                            {selectedMemberFrequencyResolution ? <MemberActivityStatusIcon status={selectedMemberFrequencyResolution.status} /> : null}
+                            {selectedMemberFrequencyResolution ? churchActivityStatusLabels[selectedMemberFrequencyResolution.status] : "Sem membro"}
+                          </div>
+                        </div>
+                        <div className="rounded-md border bg-muted/20 px-3 py-2">
+                          <p className="text-xs text-muted-foreground">Domingos considerados</p>
+                          <p className="mt-1 text-sm font-medium tabular-nums">{selectedMemberFrequencyResolution?.consideredRecords.length ?? 0}/3</p>
+                        </div>
+                        <div className="rounded-md border bg-muted/20 px-3 py-2">
+                          <p className="text-xs text-muted-foreground">Registros</p>
+                          <p className="mt-1 text-sm font-medium tabular-nums">{selectedMemberAttendanceRecords.length}</p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border">
+                        {selectedMemberAttendanceRecords.length ? (
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Data</TableHead>
+                                <TableHead>Presença</TableHead>
+                                <TableHead className="text-right">Cálculo</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {selectedMemberAttendanceRecords.slice(0, 24).map((record) => {
+                                const isConsidered = selectedMemberFrequencyResolution?.consideredRecords.some((item) => item.id === record.id) ?? false;
+
+                                return (
+                                  <TableRow key={record.id}>
+                                    <TableCell className="whitespace-nowrap font-medium">{formatDate(record.date)}</TableCell>
+                                    <TableCell>
+                                      <Badge variant={record.present ? "default" : "secondary"}>{record.present ? "Presente" : "Ausente"}</Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      {isConsidered ? <Badge variant="outline">Últimos 3</Badge> : <span className="text-sm text-muted-foreground">Histórico</span>}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        ) : (
+                          <div className="px-4 py-10 text-center text-sm text-muted-foreground">Nenhuma frequência importada para este membro.</div>
+                        )}
+                      </div>
                     </div>
                   ) : drawerTab === "talks" ? (
                     <div className="rounded-lg border">

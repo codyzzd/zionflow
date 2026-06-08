@@ -18,7 +18,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
-import type { MemberMapMarkerStyle } from "@/components/features/members/member-map-canvas";
 
 const MemberMapCanvas = dynamic(() => import("@/components/features/members/member-map-canvas").then((mod) => mod.MemberMapCanvas), {
   loading: () => <div className="flex min-h-[420px] items-center justify-center rounded-lg border text-sm text-muted-foreground">Carregando mapa...</div>,
@@ -42,6 +41,7 @@ const activityBadgeClassNames: Record<Member["churchActivityStatus"], string> = 
   not_attending: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
 };
 const mapSelectContentClassName = "z-[1100]";
+const markerStyle = "classic_pin";
 
 function isMappedMember(member: Member): member is MappedMember {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
@@ -91,8 +91,7 @@ export default function MembersMapPage() {
   const [sexFilter, setSexFilter] = useState<SexFilter>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
-  const [markerStyle, setMarkerStyle] = useState<MemberMapMarkerStyle>("classic_pin");
-  const [clusterEnabled, setClusterEnabled] = useState(false);
+  const [clusterEnabled, setClusterEnabled] = useState(true);
   const [selectedMemberId, setSelectedMemberId] = useState<string | undefined>();
   const [selectedMemberFocusKey, setSelectedMemberFocusKey] = useState(0);
   const [fullScreen, setFullScreen] = useState(false);
@@ -158,8 +157,8 @@ export default function MembersMapPage() {
   const filters = (
     <div
       className={cn(
-        "grid gap-3 rounded-lg border bg-card p-3",
-        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_150px_160px_115px_115px_160px_150px_minmax(190px,auto)]",
+        "grid items-end gap-3 rounded-lg border bg-card p-3",
+        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(240px,1fr)_150px_160px_115px_115px_160px_minmax(220px,auto)]",
       )}
     >
       <div>
@@ -233,20 +232,7 @@ export default function MembersMapPage() {
           </SelectContent>
         </Select>
       </div>
-      <div>
-        <Label className="text-xs">Tipo de pino</Label>
-        <Select value={markerStyle} onValueChange={(value) => setMarkerStyle(value as MemberMapMarkerStyle)}>
-          <SelectTrigger className="mt-1 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className={mapSelectContentClassName}>
-            <SelectItem value="classic_pin">Pino clássico</SelectItem>
-            <SelectItem value="compact_pin">Pino compacto</SelectItem>
-            <SelectItem value="circle">Bola</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <label className="flex min-h-10 items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+      <label className="flex h-10 items-center gap-3 rounded-md border bg-background px-3 text-sm">
         <Checkbox checked={clusterEnabled} onCheckedChange={(checked) => setClusterEnabled(checked === true)} />
         <span className="leading-tight">Agrupar pinos sobrepostos</span>
       </label>
