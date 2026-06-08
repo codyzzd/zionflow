@@ -88,6 +88,7 @@ const mainItems: NavItem[] = [
     viewPermission: "members.view",
     children: [
       { href: "/members", label: "Lista", viewPermission: "members.view" },
+      { href: "/members/attendance", label: "Frequência", viewPermission: "members.view" },
       { href: "/members/birthdays", label: "Aniversariantes", viewPermission: "members.view" },
     ],
   },

@@ -33,6 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type DataTableProps<TData, TValue> = {
@@ -44,6 +45,7 @@ type DataTableProps<TData, TValue> = {
   getRowId?: (originalRow: TData, index: number, parent?: Row<TData>) => string;
   onSelectionActiveChange?: (active: boolean) => void;
   pageSize?: number;
+  pageSizeOptions?: number[];
   renderSelectedActions?: (selectedRows: TData[]) => React.ReactNode;
   selectionActive?: boolean;
   selectionColumnId?: string;
@@ -70,6 +72,7 @@ export function DataTable<TData, TValue>({
   getRowId,
   onSelectionActiveChange,
   pageSize = 10,
+  pageSizeOptions = [10, 50, 100, 500, 1000],
   renderSelectedActions,
   selectionActive: controlledSelectionActive,
   selectionColumnId = "select",
@@ -143,6 +146,9 @@ export function DataTable<TData, TValue>({
   });
 
   const hideableColumns = table.getAllLeafColumns().filter((column) => column.getCanHide());
+  const resolvedPageSizeOptions = React.useMemo(() => {
+    return Array.from(new Set([...pageSizeOptions, pageSize])).sort((a, b) => a - b);
+  }, [pageSize, pageSizeOptions]);
 
   const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
   const visibleColumnCount = table.getVisibleLeafColumns().length;
@@ -227,6 +233,21 @@ export function DataTable<TData, TValue>({
 
       <div className="flex flex-col gap-3 text-sm md:flex-row md:items-start md:justify-between">
         <div className="flex min-h-8 flex-wrap items-center gap-3 text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span>Linhas</span>
+            <Select value={String(table.getState().pagination.pageSize)} onValueChange={(value) => table.setPageSize(Number(value))}>
+              <SelectTrigger className="h-8 w-[88px] bg-background text-foreground">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {resolvedPageSizeOptions.map((option) => (
+                  <SelectItem key={option} value={String(option)}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <p className="tabular-nums">{showSelectionSummary ? `${selectedRows.length} de ${data.length} linha(s) selecionada(s).` : `${data.length} linha(s).`}</p>
           {renderSelectedActions && selectedRows.length ? <div className="flex items-center gap-2">{renderSelectedActions(selectedRows)}</div> : null}
         </div>
