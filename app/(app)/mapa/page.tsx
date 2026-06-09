@@ -16,34 +16,52 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn, normalizeDateInput } from "@/lib/utils";
+import { buildMemberAttendanceSummaries, filterAttendanceRecordsThroughDate } from "@/lib/member-attendance-summary";
+import { cn, localTodayDate, normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
+import type { MemberMapAttendanceBucket } from "@/components/features/members/member-map-canvas";
 
 const MemberMapCanvas = dynamic(() => import("@/components/features/members/member-map-canvas").then((mod) => mod.MemberMapCanvas), {
   loading: () => <div className="flex min-h-[420px] items-center justify-center rounded-lg border text-sm text-muted-foreground">Carregando mapa...</div>,
   ssr: false,
 });
 
-type ActivityFilter = "all" | Member["churchActivityStatus"];
+type AttendanceFilter = "all" | MemberMapAttendanceBucket;
 type MappingFilter = "all" | "mapped" | "unmapped";
 type SexFilter = "all" | Member["sex"];
-type MappedMember = Member & { latitude: number; longitude: number };
+type FrequencyMember = Member & { attendanceBucketKey: MemberMapAttendanceBucket };
+type MappedMember = FrequencyMember & { latitude: number; longitude: number };
 
-const activityLabels: Record<Member["churchActivityStatus"], string> = {
-  away: "Afastado",
-  attending: "Frequentando",
-  not_attending: "Não frequentando",
-};
-
-const activityBadgeClassNames: Record<Member["churchActivityStatus"], string> = {
-  away: "border-zinc-300 bg-zinc-100 text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100",
-  attending: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-  not_attending: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
+const attendanceBadgeMeta: Record<MemberMapAttendanceBucket, { className: string; label: string }> = {
+  present_last_sunday: {
+    className: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
+    label: "Último",
+  },
+  missed_1: {
+    className: "border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-900 dark:bg-yellow-950 dark:text-yellow-300",
+    label: "1 falta",
+  },
+  missed_2: {
+    className: "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300",
+    label: "2 faltas",
+  },
+  missed_3: {
+    className: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
+    label: "3 faltas",
+  },
+  missed_4_plus: {
+    className: "border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-300",
+    label: "4+ faltas",
+  },
+  no_history: {
+    className: "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300",
+    label: "Sem histórico",
+  },
 };
 const mapSelectContentClassName = "z-[1100]";
-const markerStyle = "classic_pin";
+const markerStyle = "circle";
 
-function isMappedMember(member: Member): member is MappedMember {
+function isMappedMember(member: FrequencyMember): member is MappedMember {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
 }
 
@@ -84,9 +102,9 @@ function matchesAgeRange(age: number | null, minimum: number | null, maximum: nu
 }
 
 export default function MembersMapPage() {
-  const { currentWard, membersByWard } = useAppContext();
+  const { currentWard, memberAttendanceRecordsByWard, membersByWard } = useAppContext();
   const [search, setSearch] = useState("");
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [attendanceFilter, setAttendanceFilter] = useState<AttendanceFilter>("all");
   const [mappingFilter, setMappingFilter] = useState<MappingFilter>("all");
   const [sexFilter, setSexFilter] = useState<SexFilter>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
@@ -98,15 +116,34 @@ export default function MembersMapPage() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [fullScreenFiltersOpen, setFullScreenFiltersOpen] = useState(false);
 
-  const mappedMembers = useMemo(() => membersByWard.filter(isMappedMember), [membersByWard]);
-  const unmappedMembers = useMemo(() => membersByWard.filter((member) => !isMappedMember(member)), [membersByWard]);
+  const membersWithFrequency = useMemo<FrequencyMember[]>(() => {
+    const activeMemberIds = new Set(membersByWard.map((member) => member.id));
+    const attendanceRecords = filterAttendanceRecordsThroughDate(
+      memberAttendanceRecordsByWard.filter((record) => activeMemberIds.has(record.memberId)),
+      localTodayDate(),
+    );
+    if (!attendanceRecords.length) {
+      return membersByWard.map((member) => ({ ...member, attendanceBucketKey: "no_history" }));
+    }
+
+    const summariesByMemberId = new Map(
+      buildMemberAttendanceSummaries(membersByWard, attendanceRecords).map((summary) => [summary.member.id, summary]),
+    );
+
+    return membersByWard.map((member) => ({
+      ...member,
+      attendanceBucketKey: summariesByMemberId.get(member.id)?.bucketKey ?? "no_history",
+    }));
+  }, [memberAttendanceRecordsByWard, membersByWard]);
+  const mappedMembers = useMemo(() => membersWithFrequency.filter(isMappedMember), [membersWithFrequency]);
+  const unmappedMembers = useMemo(() => membersWithFrequency.filter((member) => !isMappedMember(member)), [membersWithFrequency]);
   const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
   const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
 
   const filteredMembers = useMemo(() => {
     const normalizedSearch = normalizeSearch(search);
 
-    return membersByWard.filter((member) => {
+    return membersWithFrequency.filter((member) => {
       const mapped = isMappedMember(member);
       const matchesSearch =
         !normalizedSearch ||
@@ -114,14 +151,14 @@ export default function MembersMapPage() {
         member.address.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
         member.phone.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
       const age = calculateAge(member.birthDate);
-      const matchesActivity = activityFilter === "all" || member.churchActivityStatus === activityFilter;
+      const matchesAttendance = attendanceFilter === "all" || member.attendanceBucketKey === attendanceFilter;
       const matchesMapping = mappingFilter === "all" || (mappingFilter === "mapped" ? mapped : !mapped);
       const matchesSex = sexFilter === "all" || member.sex === sexFilter;
       const matchesAge = matchesAgeRange(age, minimumAge, maximumAge);
 
-      return matchesSearch && matchesActivity && matchesMapping && matchesSex && matchesAge;
+      return matchesSearch && matchesAttendance && matchesMapping && matchesSex && matchesAge;
     });
-  }, [activityFilter, mappingFilter, maximumAge, membersByWard, minimumAge, search, sexFilter]);
+  }, [attendanceFilter, mappingFilter, maximumAge, membersWithFrequency, minimumAge, search, sexFilter]);
 
   const filteredMappedMembers = useMemo(() => filteredMembers.filter(isMappedMember), [filteredMembers]);
   const filteredUnmappedMembers = useMemo(() => filteredMembers.filter((member) => !isMappedMember(member)), [filteredMembers]);
@@ -182,16 +219,19 @@ export default function MembersMapPage() {
         </Select>
       </div>
       <div>
-        <Label className="text-xs">Condição</Label>
-        <Select value={activityFilter} onValueChange={(value) => setActivityFilter(value as ActivityFilter)}>
+        <Label className="text-xs">Situação</Label>
+        <Select value={attendanceFilter} onValueChange={(value) => setAttendanceFilter(value as AttendanceFilter)}>
           <SelectTrigger className="mt-1 w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent className={mapSelectContentClassName}>
-            <SelectItem value="all">Todas</SelectItem>
-            <SelectItem value="attending">Frequentando</SelectItem>
-            <SelectItem value="not_attending">Não frequentando</SelectItem>
-            <SelectItem value="away">Afastado</SelectItem>
+            <SelectItem value="all">Todas as situações</SelectItem>
+            <SelectItem value="present_last_sunday">Veio no último domingo</SelectItem>
+            <SelectItem value="missed_1">Faltou 1 domingo</SelectItem>
+            <SelectItem value="missed_2">Faltou 2 domingos</SelectItem>
+            <SelectItem value="missed_3">Faltou 3 domingos</SelectItem>
+            <SelectItem value="missed_4_plus">Não vêm há 4+ domingos</SelectItem>
+            <SelectItem value="no_history">Sem histórico importado</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -395,7 +435,7 @@ function StatTile({ compact, icon, label, value }: { compact?: boolean; icon: Re
   );
 }
 
-function MemberListButton({ member, onSelect, selected }: { member: Member; onSelect: (member: Member) => void; selected: boolean }) {
+function MemberListButton({ member, onSelect, selected }: { member: FrequencyMember; onSelect: (member: Member) => void; selected: boolean }) {
   const mapped = isMappedMember(member);
 
   return (
@@ -410,8 +450,8 @@ function MemberListButton({ member, onSelect, selected }: { member: Member; onSe
             <p className="truncate text-sm font-medium">{member.name}</p>
             <p className="truncate text-xs text-muted-foreground">{member.address || "Sem endereço informado"}</p>
           </div>
-          <Badge className={activityBadgeClassNames[member.churchActivityStatus]} variant="outline">
-            {activityLabels[member.churchActivityStatus]}
+          <Badge className={attendanceBadgeMeta[member.attendanceBucketKey].className} variant="outline">
+            {attendanceBadgeMeta[member.attendanceBucketKey].label}
           </Badge>
         </div>
       </button>

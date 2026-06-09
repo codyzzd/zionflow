@@ -5,18 +5,44 @@ import { useEffect, useMemo, useRef } from "react";
 import "leaflet.markercluster";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 
+import type { AttendanceBucketKey } from "@/lib/member-attendance-summary";
 import type { Member } from "@/types/domain";
 
-type MappedMember = Member & { latitude: number; longitude: number };
+export type MemberMapAttendanceBucket = AttendanceBucketKey | "no_history";
+type MappedMember = Member & { attendanceBucketKey: MemberMapAttendanceBucket; latitude: number; longitude: number };
+type MapMarkerMember = Pick<Member, "address" | "id" | "name"> & {
+  attendanceBucketKey: MemberMapAttendanceBucket;
+  latitude: number;
+  longitude: number;
+};
 export type MemberMapMarkerStyle = "classic_pin" | "compact_pin" | "circle";
-type MemberMarker = L.Marker & { memberActivityStatus?: Member["churchActivityStatus"] };
+type MemberMarker = L.Marker & { memberAttendanceBucket?: MemberMapAttendanceBucket };
 
 const fallbackCenter: [number, number] = [-14.235, -51.9253];
 
-const statusMeta: Record<Member["churchActivityStatus"], { className: string; label: string }> = {
-  away: { className: "member-map-marker-away", label: "Afastado" },
-  attending: { className: "member-map-marker-attending", label: "Frequentando" },
-  not_attending: { className: "member-map-marker-not-attending", label: "Não frequentando" },
+const attendanceMeta: Record<MemberMapAttendanceBucket, { className: string; label: string; priority: number }> = {
+  present_last_sunday: { className: "member-map-marker-present-last-sunday", label: "Veio no último domingo", priority: 0 },
+  missed_1: { className: "member-map-marker-missed-1", label: "Faltou 1 domingo", priority: 1 },
+  missed_2: { className: "member-map-marker-missed-2", label: "Faltou 2 domingos", priority: 2 },
+  missed_3: { className: "member-map-marker-missed-3", label: "Faltou 3 domingos", priority: 3 },
+  missed_4_plus: { className: "member-map-marker-missed-4-plus", label: "Não vem há 4+ domingos", priority: 4 },
+  no_history: { className: "member-map-marker-no-history", label: "Sem histórico importado", priority: -1 },
+};
+const attendanceBucketOrder: MemberMapAttendanceBucket[] = [
+  "present_last_sunday",
+  "missed_1",
+  "missed_2",
+  "missed_3",
+  "missed_4_plus",
+  "no_history",
+];
+const attendanceBucketColors: Record<MemberMapAttendanceBucket, string> = {
+  present_last_sunday: "#059669",
+  missed_1: "#ca8a04",
+  missed_2: "#ea580c",
+  missed_3: "#dc2626",
+  missed_4_plus: "#7e22ce",
+  no_history: "#71717a",
 };
 
 const markerStyleMeta: Record<MemberMapMarkerStyle, { className: string; iconAnchor: [number, number]; iconSize: [number, number]; popupAnchor: [number, number] }> = {
@@ -25,8 +51,8 @@ const markerStyleMeta: Record<MemberMapMarkerStyle, { className: string; iconAnc
   circle: { className: "member-map-marker-circle", iconAnchor: [10, 10], iconSize: [20, 20], popupAnchor: [0, -12] },
 };
 
-function createMarkerIcon(status: Member["churchActivityStatus"], selected: boolean, markerStyle: MemberMapMarkerStyle) {
-  const meta = statusMeta[status];
+function createMarkerIcon(attendanceBucket: MemberMapAttendanceBucket, selected: boolean, markerStyle: MemberMapMarkerStyle) {
+  const meta = attendanceMeta[attendanceBucket];
   const styleMeta = markerStyleMeta[markerStyle];
 
   return L.divIcon({
@@ -38,53 +64,100 @@ function createMarkerIcon(status: Member["churchActivityStatus"], selected: bool
   });
 }
 
-function getMarkerZIndexOffset(status: Member["churchActivityStatus"], selected: boolean) {
+function getMarkerZIndexOffset(attendanceBucket: MemberMapAttendanceBucket, selected: boolean) {
   if (selected) return 2000;
-  if (status === "attending") return 1000;
 
-  return 0;
+  return 1000 + attendanceMeta[attendanceBucket].priority * 100;
 }
 
 function createClusterIcon(cluster: L.MarkerCluster) {
   const count = cluster.getChildCount();
-  const statuses = cluster
+  const attendanceBuckets = cluster
     .getAllChildMarkers()
-    .map((marker) => (marker as MemberMarker).memberActivityStatus)
-    .filter((status): status is Member["churchActivityStatus"] => status === "attending" || status === "not_attending" || status === "away");
-  const hasAway = statuses.includes("away");
-  const hasAttending = statuses.includes("attending");
-  const hasNotAttending = statuses.includes("not_attending");
-  const presentStatusCount = [hasAway, hasAttending, hasNotAttending].filter(Boolean).length;
-  const statusClassName =
-    presentStatusCount > 1
-      ? `member-map-cluster-mixed-${hasAttending ? "attending" : ""}${hasNotAttending ? "not-attending" : ""}${hasAway ? "away" : ""}`
-      : hasAway
-        ? "member-map-cluster-away"
-        : hasAttending
-          ? "member-map-cluster-attending"
-          : "member-map-cluster-not-attending";
+    .map((marker) => (marker as MemberMarker).memberAttendanceBucket)
+    .filter((bucket): bucket is MemberMapAttendanceBucket => Boolean(bucket));
+  const counts = attendanceBuckets.reduce<Record<MemberMapAttendanceBucket, number>>(
+    (result, bucket) => ({ ...result, [bucket]: result[bucket] + 1 }),
+    {
+      present_last_sunday: 0,
+      missed_1: 0,
+      missed_2: 0,
+      missed_3: 0,
+      missed_4_plus: 0,
+      no_history: 0,
+    },
+  );
+  let cumulativePercent = 0;
+  const gradientSegments = attendanceBucketOrder.flatMap((bucket) => {
+    const bucketCount = counts[bucket];
+    if (!bucketCount) return [];
+
+    const startPercent = cumulativePercent;
+    cumulativePercent += (bucketCount / count) * 100;
+
+    return [`${attendanceBucketColors[bucket]} ${startPercent}% ${cumulativePercent}%`];
+  });
+  const gradient = `conic-gradient(${gradientSegments.join(", ")})`;
+  const breakdown = attendanceBucketOrder
+    .filter((bucket) => counts[bucket] > 0)
+    .map((bucket) => `${attendanceMeta[bucket].label}: ${counts[bucket]}`)
+    .join("; ");
+  const clusterStyle = [
+    `background:${gradient}`,
+    "border:3px solid #fff",
+    "border-radius:999px",
+    "box-shadow:0 0 0 3px rgb(63 63 70 / 0.9),0 10px 24px rgb(0 0 0 / 0.22)",
+    "box-sizing:border-box",
+    "color:#fff",
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
+    "font-size:0.75rem",
+    "font-variant-numeric:tabular-nums",
+    "font-weight:700",
+    "height:30px",
+    "line-height:1",
+    "margin:3px",
+    "text-shadow:0 1px 2px rgb(0 0 0 / 0.28)",
+    "width:30px",
+  ].join(";");
 
   return L.divIcon({
-    className: `member-map-cluster ${statusClassName}`,
-    html: `<span class="member-map-cluster-count"><span>+${count}</span></span>`,
-    iconAnchor: [18, 40],
-    iconSize: [36, 42],
+    className: "member-map-cluster-chart",
+    html: `<span title="${breakdown}" style="${clusterStyle}">+${count}</span>`,
+    iconAnchor: [18, 18],
+    iconSize: [36, 36],
   });
 }
 
-function createPopupContent(member: MappedMember) {
+function createPopupContent(member: MapMarkerMember) {
   const container = document.createElement("div");
   const name = document.createElement("strong");
   const status = document.createElement("span");
   const address = document.createElement("span");
 
   name.textContent = member.name;
-  status.textContent = statusMeta[member.churchActivityStatus].label;
+  status.textContent = attendanceMeta[member.attendanceBucketKey].label;
   address.textContent = member.address || "Endereço não informado";
 
   container.append(name, document.createElement("br"), status, document.createElement("br"), address);
 
   return container;
+}
+
+function serializeMapMarkerMembers(members: MappedMember[]) {
+  const markerMembers: MapMarkerMember[] = members
+    .map(({ address, attendanceBucketKey, id, latitude, longitude, name }) => ({
+      address,
+      attendanceBucketKey,
+      id,
+      latitude,
+      longitude,
+      name,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  return JSON.stringify(markerMembers);
 }
 
 function FlyToSelectedMember({ focusKey, member }: { focusKey: number; member?: MappedMember }) {
@@ -113,19 +186,21 @@ function MemberMarkerClusterLayer({
   selectedMemberId?: string;
 }) {
   const map = useMap();
+  const serializedMembers = serializeMapMarkerMembers(members);
   const markersByMemberIdRef = useRef(new Map<string, MemberMarker>());
 
   useEffect(() => {
     const markersByMemberId = markersByMemberIdRef.current;
+    const markerMembers = JSON.parse(serializedMembers) as MapMarkerMember[];
     markersByMemberId.clear();
 
-    const markers = members.map((member) => {
+    const markers = markerMembers.map((member) => {
       const marker = L.marker([member.latitude, member.longitude], {
-        icon: createMarkerIcon(member.churchActivityStatus, false, markerStyle),
-        zIndexOffset: getMarkerZIndexOffset(member.churchActivityStatus, false),
+        icon: createMarkerIcon(member.attendanceBucketKey, false, markerStyle),
+        zIndexOffset: getMarkerZIndexOffset(member.attendanceBucketKey, false),
       }) as MemberMarker;
 
-      marker.memberActivityStatus = member.churchActivityStatus;
+      marker.memberAttendanceBucket = member.attendanceBucketKey;
       marker.bindPopup(createPopupContent(member));
       marker.on("click", () => onSelectMember(member.id));
       markersByMemberId.set(member.id, marker);
@@ -160,16 +235,16 @@ function MemberMarkerClusterLayer({
       map.removeLayer(clusterGroup);
       markersByMemberId.clear();
     };
-  }, [clusterEnabled, map, markerStyle, members, onSelectMember]);
+  }, [clusterEnabled, map, markerStyle, onSelectMember, serializedMembers]);
 
   useEffect(() => {
     markersByMemberIdRef.current.forEach((marker, memberId) => {
-      const status = marker.memberActivityStatus;
-      if (!status) return;
+      const attendanceBucket = marker.memberAttendanceBucket;
+      if (!attendanceBucket) return;
 
       const selected = memberId === selectedMemberId;
-      marker.setIcon(createMarkerIcon(status, selected, markerStyle));
-      marker.setZIndexOffset(getMarkerZIndexOffset(status, selected));
+      marker.setIcon(createMarkerIcon(attendanceBucket, selected, markerStyle));
+      marker.setZIndexOffset(getMarkerZIndexOffset(attendanceBucket, selected));
     });
   }, [markerStyle, selectedMemberId]);
 
@@ -178,7 +253,7 @@ function MemberMarkerClusterLayer({
 
 export function MemberMapCanvas({
   clusterEnabled = false,
-  markerStyle = "classic_pin",
+  markerStyle = "circle",
   members,
   onSelectMember,
   selectedMemberFocusKey = 0,

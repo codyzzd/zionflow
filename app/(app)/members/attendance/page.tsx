@@ -21,23 +21,20 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import {
+  buildMemberAttendanceSummaries,
+  filterAttendanceRecordsThroughDate,
+  type AttendanceBucketKey,
+  type MemberAttendanceSummary,
+} from "@/lib/member-attendance-summary";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
-import { cn, normalizeDateInput } from "@/lib/utils";
-import type { Member, MemberAttendanceRecord } from "@/types/domain";
+import { cn, localTodayDate, normalizeDateInput } from "@/lib/utils";
+import type { Member } from "@/types/domain";
 
-type AttendanceBucketKey = "present_last_sunday" | "missed_1" | "missed_2" | "missed_3" | "missed_4_plus";
 type AttendanceBucketFilter = "all" | AttendanceBucketKey;
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
 type SexFilter = "all" | Member["sex"];
 type TalkDurationFilter = "all" | Member["sacramentTalkDuration"];
-
-type MemberAttendanceSummary = {
-  bucketKey: AttendanceBucketKey;
-  lastPresentDate: string | null;
-  member: Member;
-  missedSundays: number;
-  records: MemberAttendanceRecord[];
-};
 
 const attendanceBuckets: Array<{
   key: AttendanceBucketKey;
@@ -57,29 +54,29 @@ const attendanceBuckets: Array<{
     key: "missed_1",
     label: "Faltou 1 domingo",
     shortLabel: "1 domingo",
-    className: "bg-lime-500",
-    textClassName: "text-lime-700 dark:text-lime-300",
+    className: "bg-yellow-600",
+    textClassName: "text-yellow-700 dark:text-yellow-300",
   },
   {
     key: "missed_2",
     label: "Faltou 2 domingos",
     shortLabel: "2 domingos",
-    className: "bg-amber-500",
-    textClassName: "text-amber-700 dark:text-amber-300",
+    className: "bg-orange-600",
+    textClassName: "text-orange-700 dark:text-orange-300",
   },
   {
     key: "missed_3",
     label: "Faltou 3 domingos",
     shortLabel: "3 domingos",
-    className: "bg-orange-600",
-    textClassName: "text-orange-700 dark:text-orange-300",
+    className: "bg-red-600",
+    textClassName: "text-red-700 dark:text-red-300",
   },
   {
     key: "missed_4_plus",
     label: "Não vêm há 4+ domingos",
     shortLabel: "4+ domingos",
-    className: "bg-red-600",
-    textClassName: "text-red-700 dark:text-red-300",
+    className: "bg-purple-700",
+    textClassName: "text-purple-700 dark:text-purple-300",
   },
 ];
 
@@ -88,39 +85,6 @@ const coordinatesFilterLabels: Record<CoordinatesFilter, string> = {
   mapped: "Com coordenadas",
   unmapped: "Sem coordenadas",
 };
-
-function getAttendanceBucket(missedSundays: number): AttendanceBucketKey {
-  if (missedSundays <= 0) return "present_last_sunday";
-  if (missedSundays === 1) return "missed_1";
-  if (missedSundays === 2) return "missed_2";
-  if (missedSundays === 3) return "missed_3";
-
-  return "missed_4_plus";
-}
-
-function buildMemberAttendanceSummaries(members: Member[], records: MemberAttendanceRecord[]): MemberAttendanceSummary[] {
-  const sundayDates = [...new Set(records.map((record) => record.date).filter(Boolean))].sort((a, b) => b.localeCompare(a));
-  const recordsByMember = new Map<string, MemberAttendanceRecord[]>();
-
-  records.forEach((record) => {
-    recordsByMember.set(record.memberId, [...(recordsByMember.get(record.memberId) ?? []), record]);
-  });
-
-  return members.map((member) => {
-    const memberRecords = [...(recordsByMember.get(member.id) ?? [])].sort((a, b) => b.date.localeCompare(a.date));
-    const presentDates = new Set(memberRecords.filter((record) => record.present).map((record) => record.date));
-    const lastPresentIndex = sundayDates.findIndex((date) => presentDates.has(date));
-    const missedSundays = lastPresentIndex >= 0 ? lastPresentIndex : sundayDates.length;
-
-    return {
-      bucketKey: getAttendanceBucket(missedSundays),
-      lastPresentDate: lastPresentIndex >= 0 ? sundayDates[lastPresentIndex] : null,
-      member,
-      missedSundays,
-      records: memberRecords,
-    };
-  });
-}
 
 function calculateAge(birthDate: string) {
   const normalizedDate = normalizeDateInput(birthDate);
@@ -171,9 +135,14 @@ export default function MemberAttendancePage() {
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
 
   const activeMemberIds = useMemo(() => new Set(membersByWard.map((member) => member.id)), [membersByWard]);
+  const attendanceReferenceDate = localTodayDate();
   const activeMemberAttendanceRecords = useMemo(
-    () => memberAttendanceRecordsByWard.filter((record) => activeMemberIds.has(record.memberId)),
-    [activeMemberIds, memberAttendanceRecordsByWard],
+    () =>
+      filterAttendanceRecordsThroughDate(
+        memberAttendanceRecordsByWard.filter((record) => activeMemberIds.has(record.memberId)),
+        attendanceReferenceDate,
+      ),
+    [activeMemberIds, attendanceReferenceDate, memberAttendanceRecordsByWard],
   );
   const latestAttendanceUpdateAt = useMemo(
     () =>

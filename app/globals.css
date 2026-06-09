@@ -322,6 +322,12 @@ html.dark {
 }
 
 .member-map-marker {
+  --member-map-emerald: #059669;
+  --member-map-yellow: #ca8a04;
+  --member-map-orange: #ea580c;
+  --member-map-red: #dc2626;
+  --member-map-purple: #7e22ce;
+  --member-map-zinc: #71717a;
   align-items: center;
   background: transparent;
   display: flex;
@@ -417,20 +423,28 @@ html.dark {
   width: 5px;
 }
 
-.member-map-marker-attending span {
-  background: var(--color-emerald-500);
+.member-map-marker-present-last-sunday span {
+  background: var(--member-map-emerald);
 }
 
-.member-map-marker-not-attending span {
-  background: var(--color-red-500);
+.member-map-marker-missed-1 span {
+  background: var(--member-map-yellow);
 }
 
-.member-map-marker-away span {
-  background: var(--color-zinc-950);
+.member-map-marker-missed-2 span {
+  background: var(--member-map-orange);
 }
 
-.member-map-marker-unknown span {
-  background: var(--color-zinc-500);
+.member-map-marker-missed-3 span {
+  background: var(--member-map-red);
+}
+
+.member-map-marker-missed-4-plus span {
+  background: var(--member-map-purple);
+}
+
+.member-map-marker-no-history span {
+  background: var(--member-map-zinc);
 }
 
 .member-map-marker-selected span {
@@ -443,67 +457,6 @@ html.dark {
 .member-map-marker-selected.member-map-marker-classic-pin span,
 .member-map-marker-selected.member-map-marker-compact-pin span {
   transform: rotate(-45deg) scale(1.18);
-}
-
-.member-map-cluster {
-  align-items: center;
-  background: transparent;
-  display: flex;
-  justify-content: center;
-  overflow: visible;
-}
-
-.member-map-cluster-count {
-  align-items: center;
-  border: 2px solid var(--color-white);
-  border-radius: 50% 50% 50% 0;
-  box-shadow:
-    0 0 0 4px color-mix(in oklab, var(--background) 50%, transparent),
-    0 10px 24px rgb(0 0 0 / 0.22);
-  color: var(--color-white);
-  display: flex;
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  height: 30px;
-  justify-content: center;
-  line-height: 1;
-  min-width: 30px;
-  padding-inline: 0.25rem;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 0.28);
-  transform: rotate(-45deg);
-}
-
-.member-map-cluster-count > span {
-  transform: rotate(45deg);
-}
-
-.member-map-cluster-attending .member-map-cluster-count {
-  background: var(--color-emerald-500);
-}
-
-.member-map-cluster-not-attending .member-map-cluster-count {
-  background: var(--color-red-500);
-}
-
-.member-map-cluster-away .member-map-cluster-count {
-  background: var(--color-zinc-950);
-}
-
-.member-map-cluster-mixed-attendingnot-attending .member-map-cluster-count {
-  background: linear-gradient(135deg, var(--color-emerald-500) 0 48%, var(--color-red-500) 52% 100%);
-}
-
-.member-map-cluster-mixed-attendingaway .member-map-cluster-count {
-  background: linear-gradient(135deg, var(--color-emerald-500) 0 48%, var(--color-zinc-950) 52% 100%);
-}
-
-.member-map-cluster-mixed-not-attendingaway .member-map-cluster-count {
-  background: linear-gradient(135deg, var(--color-red-500) 0 48%, var(--color-zinc-950) 52% 100%);
-}
-
-.member-map-cluster-mixed-attendingnot-attendingaway .member-map-cluster-count {
-  background: conic-gradient(var(--color-emerald-500) 0 33%, var(--color-red-500) 33% 66%, var(--color-zinc-950) 66% 100%);
 }
 
 @media print {

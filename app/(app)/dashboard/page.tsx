@@ -9,58 +9,49 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { cn, todayDate } from "@/lib/utils";
-import type { ChurchActivityStatus, LunchSchedule, MissionaryCompanionship, SacramentMinute, Weekday } from "@/types/domain";
+import { buildMemberAttendanceSummaries, filterAttendanceRecordsThroughDate, type AttendanceBucketKey } from "@/lib/member-attendance-summary";
+import { cn, localTodayDate, todayDate } from "@/lib/utils";
+import type { LunchSchedule, MissionaryCompanionship, SacramentMinute, Weekday } from "@/types/domain";
 
 const weekdaysByIndex: Weekday[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-const memberStatusMeta: Array<{
-  status: ChurchActivityStatus;
+const memberAttendanceMeta: Array<{
+  key: AttendanceBucketKey;
   label: string;
   barClassName: string;
-  dotClassName: string;
   textClassName: string;
 }> = [
   {
-    status: "attending",
-    label: "Frequentando",
-    barClassName: "bg-emerald-500",
-    dotClassName: "bg-emerald-500",
+    key: "present_last_sunday",
+    label: "Último",
+    barClassName: "bg-emerald-600",
     textClassName: "text-emerald-600 dark:text-emerald-400",
   },
   {
-    status: "not_attending",
-    label: "Não frequentando",
-    barClassName: "bg-red-500",
-    dotClassName: "bg-red-500",
-    textClassName: "text-red-600 dark:text-red-400",
+    key: "missed_1",
+    label: "1 falta",
+    barClassName: "bg-yellow-600",
+    textClassName: "text-yellow-700 dark:text-yellow-300",
   },
   {
-    status: "away",
-    label: "Afastados",
-    barClassName: "bg-zinc-400 dark:bg-zinc-500",
-    dotClassName: "bg-zinc-400 dark:bg-zinc-500",
-    textClassName: "text-muted-foreground",
+    key: "missed_2",
+    label: "2 faltas",
+    barClassName: "bg-orange-600",
+    textClassName: "text-orange-700 dark:text-orange-300",
+  },
+  {
+    key: "missed_3",
+    label: "3 faltas",
+    barClassName: "bg-red-600",
+    textClassName: "text-red-700 dark:text-red-300",
+  },
+  {
+    key: "missed_4_plus",
+    label: "4+ faltas",
+    barClassName: "bg-purple-700",
+    textClassName: "text-purple-700 dark:text-purple-300",
   },
 ];
-
-function distributePercentages(values: number[]) {
-  const total = values.reduce((sum, value) => sum + value, 0);
-  if (!total) return values.map(() => 0);
-
-  const exact = values.map((value) => (value / total) * 100);
-  const roundedDown = exact.map(Math.floor);
-  const remaining = 100 - roundedDown.reduce((sum, value) => sum + value, 0);
-  const remainderOrder = exact
-    .map((value, index) => ({ index, remainder: value - roundedDown[index] }))
-    .sort((a, b) => b.remainder - a.remainder);
-
-  for (let index = 0; index < remaining; index += 1) {
-    roundedDown[remainderOrder[index].index] += 1;
-  }
-
-  return roundedDown;
-}
 
 function dateKey(date: Date) {
   const year = date.getFullYear();
@@ -193,14 +184,24 @@ export default function DashboardPage() {
     companionshipsByWard,
     currentWard,
     lunchSchedulesByWard,
+    memberAttendanceRecordsByWard,
     membersByWard,
     minutesByWard,
   } = useAppContext();
   const { formatDate } = useDateFormatter();
 
-  const memberCounts = memberStatusMeta.map(({ status }) => membersByWard.filter((member) => member.churchActivityStatus === status).length);
-  const memberPercentages = distributePercentages(memberCounts);
-  const rawMemberPercentages = memberCounts.map((count) => (membersByWard.length ? (count / membersByWard.length) * 100 : 0));
+  const activeMemberIds = new Set(membersByWard.map((member) => member.id));
+  const attendanceRecords = filterAttendanceRecordsThroughDate(
+    memberAttendanceRecordsByWard.filter((record) => activeMemberIds.has(record.memberId)),
+    localTodayDate(),
+  );
+  const memberAttendanceSummaries = buildMemberAttendanceSummaries(membersByWard, attendanceRecords);
+  const memberAttendanceCounts = memberAttendanceMeta.map(
+    ({ key }) => memberAttendanceSummaries.filter((summary) => summary.bucketKey === key).length,
+  );
+  const memberAttendancePercentages = memberAttendanceCounts.map((count) =>
+    membersByWard.length ? (count / membersByWard.length) * 100 : 0,
+  );
   const lunchCoverage = calculateLunchCoverage(
     companionshipsByWard,
     lunchSchedulesByWard,
@@ -225,59 +226,53 @@ export default function DashboardPage() {
         />
 
         <div className="grid gap-4 xl:grid-cols-2">
-          <DashboardLinkCard href="/members" label="Abrir membros">
+          <DashboardLinkCard href="/members/attendance" label="Abrir frequência dos membros">
             <CardHeader className="grid-cols-[1fr_auto]">
               <div>
-                <CardTitle>Situação dos membros</CardTitle>
-                <CardDescription>Distribuição atual da frequência cadastrada</CardDescription>
+                <CardTitle>Frequência dos membros</CardTitle>
+                <CardDescription>Presença nos últimos domingos importados</CardDescription>
               </div>
               <div className="flex size-10 items-center justify-center rounded-lg bg-secondary text-primary">
                 <Users className="size-5" />
               </div>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col">
-              {membersByWard.length ? (
+              {membersByWard.length && attendanceRecords.length ? (
                 <>
                   <div className="mb-3 flex items-end justify-between gap-3">
                     <div>
                       <p className="text-3xl font-semibold tabular-nums">{membersByWard.length}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">membros cadastrados</p>
+                      <p className="mt-1 text-sm text-muted-foreground">membros acompanhados</p>
                     </div>
                     <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </div>
 
                   <div
-                    aria-label={`${memberCounts[0]} frequentando, ${memberCounts[1]} não frequentando e ${memberCounts[2]} afastados`}
+                    aria-label={`${memberAttendanceCounts[0]} vieram no último domingo; ${memberAttendanceCounts[1]} faltaram 1; ${memberAttendanceCounts[2]} faltaram 2; ${memberAttendanceCounts[3]} faltaram 3; ${memberAttendanceCounts[4]} faltaram 4 ou mais domingos`}
                     className="flex h-4 w-full overflow-hidden rounded-full bg-muted"
                     role="img"
                   >
-                    {memberStatusMeta.map((item, index) => (
+                    {memberAttendanceMeta.map((item, index) => (
                       <span
                         className={cn("h-full first:rounded-l-full last:rounded-r-full", item.barClassName)}
-                        key={item.status}
-                        style={{ width: `${rawMemberPercentages[index]}%` }}
+                        key={item.key}
+                        style={{ width: `${memberAttendancePercentages[index]}%` }}
                       />
                     ))}
                   </div>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                    {memberStatusMeta.map((item, index) => (
-                      <div className="rounded-lg bg-muted/45 p-3" key={item.status}>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <span className={cn("size-2 rounded-full", item.dotClassName)} />
-                          <span>{item.label}</span>
-                        </div>
-                        <div className="mt-2 flex items-baseline justify-between gap-2">
-                          <span className={cn("text-xl font-semibold tabular-nums", item.textClassName)}>{memberCounts[index]}</span>
-                          <span className="text-xs text-muted-foreground tabular-nums">{memberPercentages[index]}%</span>
-                        </div>
+                  <div className="mt-5 grid grid-cols-5 gap-2">
+                    {memberAttendanceMeta.map((item, index) => (
+                      <div className="min-w-0 rounded-lg bg-muted/45 px-2 py-3 text-center" key={item.key}>
+                        <div className={cn("text-xl font-semibold tabular-nums", item.textClassName)}>{memberAttendanceCounts[index]}</div>
+                        <div className="mt-1 truncate text-[11px] text-muted-foreground">{item.label}</div>
                       </div>
                     ))}
                   </div>
                 </>
               ) : (
                 <div className="flex min-h-44 flex-1 items-center justify-center rounded-lg bg-muted/40 px-4 text-center text-sm text-muted-foreground">
-                  Nenhum membro cadastrado para gerar a distribuição.
+                  {membersByWard.length ? "Importe o histórico de frequência para visualizar os últimos domingos." : "Nenhum membro cadastrado para gerar o resumo."}
                 </div>
               )}
             </CardContent>
