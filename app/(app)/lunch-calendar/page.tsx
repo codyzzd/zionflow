@@ -11,9 +11,11 @@ import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DatePicker } from "@/components/ui/date-picker";
 import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +47,8 @@ type LunchForm = {
 type LegacyLunchSchedule = LunchSchedule & {
   hostHouseId?: string;
 };
+
+type LunchListScope = "complete" | "missing";
 
 type CompanionshipSelectProps = {
   companionships: LunchCompanionshipSnapshot[];
@@ -254,6 +258,9 @@ export default function LunchCalendarPage() {
   const [monthDate, setMonthDate] = useState(() => parseDate(todayDate()));
   const [selectedDate, setSelectedDate] = useState(todayDate());
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
+  const [lunchListScope, setLunchListScope] = useState<LunchListScope>("complete");
+  const [omitCompanionships, setOmitCompanionships] = useState(false);
   const [lunchForm, setLunchForm] = useState<LunchForm>({ ...emptyLunchForm, date: todayDate() });
   const [error, setError] = useState("");
 
@@ -514,16 +521,19 @@ export default function LunchCalendarPage() {
     deleteLunchSchedule(lunch.id);
   }
 
-  async function copyMonthLunchList() {
+  function buildMonthLunchList() {
     const lines = [`Calendário de almoços missionários - ${monthLabel(monthDate)}`, ""];
 
     for (const item of visibleMonthDates) {
       const lunches = lunchesByDate.get(item.key) ?? [];
+      const missingCompanionships = getMissingCompanionshipsForDate(item.key);
 
       if (isPDayDate(item.date)) {
-        lines.push(`${item.day}. P-DAY`);
+        if (lunchListScope === "complete") lines.push(`${item.day}. P-DAY`);
         continue;
       }
+
+      if (lunchListScope === "missing" && activeCompanionships.length && !missingCompanionships.length) continue;
 
       if (!activeCompanionships.length) {
         lines.push(`${item.day}. Nenhuma dupla ativa cadastrada`);
@@ -531,26 +541,37 @@ export default function LunchCalendarPage() {
       }
 
       const scheduledText = lunches.map((lunch) => {
+        if (omitCompanionships) return getLunchHostLabel(lunch);
+
         const companionshipNames = getLunchCompanionships(lunch)
           .map((companionship) => companionship.name)
           .join(", ");
 
         return `${getLunchHostLabel(lunch)} - ${companionshipNames || "Dupla não definida"}`;
       });
-      const missingNames = getMissingCompanionshipsForDate(item.key).map((companionship) => companionship.name);
+      const missingNames = missingCompanionships.map((companionship) => companionship.name);
 
       if (!scheduledText.length) {
-        lines.push(`${item.day}. Sem almoço ainda - faltam: ${missingNames.join(", ")}`);
+        lines.push(omitCompanionships ? `${item.day}. Sem almoço ainda` : `${item.day}. Sem almoço ainda - faltam: ${missingNames.join(", ")}`);
       } else if (missingNames.length) {
-        lines.push(`${item.day}. ${scheduledText.join(" / ")} / Faltam: ${missingNames.join(", ")}`);
+        lines.push(
+          omitCompanionships
+            ? `${item.day}. ${scheduledText.join(" / ")} / Ainda faltam almoços`
+            : `${item.day}. ${scheduledText.join(" / ")} / Faltam: ${missingNames.join(", ")}`,
+        );
       } else {
         lines.push(`${item.day}. ${scheduledText.join(" / ")}`);
       }
     }
 
+    return lines.join("\n");
+  }
+
+  async function copyMonthLunchList() {
     try {
-      await navigator.clipboard.writeText(lines.join("\n"));
+      await navigator.clipboard.writeText(buildMonthLunchList());
       toast.success("Lista de almoços copiada.");
+      setCopyDialogOpen(false);
     } catch {
       toast.error("Não foi possível copiar a lista.");
     }
@@ -564,10 +585,67 @@ export default function LunchCalendarPage() {
         description="Calendário mensal com família anfitriã, duplas e status de confirmação em cada almoço."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button onClick={copyMonthLunchList} size="lg" variant="outline">
-              <Copy />
-              Copiar lista
-            </Button>
+            <Dialog open={copyDialogOpen} onOpenChange={setCopyDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="lg" variant="outline">
+                  <Copy />
+                  Copiar lista
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Copiar lista de almoços</DialogTitle>
+                  <DialogDescription>Configure o conteúdo que será copiado para compartilhar.</DialogDescription>
+                </DialogHeader>
+
+                <div className="grid gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="lunch-list-scope">Conteúdo da lista</Label>
+                    <Select value={lunchListScope} onValueChange={(value) => setLunchListScope(value as LunchListScope)}>
+                      <SelectTrigger className="w-full" id="lunch-list-scope">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="complete">Lista completa</SelectItem>
+                        <SelectItem value="missing">Somente dias que faltam</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-start gap-3 rounded-lg border p-3">
+                    <Checkbox
+                      checked={omitCompanionships}
+                      id="omit-lunch-companionships"
+                      onCheckedChange={(checked) => setOmitCompanionships(checked === true)}
+                    />
+                    <div className="grid gap-1">
+                      <Label htmlFor="omit-lunch-companionships">Omitir nomes das duplas</Label>
+                      <p className="text-xs text-muted-foreground">Mostra somente os membros ou famílias anfitriãs em cada dia.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="lunch-list-preview">Prévia</Label>
+                    <Textarea
+                      className="max-h-72 min-h-48 resize-none font-mono text-xs leading-relaxed"
+                      id="lunch-list-preview"
+                      readOnly
+                      value={buildMonthLunchList()}
+                    />
+                  </div>
+                </div>
+
+                <DialogFooter>
+                  <Button onClick={() => setCopyDialogOpen(false)} variant="outline">
+                    Cancelar
+                  </Button>
+                  <Button onClick={copyMonthLunchList}>
+                    <Copy />
+                    Copiar lista
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
             {canManageLunches ? (
               <Button onClick={() => openCreateDrawer()} size="lg">
                 <Plus />
