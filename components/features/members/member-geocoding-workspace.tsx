@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { parseCoordinateInput, sanitizeCoordinateInput } from "@/lib/coordinates";
+import { formatCoordinatesInput, parseCoordinatesInput } from "@/lib/coordinates";
 import { TALK_DURATION_OPTIONS } from "@/lib/member-talk-duration";
 import { cn, normalizeDateInput, nowIso } from "@/lib/utils";
 import type { Member } from "@/types/domain";
@@ -32,10 +32,6 @@ type MemberGeocodeState = {
   status: MemberGeocodeStatus;
 };
 type AddressSaveStatus = "idle" | "saving" | "saved";
-type CoordinateDraft = {
-  latitude: string;
-  longitude: string;
-};
 type CoordinateSaveStatus = "idle" | "saving" | "saved";
 type GeocodingFilter = "pending" | "not_attempted" | "no_result" | "error" | "skipped";
 type RunGeocodeOptions = {
@@ -71,10 +67,6 @@ function getMemberDisplayState(member: Member, statesByMemberId: Record<string, 
 
 function normalizeAddress(address: string) {
   return address.trim().replace(/\s+/g, " ");
-}
-
-function formatCoordinateDraft(value: number | undefined) {
-  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
 }
 
 function calculateAge(birthDate: string) {
@@ -121,7 +113,7 @@ export function MemberGeocodingWorkspace() {
   const [statesByMemberId, setStatesByMemberId] = useState<Record<string, MemberGeocodeState>>({});
   const [addressDraftsByMemberId, setAddressDraftsByMemberId] = useState<Record<string, string>>({});
   const [addressSaveStatusesByMemberId, setAddressSaveStatusesByMemberId] = useState<Record<string, AddressSaveStatus>>({});
-  const [coordinateDraftsByMemberId, setCoordinateDraftsByMemberId] = useState<Record<string, CoordinateDraft>>({});
+  const [coordinateDraftsByMemberId, setCoordinateDraftsByMemberId] = useState<Record<string, string>>({});
   const [coordinateSaveStatusesByMemberId, setCoordinateSaveStatusesByMemberId] = useState<Record<string, CoordinateSaveStatus>>({});
   const [batchRunning, setBatchRunning] = useState(false);
   const [search, setSearch] = useState("");
@@ -175,10 +167,9 @@ export function MemberGeocodingWorkspace() {
   const selectedNormalizedAddress = normalizeAddress(selectedAddress);
   const selectedAddressDirty = selectedMember ? selectedNormalizedAddress !== normalizeAddress(selectedMember.address) : false;
   const selectedAddressSaveStatus = selectedMember ? addressSaveStatusesByMemberId[selectedMember.id] ?? "idle" : "idle";
-  const selectedCoordinateDraft = selectedMember ? coordinateDraftFor(selectedMember) : { latitude: "", longitude: "" };
-  const selectedLatitude = parseCoordinateInput(selectedCoordinateDraft.latitude);
-  const selectedLongitude = parseCoordinateInput(selectedCoordinateDraft.longitude);
-  const selectedCoordinatesValid = typeof selectedLatitude === "number" && typeof selectedLongitude === "number";
+  const selectedCoordinateDraft = selectedMember ? coordinateDraftFor(selectedMember) : "";
+  const selectedCoordinates = parseCoordinatesInput(selectedCoordinateDraft);
+  const selectedCoordinatesValid = Boolean(selectedCoordinates);
   const selectedCoordinateSaveStatus = selectedMember ? coordinateSaveStatusesByMemberId[selectedMember.id] ?? "idle" : "idle";
   const selectedMembersWithEmptyAddress = selectedMembers.filter((member) => !normalizeAddress(addressDraftsByMemberId[member.id] ?? member.address));
   const metricMembers = hasBatchSnapshot ? batchMembers : filteredCandidates;
@@ -246,13 +237,8 @@ export function MemberGeocodingWorkspace() {
     return addressDraftsByMemberId[member.id] ?? member.address;
   }
 
-  function coordinateDraftFor(member: Member): CoordinateDraft {
-    return (
-      coordinateDraftsByMemberId[member.id] ?? {
-        latitude: formatCoordinateDraft(member.latitude),
-        longitude: formatCoordinateDraft(member.longitude),
-      }
-    );
+  function coordinateDraftFor(member: Member) {
+    return coordinateDraftsByMemberId[member.id] ?? formatCoordinatesInput(member.latitude, member.longitude);
   }
 
   function memberWithDraftAddress(member: Member) {
@@ -297,22 +283,8 @@ export function MemberGeocodingWorkspace() {
     clearRuntimeState(memberId);
   }
 
-  function updateCoordinateDraft(member: Member, field: keyof CoordinateDraft, value: string) {
-    setCoordinateDraftsByMemberId((current) => {
-      const existing =
-        current[member.id] ?? {
-          latitude: formatCoordinateDraft(member.latitude),
-          longitude: formatCoordinateDraft(member.longitude),
-        };
-
-      return {
-        ...current,
-        [member.id]: {
-          ...existing,
-          [field]: sanitizeCoordinateInput(value),
-        },
-      };
-    });
+  function updateCoordinateDraft(member: Member, value: string) {
+    setCoordinateDraftsByMemberId((current) => ({ ...current, [member.id]: value }));
     setCoordinateSaveStatusesByMemberId((current) => {
       if (!current[member.id]) return current;
 
@@ -355,10 +327,9 @@ export function MemberGeocodingWorkspace() {
 
   async function saveManualCoordinates(member: Member) {
     const coordinateDraft = coordinateDraftFor(member);
-    const latitude = parseCoordinateInput(coordinateDraft.latitude);
-    const longitude = parseCoordinateInput(coordinateDraft.longitude);
+    const coordinates = parseCoordinatesInput(coordinateDraft);
 
-    if (typeof latitude !== "number" || typeof longitude !== "number") {
+    if (!coordinates) {
       setMemberState(member.id, { error: "Informe latitude e longitude válidas antes de salvar.", status: "error" });
       return;
     }
@@ -372,8 +343,7 @@ export function MemberGeocodingWorkspace() {
         geocodingError: undefined,
         geocodingQuery: undefined,
         geocodingStatus: undefined,
-        latitude,
-        longitude,
+        ...coordinates,
       },
       "Coordenadas informadas, mas não foram salvas no Supabase.",
     );
@@ -390,10 +360,7 @@ export function MemberGeocodingWorkspace() {
     setAddressDraftsByMemberId((current) => ({ ...current, [member.id]: memberToSave.address }));
     setCoordinateDraftsByMemberId((current) => ({
       ...current,
-      [member.id]: {
-        latitude: String(latitude),
-        longitude: String(longitude),
-      },
+      [member.id]: formatCoordinatesInput(coordinates.latitude, coordinates.longitude),
     }));
     setCoordinateSaveStatusesByMemberId((current) => ({ ...current, [member.id]: "saved" }));
     setMemberState(member.id, { status: "saved" });
@@ -782,41 +749,24 @@ export function MemberGeocodingWorkspace() {
                   {selectedAddressSaveStatus === "saved" && !selectedAddressDirty ? (
                     <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">Endereço salvo na ficha do membro.</p>
                   ) : null}
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground" htmlFor={`member-geocoding-latitude-${selectedMember.id}`}>
-                        Latitude
-                      </label>
-                      <Input
-                        className="mt-1"
-                        disabled={selectedState.status === "loading" || batchRunning || selectedCoordinateSaveStatus === "saving"}
-                        id={`member-geocoding-latitude-${selectedMember.id}`}
-                        inputMode="decimal"
-                        placeholder="ex: -3.7319"
-                        value={selectedCoordinateDraft.latitude}
-                        onChange={(event) => updateCoordinateDraft(selectedMember, "latitude", event.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground" htmlFor={`member-geocoding-longitude-${selectedMember.id}`}>
-                        Longitude
-                      </label>
-                      <Input
-                        className="mt-1"
-                        disabled={selectedState.status === "loading" || batchRunning || selectedCoordinateSaveStatus === "saving"}
-                        id={`member-geocoding-longitude-${selectedMember.id}`}
-                        inputMode="decimal"
-                        placeholder="ex: -38.5267"
-                        value={selectedCoordinateDraft.longitude}
-                        onChange={(event) => updateCoordinateDraft(selectedMember, "longitude", event.target.value)}
-                      />
-                    </div>
+                  <div className="mt-4">
+                    <label className="block text-xs font-medium text-muted-foreground" htmlFor={`member-geocoding-coordinates-${selectedMember.id}`}>
+                      Coordenadas
+                    </label>
+                    <Input
+                      className="mt-1 tabular-nums"
+                      disabled={selectedState.status === "loading" || batchRunning || selectedCoordinateSaveStatus === "saving"}
+                      id={`member-geocoding-coordinates-${selectedMember.id}`}
+                      placeholder="ex: -7.1230045944912455, -34.83663470000887"
+                      value={selectedCoordinateDraft}
+                      onChange={(event) => updateCoordinateDraft(selectedMember, event.target.value)}
+                    />
                   </div>
                   {selectedCoordinateSaveStatus === "saved" ? (
                     <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">Coordenadas manuais salvas na ficha do membro.</p>
                   ) : null}
-                  {(selectedCoordinateDraft.latitude || selectedCoordinateDraft.longitude) && !selectedCoordinatesValid ? (
-                    <p className="mt-1 text-xs text-destructive">Informe latitude e longitude válidas para salvar manualmente.</p>
+                  {selectedCoordinateDraft.trim() && !selectedCoordinatesValid ? (
+                    <p className="mt-1 text-xs text-destructive">Informe latitude e longitude no formato: -7.123, -34.836.</p>
                   ) : null}
                 </div>
                 <StatusBadge status={selectedState.status} />

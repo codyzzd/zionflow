@@ -18,7 +18,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { parseCoordinateInput } from "@/lib/coordinates";
+import { formatCoordinatesInput, parseCoordinatesInput } from "@/lib/coordinates";
 import { cn } from "@/lib/utils";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
@@ -153,9 +153,12 @@ export default function SystemWardsPage() {
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [form, setForm] = useState<WardForm>(() => createEmptyForm());
+  const [coordinatesInput, setCoordinatesInput] = useState("");
 
   const isReadOnly = drawerMode === "view";
   const selectedWardIsArchived = Boolean(selectedWard?.archivedAt);
+  const parsedCoordinates = parseCoordinatesInput(coordinatesInput);
+  const coordinatesInputInvalid = Boolean(coordinatesInput.trim()) && !parsedCoordinates;
 
   const filteredWards = useMemo(
     () =>
@@ -181,6 +184,7 @@ export default function SystemWardsPage() {
     setSelectedWard(null);
     setDrawerMode("create");
     setForm(createEmptyForm());
+    setCoordinatesInput("");
   }
 
   function handleDrawerOpenChange(open: boolean) {
@@ -192,6 +196,7 @@ export default function SystemWardsPage() {
     setSelectedWard(null);
     setDrawerMode("create");
     setForm(createEmptyForm());
+    setCoordinatesInput("");
     setDrawerOpen(true);
   }
 
@@ -199,6 +204,7 @@ export default function SystemWardsPage() {
     setSelectedWard(ward);
     setDrawerMode("view");
     setForm(wardToForm(ward));
+    setCoordinatesInput(formatCoordinatesInput(ward.latitude, ward.longitude));
     setDrawerOpen(true);
   }
 
@@ -206,6 +212,7 @@ export default function SystemWardsPage() {
     setSelectedWard(ward);
     setDrawerMode("edit");
     setForm(wardToForm(ward));
+    setCoordinatesInput(formatCoordinatesInput(ward.latitude, ward.longitude));
     setDrawerOpen(true);
   }
 
@@ -214,7 +221,7 @@ export default function SystemWardsPage() {
   }
 
   function saveCurrentWard() {
-    if (!form.name.trim()) return;
+    if (!form.name.trim() || coordinatesInputInvalid) return;
 
     saveSystemWard({
       id: selectedWard?.id,
@@ -226,6 +233,17 @@ export default function SystemWardsPage() {
       country: form.country.trim() || "Brasil",
     });
     closeDrawer();
+  }
+
+  function updateCoordinatesInput(value: string) {
+    setCoordinatesInput(value);
+    const coordinates = parseCoordinatesInput(value);
+
+    if (coordinates) {
+      setForm((current) => ({ ...current, ...coordinates }));
+    } else if (!value.trim()) {
+      setForm((current) => ({ ...current, latitude: undefined, longitude: undefined }));
+    }
   }
 
   const columns = useMemo<ColumnDef<Ward>[]>(
@@ -359,13 +377,18 @@ export default function SystemWardsPage() {
                   <Label>País</Label>
                   <Input disabled={isReadOnly} value={form.country} onChange={(event) => setForm((current) => ({ ...current, country: event.target.value }))} />
                 </div>
-                <div>
-                  <Label>Latitude</Label>
-                  <Input disabled={isReadOnly} inputMode="decimal" value={form.latitude ?? ""} onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))} />
-                </div>
-                <div>
-                  <Label>Longitude</Label>
-                  <Input disabled={isReadOnly} inputMode="decimal" value={form.longitude ?? ""} onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))} />
+                <div className="sm:col-span-2">
+                  <Label>Coordenadas</Label>
+                  <Input
+                    className="tabular-nums"
+                    disabled={isReadOnly}
+                    placeholder="ex: -7.1230045944912455, -34.83663470000887"
+                    value={coordinatesInput}
+                    onChange={(event) => updateCoordinatesInput(event.target.value)}
+                  />
+                  {coordinatesInputInvalid ? (
+                    <p className="mt-1 text-xs text-destructive">Informe latitude e longitude no formato: -7.123, -34.836.</p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -405,7 +428,7 @@ export default function SystemWardsPage() {
                   </Button>
                   {isReadOnly && selectedWard ? <Button onClick={() => openEditDrawer(selectedWard)}>Editar ala</Button> : null}
                   {!isReadOnly ? (
-                    <Button disabled={!form.name.trim()} onClick={saveCurrentWard}>
+                    <Button disabled={!form.name.trim() || coordinatesInputInvalid} onClick={saveCurrentWard}>
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar ala"}
                     </Button>
                   ) : null}

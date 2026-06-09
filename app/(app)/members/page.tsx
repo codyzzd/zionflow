@@ -48,7 +48,7 @@ import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { parseCoordinateInput } from "@/lib/coordinates";
+import { formatCoordinatesInput, parseCoordinatesInput } from "@/lib/coordinates";
 import { resolvePersistedMemberFrequencyStatus } from "@/lib/member-attendance";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { buildMemberTalkHistory, buildMemberTalkOccurrences } from "@/lib/member-talk-history";
@@ -190,6 +190,7 @@ export default function MembersPage() {
 
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<MemberForm>(emptyMemberForm);
+  const [coordinatesInput, setCoordinatesInput] = useState("");
   const [memberSelectionActive, setMemberSelectionActive] = useState(false);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [actionDialog, setActionDialog] = useState<MemberActionDialog>(null);
@@ -209,6 +210,8 @@ export default function MembersPage() {
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
   const [talkDurationFilter, setTalkDurationFilter] = useState<"all" | Member["sacramentTalkDuration"]>("all");
   const isReadOnly = drawerMode === "view";
+  const parsedCoordinates = parseCoordinatesInput(coordinatesInput);
+  const coordinatesInputInvalid = Boolean(coordinatesInput.trim()) && !parsedCoordinates;
   const talkHistoryByMemberId = useMemo(() => buildMemberTalkHistory(minutesByWard), [minutesByWard]);
   const talkOccurrencesByMemberId = useMemo(() => buildMemberTalkOccurrences(minutesByWard), [minutesByWard]);
   const attendanceRecordsByMemberId = useMemo(() => {
@@ -318,6 +321,7 @@ export default function MembersPage() {
       pendingDrawerTabRef.current = null;
       replaceMemberQuery();
       setForm(emptyMemberForm);
+      setCoordinatesInput("");
       setSelectedMember(null);
       setDrawerMode("create");
       setDrawerTab("data");
@@ -330,6 +334,7 @@ export default function MembersPage() {
     pendingDrawerTabRef.current = null;
     replaceMemberQuery();
     setForm(emptyMemberForm);
+    setCoordinatesInput("");
     setSelectedMember(null);
     setDrawerMode("create");
     setDrawerTab("data");
@@ -339,6 +344,7 @@ export default function MembersPage() {
   const showMemberDrawer = useCallback((member: Member, tab: DrawerTab = "data") => {
     setSelectedMember(member);
     setForm(memberToForm(member));
+    setCoordinatesInput(formatCoordinatesInput(member.latitude, member.longitude));
     setDrawerMode("view");
     setDrawerTab(tab);
     setDrawerOpen(true);
@@ -448,6 +454,7 @@ export default function MembersPage() {
   function openEditDrawer(member: Member) {
     setSelectedMember(member);
     setForm(memberToForm(member));
+    setCoordinatesInput(formatCoordinatesInput(member.latitude, member.longitude));
     setDrawerMode("edit");
     setDrawerTab("data");
     setDrawerOpen(true);
@@ -458,7 +465,7 @@ export default function MembersPage() {
   }
 
   function saveCurrentMember() {
-    if (!currentWard || !form.name.trim()) return;
+    if (!currentWard || !form.name.trim() || coordinatesInputInvalid) return;
 
     saveMember({
       id: selectedMember?.id,
@@ -473,6 +480,17 @@ export default function MembersPage() {
     });
 
     closeDrawer();
+  }
+
+  function updateCoordinatesInput(value: string) {
+    setCoordinatesInput(value);
+    const coordinates = parseCoordinatesInput(value);
+
+    if (coordinates) {
+      setForm((current) => ({ ...current, ...coordinates }));
+    } else if (!value.trim()) {
+      setForm((current) => ({ ...current, latitude: undefined, longitude: undefined }));
+    }
   }
 
   function updateSelectedMembers(selectedMembers: Member[], patch: Pick<Partial<MemberForm>, "churchActivityStatus" | "sacramentTalkDuration">) {
@@ -1146,25 +1164,18 @@ export default function MembersPage() {
                               onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
                             />
                           </div>
-                          <div>
-                            <Label>Latitude</Label>
+                          <div className="sm:col-span-2">
+                            <Label>Coordenadas</Label>
                             <Input
+                              className="tabular-nums"
                               disabled={isReadOnly}
-                              inputMode="decimal"
-                              placeholder="ex: -3.7319"
-                              value={form.latitude ?? ""}
-                              onChange={(event) => setForm((current) => ({ ...current, latitude: parseCoordinateInput(event.target.value) }))}
+                              placeholder="ex: -7.1230045944912455, -34.83663470000887"
+                              value={coordinatesInput}
+                              onChange={(event) => updateCoordinatesInput(event.target.value)}
                             />
-                          </div>
-                          <div>
-                            <Label>Longitude</Label>
-                            <Input
-                              disabled={isReadOnly}
-                              inputMode="decimal"
-                              placeholder="ex: -38.5267"
-                              value={form.longitude ?? ""}
-                              onChange={(event) => setForm((current) => ({ ...current, longitude: parseCoordinateInput(event.target.value) }))}
-                            />
+                            {coordinatesInputInvalid ? (
+                              <p className="mt-1 text-xs text-destructive">Informe latitude e longitude no formato: -7.123, -34.836.</p>
+                            ) : null}
                           </div>
                         </div>
                       </section>
@@ -1494,7 +1505,7 @@ export default function MembersPage() {
                     <Button onClick={() => openEditDrawer(selectedMember)}>Editar membro</Button>
                   ) : null}
                   {!isReadOnly ? (
-                    <Button disabled={!currentWard || !form.name.trim()} onClick={saveCurrentMember}>
+                    <Button disabled={!currentWard || !form.name.trim() || coordinatesInputInvalid} onClick={saveCurrentMember}>
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar membro"}
                     </Button>
                   ) : null}

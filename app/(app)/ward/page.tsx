@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { parseCoordinateInput } from "@/lib/coordinates";
+import { formatCoordinatesInput, parseCoordinatesInput } from "@/lib/coordinates";
 import type { Stake, User, Ward } from "@/types/domain";
 
 type WardForm = {
@@ -143,6 +143,7 @@ export default function WardPage() {
     [currentWard, db.stakes],
   );
   const [form, setForm] = useState<WardForm>(() => (currentWard ? formFromWard(currentWard) : emptyWardForm));
+  const [coordinatesInput, setCoordinatesInput] = useState(() => formatCoordinatesInput(currentWard?.latitude, currentWard?.longitude));
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [transferTargetUserId, setTransferTargetUserId] = useState("");
   const usersById = useMemo(() => new Map(db.users.map((user) => [user.id, user])), [db.users]);
@@ -162,6 +163,8 @@ export default function WardPage() {
   const canRequestStakeOwnership = Boolean(currentUser && currentWard?.stakeId && currentUser.status === "active" && currentStake && !activeStakeOwner && !currentUserRequest);
   const canTransferStakeOwnership = Boolean(currentUser && currentStake && currentUser.accessLevel === "stake_owner" && activeStakeOwner?.id === currentUser.id);
   const transferTargets = activeStakeUsers.filter((user) => user.id !== currentUser?.id);
+  const parsedCoordinates = parseCoordinatesInput(coordinatesInput);
+  const coordinatesInputInvalid = Boolean(coordinatesInput.trim()) && !parsedCoordinates;
 
   const hasChanges = useMemo(() => {
     if (!currentWard) return false;
@@ -174,8 +177,15 @@ export default function WardPage() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function updateCoordinateField(field: "latitude" | "longitude", value: string) {
-    setForm((current) => ({ ...current, [field]: parseCoordinateInput(value) }));
+  function updateCoordinatesInput(value: string) {
+    setCoordinatesInput(value);
+    const coordinates = parseCoordinatesInput(value);
+
+    if (coordinates) {
+      setForm((current) => ({ ...current, ...coordinates }));
+    } else if (!value.trim()) {
+      setForm((current) => ({ ...current, latitude: undefined, longitude: undefined }));
+    }
   }
 
   function buildWardGeocodingAddress() {
@@ -214,6 +224,7 @@ export default function WardPage() {
         latitude: result.latitude,
         longitude: result.longitude,
       }));
+      setCoordinatesInput(formatCoordinatesInput(result.latitude, result.longitude));
       toast.success("Coordenadas preenchidas. Salve a ala para persistir.");
     } catch (error) {
       console.error("Failed to geocode ward address.", error);
@@ -224,7 +235,7 @@ export default function WardPage() {
   }
 
   function handleSave() {
-    if (!currentWard || !canManageWard || !form.name.trim()) return;
+    if (!currentWard || !canManageWard || !form.name.trim() || coordinatesInputInvalid) return;
 
     const nextWard: Ward = {
       ...currentWard,
@@ -240,6 +251,7 @@ export default function WardPage() {
 
     saveWard(nextWard);
     setForm(formFromWard(nextWard));
+    setCoordinatesInput(formatCoordinatesInput(nextWard.latitude, nextWard.longitude));
   }
 
   function handleTransferStakeOwnership() {
@@ -257,7 +269,7 @@ export default function WardPage() {
           description="Dados institucionais usados como referência para a organização local."
           actions={
             canManageWard ? (
-              <Button disabled={!currentWard || !form.name.trim() || !hasChanges} onClick={handleSave} size="lg">
+              <Button disabled={!currentWard || !form.name.trim() || !hasChanges || coordinatesInputInvalid} onClick={handleSave} size="lg">
                 <Save className="size-4" />
                 Salvar
               </Button>
@@ -333,30 +345,19 @@ export default function WardPage() {
                   </Button>
                 ) : null}
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="ward-latitude">Latitude</Label>
-                  <Input
-                    className="tabular-nums"
-                    disabled={!canManageWard}
-                    id="ward-latitude"
-                    inputMode="decimal"
-                    value={form.latitude ?? ""}
-                    onChange={(event) => updateCoordinateField("latitude", event.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="ward-longitude">Longitude</Label>
-                  <Input
-                    className="tabular-nums"
-                    disabled={!canManageWard}
-                    id="ward-longitude"
-                    inputMode="decimal"
-                    value={form.longitude ?? ""}
-                    onChange={(event) => updateCoordinateField("longitude", event.target.value)}
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="ward-coordinates">Coordenadas</Label>
+                <Input
+                  className="tabular-nums"
+                  disabled={!canManageWard}
+                  id="ward-coordinates"
+                  placeholder="ex: -7.1230045944912455, -34.83663470000887"
+                  value={coordinatesInput}
+                  onChange={(event) => updateCoordinatesInput(event.target.value)}
+                />
+                {coordinatesInputInvalid ? (
+                  <p className="text-xs text-destructive">Informe latitude e longitude no formato: -7.123, -34.836.</p>
+                ) : null}
               </div>
             </div>
           </CardContent>
