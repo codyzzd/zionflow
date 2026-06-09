@@ -266,6 +266,7 @@ export function MemberActivityStatusImportDialog({ onOpenChange, open: controlle
               <p className="font-medium">Modelo do CSV</p>
               <p className="text-muted-foreground">Use uma coluna de nome e colunas de data. Valor 1 registra presença; valor 0 registra ausência.</p>
               <p className="text-muted-foreground">O importador grava o histórico e atualiza o status de frequência no cadastro do membro neste momento.</p>
+              <p className="text-muted-foreground">Datas futuras são gravadas no histórico, mas não participam do cálculo de status deste upload.</p>
             </div>
             <pre className="overflow-x-auto rounded-md border bg-background p-3 font-mono text-xs leading-5 text-foreground">{exampleCsv}</pre>
           </div>

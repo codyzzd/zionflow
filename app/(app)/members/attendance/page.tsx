@@ -5,6 +5,7 @@ import { CalendarDays, SlidersHorizontal, Users } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { MemberActivityStatusImportDialog } from "@/components/features/members/member-activity-status-import-dialog";
 import { MemberActivityStatusIcon, MemberSexIcon } from "@/components/features/members/member-visual-indicators";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -159,7 +160,8 @@ function hasValidCoordinates(member: Member) {
 
 export default function MemberAttendancePage() {
   const { formatDate, formatDateTime } = useDateFormatter();
-  const { allMembersByWard, memberAttendanceRecordsByWard } = useAppContext();
+  const { hasPermission, memberAttendanceRecordsByWard, membersByWard } = useAppContext();
+  const canManageMembers = hasPermission("members.manage");
   const [search, setSearch] = useState("");
   const [bucketFilter, setBucketFilter] = useState<AttendanceBucketFilter>("all");
   const [sexFilter, setSexFilter] = useState<SexFilter>("all");
@@ -168,26 +170,23 @@ export default function MemberAttendancePage() {
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
 
+  const activeMemberIds = useMemo(() => new Set(membersByWard.map((member) => member.id)), [membersByWard]);
+  const activeMemberAttendanceRecords = useMemo(
+    () => memberAttendanceRecordsByWard.filter((record) => activeMemberIds.has(record.memberId)),
+    [activeMemberIds, memberAttendanceRecordsByWard],
+  );
   const latestAttendanceUpdateAt = useMemo(
     () =>
-      memberAttendanceRecordsByWard
+      activeMemberAttendanceRecords
         .map((record) => record.updatedAt ?? record.createdAt ?? "")
         .filter((date) => !Number.isNaN(new Date(date).getTime()))
         .sort((a, b) => b.localeCompare(a))[0] ?? null,
-    [memberAttendanceRecordsByWard],
+    [activeMemberAttendanceRecords],
   );
   const summaries = useMemo(
-    () => buildMemberAttendanceSummaries(allMembersByWard, memberAttendanceRecordsByWard),
-    [allMembersByWard, memberAttendanceRecordsByWard],
+    () => buildMemberAttendanceSummaries(membersByWard, activeMemberAttendanceRecords),
+    [activeMemberAttendanceRecords, membersByWard],
   );
-  const summariesByBucket = useMemo(() => {
-    const grouped = new Map<AttendanceBucketKey, MemberAttendanceSummary[]>();
-
-    attendanceBuckets.forEach((bucket) => grouped.set(bucket.key, []));
-    summaries.forEach((summary) => grouped.set(summary.bucketKey, [...(grouped.get(summary.bucketKey) ?? []), summary]));
-
-    return grouped;
-  }, [summaries]);
   const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
   const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
   const normalizedSearch = search.trim().toLowerCase();
@@ -212,7 +211,16 @@ export default function MemberAttendancePage() {
       }),
     [bucketFilter, coordinatesFilter, maximumAge, minimumAge, normalizedSearch, sexFilter, summaries, talkDurationFilter],
   );
+  const filteredSummariesByBucket = useMemo(() => {
+    const grouped = new Map<AttendanceBucketKey, MemberAttendanceSummary[]>();
+
+    attendanceBuckets.forEach((bucket) => grouped.set(bucket.key, []));
+    filteredSummaries.forEach((summary) => grouped.set(summary.bucketKey, [...(grouped.get(summary.bucketKey) ?? []), summary]));
+
+    return grouped;
+  }, [filteredSummaries]);
   const totalMembers = summaries.length;
+  const filteredMembersTotal = filteredSummaries.length;
   const withoutRecords = summaries.filter((summary) => summary.records.length === 0).length;
   const hasAdvancedFilters =
     bucketFilter !== "all" || sexFilter !== "all" || coordinatesFilter !== "all" || talkDurationFilter !== "all" || minimumAge !== null || maximumAge !== null;
@@ -262,7 +270,6 @@ export default function MemberAttendancePage() {
                 </TablePrimaryAction>
                 <div className="flex min-w-0 items-center gap-1">
                   {summary.member.phone ? <p className="truncate text-xs text-muted-foreground">{summary.member.phone}</p> : null}
-                  {summary.member.archivedAt ? <Badge variant="secondary">Arquivado</Badge> : null}
                 </div>
               </div>
             </div>
@@ -319,6 +326,7 @@ export default function MemberAttendancePage() {
   return (
     <PermissionGuard permission="members.view">
       <PageHeader
+        actions={canManageMembers ? <MemberActivityStatusImportDialog /> : null}
         eyebrow="Membros"
         title="Frequência dos membros"
         description="Distribuição dos membros cadastrados por presença nos últimos domingos importados."
@@ -328,7 +336,7 @@ export default function MemberAttendancePage() {
         <div className="grid gap-3 md:grid-cols-3">
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Membros totais</CardDescription>
+              <CardDescription>Membros cadastrados</CardDescription>
               <CardTitle className="flex items-center gap-2 text-2xl tabular-nums">
                 <Users className="size-5 text-muted-foreground" />
                 {totalMembers}
@@ -360,8 +368,8 @@ export default function MemberAttendancePage() {
           <CardContent className="space-y-4">
             <div className="flex h-12 overflow-hidden rounded-md border bg-muted">
               {attendanceBuckets.map((bucket) => {
-                const count = summariesByBucket.get(bucket.key)?.length ?? 0;
-                const width = totalMembers ? (count / totalMembers) * 100 : 0;
+                const count = filteredSummariesByBucket.get(bucket.key)?.length ?? 0;
+                const width = filteredMembersTotal ? (count / filteredMembersTotal) * 100 : 0;
 
                 return (
                   <div
@@ -379,15 +387,15 @@ export default function MemberAttendancePage() {
 
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
               {attendanceBuckets.map((bucket) => {
-                const bucketSummaries = summariesByBucket.get(bucket.key) ?? [];
-                const percentage = totalMembers ? Math.round((bucketSummaries.length / totalMembers) * 100) : 0;
+                const bucketSummaries = filteredSummariesByBucket.get(bucket.key) ?? [];
+                const percentage = filteredMembersTotal ? Math.round((bucketSummaries.length / filteredMembersTotal) * 100) : 0;
 
                 return (
                   <div className="rounded-md border bg-background p-3" key={bucket.key}>
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className={cn("text-sm font-medium", bucket.textClassName)}>{bucket.label}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{percentage}% dos membros cadastrados</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{percentage}% dos membros filtrados</p>
                       </div>
                       <span className="text-xl font-semibold tabular-nums">{bucketSummaries.length}</span>
                     </div>

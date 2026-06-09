@@ -39,7 +39,7 @@ import {
 } from "@/lib/storage";
 import { isSystemAdmin } from "@/lib/system-access";
 import { isSystemRoleId, SYSTEM_ROLE_IDS } from "@/lib/system-ids";
-import { normalizeDateInput, nowIso, todayDate, uid } from "@/lib/utils";
+import { localTodayDate, normalizeDateInput, nowIso, todayDate, uid } from "@/lib/utils";
 import type {
   AuditLog,
   AppPreferences,
@@ -2054,6 +2054,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         return;
       }
 
+      const importReferenceDate = localTodayDate();
       const currentWardMemberIds = new Set(db.members.filter((member) => member.wardId === targetWardId).map((member) => member.id));
       const validRecords = input.records
         .map((record) => ({
@@ -2112,7 +2113,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
         const nextMembers = currentDb.members.map((member) => {
           if (member.wardId !== targetWardId || !importedMemberIds.has(member.id) || member.churchActivityStatus === "away") return member;
 
-          const nextStatus = resolveMemberFrequencyStatus(member, nextRecordsByMemberId.get(member.id) ?? []).status;
+          const nextStatus = resolveMemberFrequencyStatus(member, nextRecordsByMemberId.get(member.id) ?? [], importReferenceDate).status;
           if (member.churchActivityStatus === nextStatus) return member;
 
           return withRecordMetadata(
