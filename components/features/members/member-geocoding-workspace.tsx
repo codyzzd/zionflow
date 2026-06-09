@@ -4,6 +4,7 @@ import { Check, Loader2, Play, Save, Search, SkipForward, Square } from "lucide-
 import { useMemo, useRef, useState } from "react";
 
 import { useAppContext } from "@/components/providers/app-provider";
+import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -571,11 +572,21 @@ export function MemberGeocodingWorkspace() {
         Os endereços consultados são enviados para um serviço público externo. O processamento é sequencial, sem autocomplete, sem paralelismo e com intervalo mínimo de 1 segundo. Erros, sem resultado e pulados ficam marcados no cadastro para revisão futura.
       </div>
 
-      <div className="grid gap-2 rounded-lg border bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_repeat(6,minmax(120px,auto))]">
+      <div className="grid gap-2 rounded-lg border bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_repeat(7,minmax(120px,auto))]">
         <SearchInput
           placeholder="Buscar por nome ou endereço"
           value={search}
           onChange={(event) => updateSearch(event.target.value)}
+        />
+        <MemberDemographicPresetSelect
+          filter={{ maximumAge: maximumAgeFilter, minimumAge: minimumAgeFilter, sex: sexFilter }}
+          label="Preset"
+          labelClassName="sr-only"
+          onApply={(preset) => {
+            updateSexFilter(preset.sex);
+            updateMinimumAgeFilter(preset.minimumAge);
+            updateMaximumAgeFilter(preset.maximumAge);
+          }}
         />
         <Select value={statusFilter} onValueChange={(value) => updateStatusFilter(value as GeocodingFilter)}>
           <SelectTrigger className="w-full">

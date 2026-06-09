@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { MemberActivityStatusImportDialog } from "@/components/features/members/member-activity-status-import-dialog";
+import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
 import { MemberActivityStatusIcon, MemberSexIcon } from "@/components/features/members/member-visual-indicators";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
@@ -411,6 +412,15 @@ export default function MemberAttendancePage() {
                         <PopoverTitle>Filtros avançados</PopoverTitle>
                       </PopoverHeader>
                       <div className="grid gap-3 sm:grid-cols-2">
+                        <MemberDemographicPresetSelect
+                          className="sm:col-span-2"
+                          filter={{ maximumAge: maximumAgeFilter, minimumAge: minimumAgeFilter, sex: sexFilter }}
+                          onApply={(preset) => {
+                            setSexFilter(preset.sex);
+                            setMinimumAgeFilter(preset.minimumAge);
+                            setMaximumAgeFilter(preset.maximumAge);
+                          }}
+                        />
                         <div className="space-y-1.5">
                           <Label>Situação</Label>
                           <Select value={bucketFilter} onValueChange={(value) => setBucketFilter(value as AttendanceBucketFilter)}>

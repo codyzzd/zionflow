@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -370,7 +371,26 @@ export function MemberExportDialog({ members, onOpenChange, open: controlledOpen
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <MemberDemographicPresetSelect
+              filter={{
+                maximumAge: filters.maximumAge,
+                minimumAge: filters.minimumAge,
+                sex: filters.sexes.length === 1 ? filters.sexes[0] : "all",
+              }}
+              forceCustom={
+                filters.sexes.length !== 1 &&
+                !(filters.sexes.length === 2 && filters.sexes.includes("M") && filters.sexes.includes("F"))
+              }
+              onApply={(preset) =>
+                setFilters((current) => ({
+                  ...current,
+                  maximumAge: preset.maximumAge,
+                  minimumAge: preset.minimumAge,
+                  sexes: preset.sex === "all" ? ["M", "F"] : [preset.sex],
+                }))
+              }
+            />
             <div className="space-y-1.5">
               <Label>Idade mínima</Label>
               <Input

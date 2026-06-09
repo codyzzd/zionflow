@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { MemberActivityStatusImportDialog } from "@/components/features/members/member-activity-status-import-dialog";
+import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
 import { MemberExportDialog } from "@/components/features/members/member-export-dialog";
 import { MemberImportDialog } from "@/components/features/members/member-import-dialog";
 import {
@@ -835,6 +836,15 @@ export default function MembersPage() {
                           <PopoverTitle>Filtros avançados</PopoverTitle>
                         </PopoverHeader>
                         <div className="grid gap-3 sm:grid-cols-2">
+                          <MemberDemographicPresetSelect
+                            className="sm:col-span-2"
+                            filter={{ maximumAge: maximumAgeFilter, minimumAge: minimumAgeFilter, sex: sexFilter }}
+                            onApply={(preset) => {
+                              setSexFilter(preset.sex);
+                              setMinimumAgeFilter(preset.minimumAge);
+                              setMaximumAgeFilter(preset.maximumAge);
+                            }}
+                          />
                           <div className="space-y-1.5">
                             <Label>Cadastro</Label>
                             <Select value={memberStatusFilter} onValueChange={(value) => setMemberStatusFilter(value as MemberStatusFilter)}>

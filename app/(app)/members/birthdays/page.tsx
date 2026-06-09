@@ -12,6 +12,7 @@ import {
   memberSexLabels as sexLabels,
   memberSexSurfaceClassNames,
 } from "@/components/features/members/member-visual-indicators";
+import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
@@ -262,6 +263,15 @@ export default function MemberBirthdaysPage() {
                 <PopoverTitle>Filtros avançados</PopoverTitle>
               </PopoverHeader>
               <div className="grid gap-3 sm:grid-cols-2">
+                <MemberDemographicPresetSelect
+                  className="sm:col-span-2"
+                  filter={{ maximumAge: maximumAgeFilter, minimumAge: minimumAgeFilter, sex: sexFilter }}
+                  onApply={(preset) => {
+                    setSexFilter(preset.sex);
+                    setMinimumAgeFilter(preset.minimumAge);
+                    setMaximumAgeFilter(preset.maximumAge);
+                  }}
+                />
                 <div className="space-y-1.5">
                   <Label>Sexo</Label>
                   <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as SexFilter)}>

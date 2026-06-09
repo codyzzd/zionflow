@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
+import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
@@ -195,7 +196,7 @@ export default function MembersMapPage() {
     <div
       className={cn(
         "grid items-end gap-3 rounded-lg border bg-card p-3",
-        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(240px,1fr)_150px_160px_115px_115px_160px_minmax(220px,auto)]",
+        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(200px,1fr)_180px_130px_150px_105px_105px_140px_minmax(190px,auto)]",
       )}
     >
       <div>
@@ -205,6 +206,17 @@ export default function MembersMapPage() {
           <Input className="pl-9" placeholder="Nome, telefone ou endereço" value={search} onChange={(event) => setSearch(event.target.value)} />
         </div>
       </div>
+      <MemberDemographicPresetSelect
+        contentClassName={mapSelectContentClassName}
+        filter={{ maximumAge: maximumAgeFilter, minimumAge: minimumAgeFilter, sex: sexFilter }}
+        label="Preset"
+        onApply={(preset) => {
+          setSexFilter(preset.sex);
+          setMinimumAgeFilter(preset.minimumAge);
+          setMaximumAgeFilter(preset.maximumAge);
+        }}
+        triggerClassName="mt-1"
+      />
       <div>
         <Label className="text-xs">Sexo</Label>
         <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as SexFilter)}>
