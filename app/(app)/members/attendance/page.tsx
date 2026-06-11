@@ -13,7 +13,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,6 +35,7 @@ import type { Member } from "@/types/domain";
 type AttendanceBucketFilter = "all" | MemberAttendanceBucketKey;
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
 type SexFilter = "all" | Member["sex"];
+type SummaryMode = "sundays" | "activity";
 type TalkDurationFilter = "all" | Member["sacramentTalkDuration"];
 
 const attendanceBuckets: Array<{
@@ -76,6 +77,32 @@ const attendanceBuckets: Array<{
     key: "no_history",
     label: "Sem histórico importado",
     shortLabel: "Sem histórico",
+    className: "bg-zinc-600",
+    textClassName: "text-zinc-700 dark:text-zinc-300",
+  },
+];
+
+const activityStatusBuckets: Array<{
+  key: Member["churchActivityStatus"];
+  label: string;
+  className: string;
+  textClassName: string;
+}> = [
+  {
+    key: "attending",
+    label: "Frequentando",
+    className: "bg-emerald-600",
+    textClassName: "text-emerald-700 dark:text-emerald-300",
+  },
+  {
+    key: "not_attending",
+    label: "Não frequentando",
+    className: "bg-red-600",
+    textClassName: "text-red-700 dark:text-red-300",
+  },
+  {
+    key: "away",
+    label: "Afastados",
     className: "bg-zinc-600",
     textClassName: "text-zinc-700 dark:text-zinc-300",
   },
@@ -134,6 +161,7 @@ export default function MemberAttendancePage() {
   const [talkDurationFilter, setTalkDurationFilter] = useState<TalkDurationFilter>("all");
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
+  const [summaryMode, setSummaryMode] = useState<SummaryMode>("sundays");
 
   const activeMemberIds = useMemo(() => new Set(membersByWard.map((member) => member.id)), [membersByWard]);
   const attendanceReferenceDate = localTodayDate();
@@ -186,6 +214,17 @@ export default function MemberAttendancePage() {
 
     attendanceBuckets.forEach((bucket) => grouped.set(bucket.key, []));
     filteredSummaries.forEach((summary) => grouped.set(summary.bucketKey, [...(grouped.get(summary.bucketKey) ?? []), summary]));
+
+    return grouped;
+  }, [filteredSummaries]);
+  const filteredSummariesByActivityStatus = useMemo(() => {
+    const grouped = new Map<Member["churchActivityStatus"], MemberAttendanceSummary[]>();
+
+    activityStatusBuckets.forEach((bucket) => grouped.set(bucket.key, []));
+    filteredSummaries.forEach((summary) => {
+      const status = summary.member.churchActivityStatus;
+      grouped.set(status, [...(grouped.get(status) ?? []), summary]);
+    });
 
     return grouped;
   }, [filteredSummaries]);
@@ -332,47 +371,115 @@ export default function MemberAttendancePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Resumo por domingos</CardTitle>
-            <CardDescription>Da esquerda para a direita: presença mais recente até maior tempo sem vir.</CardDescription>
+            <CardTitle>{summaryMode === "sundays" ? "Resumo por domingos" : "Resumo por frequência"}</CardTitle>
+            <CardDescription>
+              {summaryMode === "sundays"
+                ? "Da esquerda para a direita: presença mais recente até maior tempo sem vir."
+                : "Situação atual dos membros cadastrados, considerando a busca e os filtros aplicados."}
+            </CardDescription>
+            <CardAction>
+              <div aria-label="Visualização do resumo" className="inline-flex rounded-lg border bg-muted/50 p-0.5" role="group">
+                <Button
+                  aria-pressed={summaryMode === "sundays"}
+                  onClick={() => setSummaryMode("sundays")}
+                  size="sm"
+                  variant={summaryMode === "sundays" ? "secondary" : "ghost"}
+                >
+                  Por domingos
+                </Button>
+                <Button
+                  aria-pressed={summaryMode === "activity"}
+                  onClick={() => setSummaryMode("activity")}
+                  size="sm"
+                  variant={summaryMode === "activity" ? "secondary" : "ghost"}
+                >
+                  Por frequência
+                </Button>
+              </div>
+            </CardAction>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex h-12 overflow-hidden rounded-md border bg-muted">
-              {attendanceBuckets.map((bucket) => {
-                const count = filteredSummariesByBucket.get(bucket.key)?.length ?? 0;
-                const width = filteredMembersTotal ? (count / filteredMembersTotal) * 100 : 0;
+            {summaryMode === "sundays" ? (
+              <>
+                <div className="flex h-12 overflow-hidden rounded-md border bg-muted">
+                  {attendanceBuckets.map((bucket) => {
+                    const count = filteredSummariesByBucket.get(bucket.key)?.length ?? 0;
+                    const width = filteredMembersTotal ? (count / filteredMembersTotal) * 100 : 0;
 
-                return (
-                  <div
-                    aria-label={`${bucket.label}: ${count} membros`}
-                    className={cn("flex min-w-0 items-center justify-center px-2 text-xs font-semibold text-white", bucket.className)}
-                    key={bucket.key}
-                    style={{ width: `${width}%` }}
-                    title={`${bucket.label}: ${count}`}
-                  >
-                    {width >= 10 ? <span className="truncate tabular-nums">{count}</span> : null}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-              {attendanceBuckets.map((bucket) => {
-                const bucketSummaries = filteredSummariesByBucket.get(bucket.key) ?? [];
-                const percentage = filteredMembersTotal ? Math.round((bucketSummaries.length / filteredMembersTotal) * 100) : 0;
-
-                return (
-                  <div className="rounded-md border bg-background p-3" key={bucket.key}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className={cn("text-sm font-medium", bucket.textClassName)}>{bucket.label}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{percentage}% dos membros filtrados</p>
+                    return (
+                      <div
+                        aria-label={`${bucket.label}: ${count} membros`}
+                        className={cn("flex min-w-0 items-center justify-center px-2 text-xs font-semibold text-white", bucket.className)}
+                        key={bucket.key}
+                        style={{ width: `${width}%` }}
+                        title={`${bucket.label}: ${count}`}
+                      >
+                        {width >= 10 ? <span className="truncate tabular-nums">{count}</span> : null}
                       </div>
-                      <span className="text-xl font-semibold tabular-nums">{bucketSummaries.length}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                  {attendanceBuckets.map((bucket) => {
+                    const bucketSummaries = filteredSummariesByBucket.get(bucket.key) ?? [];
+                    const percentage = filteredMembersTotal ? Math.round((bucketSummaries.length / filteredMembersTotal) * 100) : 0;
+
+                    return (
+                      <div className="rounded-md border bg-background p-3" key={bucket.key}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className={cn("text-sm font-medium", bucket.textClassName)}>{bucket.label}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{percentage}% dos membros filtrados</p>
+                          </div>
+                          <span className="text-xl font-semibold tabular-nums">{bucketSummaries.length}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex h-12 overflow-hidden rounded-md border bg-muted">
+                  {activityStatusBuckets.map((bucket) => {
+                    const count = filteredSummariesByActivityStatus.get(bucket.key)?.length ?? 0;
+                    const width = filteredMembersTotal ? (count / filteredMembersTotal) * 100 : 0;
+
+                    return (
+                      <div
+                        aria-label={`${bucket.label}: ${count} membros`}
+                        className={cn("flex min-w-0 items-center justify-center px-2 text-xs font-semibold text-white", bucket.className)}
+                        key={bucket.key}
+                        style={{ width: `${width}%` }}
+                        title={`${bucket.label}: ${count}`}
+                      >
+                        {width >= 10 ? <span className="truncate tabular-nums">{count}</span> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {activityStatusBuckets.map((bucket) => {
+                    const bucketSummaries = filteredSummariesByActivityStatus.get(bucket.key) ?? [];
+                    const percentage = filteredMembersTotal ? Math.round((bucketSummaries.length / filteredMembersTotal) * 100) : 0;
+
+                    return (
+                      <div className="rounded-md border bg-background p-3" key={bucket.key}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className={cn("text-sm font-medium", bucket.textClassName)}>{bucket.label}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{percentage}% dos membros filtrados</p>
+                          </div>
+                          <span className="text-xl font-semibold tabular-nums">{bucketSummaries.length}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 

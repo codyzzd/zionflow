@@ -2,6 +2,7 @@
 
 import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
+import "leaflet.markercluster";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 
 import type { Member } from "@/types/domain";
@@ -23,6 +24,7 @@ const visualMeta: Record<MarkerVisualKey, { className: string; color: string; la
   not_attending: { className: "member-map-marker-not-attending", color: "#dc2626", label: "Não frequentando", priority: 1 },
   away: { className: "member-map-marker-away", color: "#71717a", label: "Afastado", priority: 0 },
 };
+const visualKeyOrder: MarkerVisualKey[] = ["attending", "not_attending", "away"];
 
 const markerStyleMeta: Record<MemberMapMarkerStyle, { className: string; iconAnchor: [number, number]; iconSize: [number, number]; popupAnchor: [number, number] }> = {
   classic_pin: { className: "member-map-marker-classic-pin", iconAnchor: [14, 32], iconSize: [28, 34], popupAnchor: [0, -30] },
@@ -45,6 +47,58 @@ function createMarkerIcon(visualKey: MarkerVisualKey, selected: boolean, markerS
 
 function getMarkerZIndexOffset(visualKey: MarkerVisualKey, selected: boolean) {
   return 1000 + visualMeta[visualKey].priority * 100000 + (selected ? 1000 : 0);
+}
+
+function createClusterIcon(cluster: L.MarkerCluster) {
+  const count = cluster.getChildCount();
+  const counts = cluster
+    .getAllChildMarkers()
+    .map((marker) => (marker as MemberMarker).memberVisualKey)
+    .filter((visualKey): visualKey is MarkerVisualKey => Boolean(visualKey))
+    .reduce<Record<MarkerVisualKey, number>>(
+      (result, visualKey) => ({ ...result, [visualKey]: result[visualKey] + 1 }),
+      { attending: 0, away: 0, not_attending: 0 },
+    );
+  let cumulativePercent = 0;
+  const gradientSegments = visualKeyOrder.flatMap((visualKey) => {
+    const visualCount = counts[visualKey];
+    if (!visualCount) return [];
+
+    const startPercent = cumulativePercent;
+    cumulativePercent += (visualCount / count) * 100;
+
+    return [`${visualMeta[visualKey].color} ${startPercent}% ${cumulativePercent}%`];
+  });
+  const breakdown = visualKeyOrder
+    .filter((visualKey) => counts[visualKey] > 0)
+    .map((visualKey) => `${visualMeta[visualKey].label}: ${counts[visualKey]}`)
+    .join("; ");
+  const clusterStyle = [
+    `background:conic-gradient(${gradientSegments.join(", ")})`,
+    "border:3px solid #fff",
+    "border-radius:999px",
+    "box-shadow:0 0 0 3px rgb(63 63 70 / 0.9),0 10px 24px rgb(0 0 0 / 0.22)",
+    "box-sizing:border-box",
+    "color:#fff",
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
+    "font-size:0.75rem",
+    "font-variant-numeric:tabular-nums",
+    "font-weight:700",
+    "height:30px",
+    "line-height:1",
+    "margin:3px",
+    "text-shadow:0 1px 2px rgb(0 0 0 / 0.28)",
+    "width:30px",
+  ].join(";");
+
+  return L.divIcon({
+    className: "member-map-cluster-chart",
+    html: `<span title="${breakdown}" style="${clusterStyle}">+${count}</span>`,
+    iconAnchor: [18, 18],
+    iconSize: [36, 36],
+  });
 }
 
 function createPopupContent(member: MapMarkerMember) {
@@ -90,11 +144,13 @@ function FlyToSelectedMember({ focusKey, member }: { focusKey: number; member?: 
 }
 
 function MemberMarkerLayer({
+  clusterEnabled,
   markerStyle,
   members,
   onSelectMember,
   selectedMemberId,
 }: {
+  clusterEnabled: boolean;
   markerStyle: MemberMapMarkerStyle;
   members: MappedMember[];
   onSelectMember: (memberId: string) => void;
@@ -124,13 +180,34 @@ function MemberMarkerLayer({
       return marker;
     });
 
-    markers.forEach((marker) => map.addLayer(marker));
+    if (!clusterEnabled) {
+      markers.forEach((marker) => map.addLayer(marker));
+
+      return () => {
+        markers.forEach((marker) => map.removeLayer(marker));
+        markersByMemberId.clear();
+      };
+    }
+
+    const clusterGroup = L.markerClusterGroup({
+      chunkedLoading: true,
+      iconCreateFunction: createClusterIcon,
+      maxClusterRadius: 8,
+      removeOutsideVisibleBounds: true,
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: true,
+      spiderLegPolylineOptions: { color: "#525252", opacity: 0.55, weight: 1.5 },
+      zoomToBoundsOnClick: true,
+    });
+
+    clusterGroup.addLayers(markers);
+    map.addLayer(clusterGroup);
 
     return () => {
-      markers.forEach((marker) => map.removeLayer(marker));
+      map.removeLayer(clusterGroup);
       markersByMemberId.clear();
     };
-  }, [map, markerStyle, onSelectMember, serializedMembers]);
+  }, [clusterEnabled, map, markerStyle, onSelectMember, serializedMembers]);
 
   useEffect(() => {
     markersByMemberIdRef.current.forEach((marker, memberId) => {
@@ -147,12 +224,14 @@ function MemberMarkerLayer({
 }
 
 export function MemberMapCanvas({
+  clusterEnabled = false,
   markerStyle = "circle",
   members,
   onSelectMember,
   selectedMemberFocusKey = 0,
   selectedMemberId,
 }: {
+  clusterEnabled?: boolean;
   markerStyle?: MemberMapMarkerStyle;
   members: MappedMember[];
   onSelectMember: (memberId: string) => void;
@@ -174,6 +253,7 @@ export function MemberMapCanvas({
       />
       <FlyToSelectedMember focusKey={selectedMemberFocusKey} member={selectedMember} />
       <MemberMarkerLayer
+        clusterEnabled={clusterEnabled}
         markerStyle={markerStyle}
         members={members}
         onSelectMember={onSelectMember}

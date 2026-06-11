@@ -1,4 +1,5 @@
 import type { PermissionKey, User, UserAccessLevel, Ward } from "@/types/domain";
+import { isSystemAdmin } from "@/lib/system-access";
 
 export type AccessLevel = "hidden" | "view" | "edit";
 
@@ -187,14 +188,6 @@ export const ACCESS_MATRIX_AREAS: AccessArea[] = [
   },
   {
     category: "admin",
-    description: "Consulta do histórico de alterações realizadas no sistema.",
-    icon: "file-text",
-    id: "audit",
-    label: "Auditoria",
-    viewPermission: "audit.view",
-  },
-  {
-    category: "admin",
     description: "Permite executar exportações de dados nas telas que oferecem essa ação.",
     icon: "download",
     id: "exports",
@@ -253,10 +246,6 @@ export function getWardStakeId(wardId: string | undefined, wards: Ward[]) {
   return wards.find((ward) => ward.id === wardId)?.stakeId || undefined;
 }
 
-function hasSystemUserAccess(user?: Pick<User, "accountType">) {
-  return user?.accountType === "system_super_user";
-}
-
 function isSameStake(actor: User, targetWardId: string, wards: Ward[]) {
   const actorStakeId = getWardStakeId(actor.wardId, wards);
   const targetStakeId = getWardStakeId(targetWardId, wards);
@@ -266,7 +255,7 @@ function isSameStake(actor: User, targetWardId: string, wards: Ward[]) {
 
 export function canAssignAccessLevel(actor: User | undefined, targetLevel: UserAccessLevel, targetWard: Ward | undefined, wards: Ward[]) {
   if (!actor || !targetWard) return false;
-  if (hasSystemUserAccess(actor)) return true;
+  if (isSystemAdmin(actor)) return true;
 
   const actorLevel = normalizeUserAccessLevel(actor.accessLevel);
   const targetStakeMatches = isSameStake(actor, targetWard.id, wards);
@@ -292,8 +281,8 @@ export function canAssignAccessLevel(actor: User | undefined, targetLevel: UserA
 
 export function canManageUser(actor: User | undefined, target: User, wards: Ward[]) {
   if (!actor) return false;
-  if (hasSystemUserAccess(actor)) return true;
-  if (hasSystemUserAccess(target)) return actor.id === target.id;
+  if (isSystemAdmin(actor)) return true;
+  if (isSystemAdmin(target)) return actor.id === target.id;
   if (actor.id === target.id) return false;
 
   const actorLevel = normalizeUserAccessLevel(actor.accessLevel);
