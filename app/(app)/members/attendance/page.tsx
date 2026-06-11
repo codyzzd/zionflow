@@ -25,29 +25,29 @@ import { useDateFormatter } from "@/hooks/use-date-formatter";
 import {
   buildMemberAttendanceSummaries,
   filterAttendanceRecordsThroughDate,
-  type AttendanceBucketKey,
+  type MemberAttendanceBucketKey,
   type MemberAttendanceSummary,
 } from "@/lib/member-attendance-summary";
 import { TALK_DURATION_OPTIONS, talkDurationShortLabels } from "@/lib/member-talk-duration";
 import { cn, localTodayDate, normalizeDateInput } from "@/lib/utils";
 import type { Member } from "@/types/domain";
 
-type AttendanceBucketFilter = "all" | AttendanceBucketKey;
+type AttendanceBucketFilter = "all" | MemberAttendanceBucketKey;
 type CoordinatesFilter = "all" | "mapped" | "unmapped";
 type SexFilter = "all" | Member["sex"];
 type TalkDurationFilter = "all" | Member["sacramentTalkDuration"];
 
 const attendanceBuckets: Array<{
-  key: AttendanceBucketKey;
+  key: MemberAttendanceBucketKey;
   label: string;
   shortLabel: string;
   className: string;
   textClassName: string;
 }> = [
   {
-    key: "present_last_sunday",
-    label: "Veio no último domingo",
-    shortLabel: "Último domingo",
+    key: "missed_0",
+    label: "Não faltou nos últimos 3",
+    shortLabel: "0 faltas",
     className: "bg-emerald-600",
     textClassName: "text-emerald-700 dark:text-emerald-300",
   },
@@ -73,11 +73,11 @@ const attendanceBuckets: Array<{
     textClassName: "text-red-700 dark:text-red-300",
   },
   {
-    key: "missed_4_plus",
-    label: "Não vêm há 4+ domingos",
-    shortLabel: "4+ domingos",
-    className: "bg-purple-700",
-    textClassName: "text-purple-700 dark:text-purple-300",
+    key: "no_history",
+    label: "Sem histórico importado",
+    shortLabel: "Sem histórico",
+    className: "bg-zinc-600",
+    textClassName: "text-zinc-700 dark:text-zinc-300",
   },
 ];
 
@@ -182,7 +182,7 @@ export default function MemberAttendancePage() {
     [bucketFilter, coordinatesFilter, maximumAge, minimumAge, normalizedSearch, sexFilter, summaries, talkDurationFilter],
   );
   const filteredSummariesByBucket = useMemo(() => {
-    const grouped = new Map<AttendanceBucketKey, MemberAttendanceSummary[]>();
+    const grouped = new Map<MemberAttendanceBucketKey, MemberAttendanceSummary[]>();
 
     attendanceBuckets.forEach((bucket) => grouped.set(bucket.key, []));
     filteredSummaries.forEach((summary) => grouped.set(summary.bucketKey, [...(grouped.get(summary.bucketKey) ?? []), summary]));

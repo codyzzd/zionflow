@@ -9,21 +9,21 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
-import { buildMemberAttendanceSummaries, filterAttendanceRecordsThroughDate, type AttendanceBucketKey } from "@/lib/member-attendance-summary";
+import { buildMemberAttendanceSummaries, filterAttendanceRecordsThroughDate, type MemberAttendanceBucketKey } from "@/lib/member-attendance-summary";
 import { cn, localTodayDate, todayDate } from "@/lib/utils";
 import type { LunchSchedule, MissionaryCompanionship, SacramentMinute, Weekday } from "@/types/domain";
 
 const weekdaysByIndex: Weekday[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 const memberAttendanceMeta: Array<{
-  key: AttendanceBucketKey;
+  key: MemberAttendanceBucketKey;
   label: string;
   barClassName: string;
   textClassName: string;
 }> = [
   {
-    key: "present_last_sunday",
-    label: "Último",
+    key: "missed_0",
+    label: "0 faltas",
     barClassName: "bg-emerald-600",
     textClassName: "text-emerald-600 dark:text-emerald-400",
   },
@@ -46,10 +46,10 @@ const memberAttendanceMeta: Array<{
     textClassName: "text-red-700 dark:text-red-300",
   },
   {
-    key: "missed_4_plus",
-    label: "4+ faltas",
-    barClassName: "bg-purple-700",
-    textClassName: "text-purple-700 dark:text-purple-300",
+    key: "no_history",
+    label: "Sem histórico",
+    barClassName: "bg-zinc-600",
+    textClassName: "text-zinc-700 dark:text-zinc-300",
   },
 ];
 
@@ -248,7 +248,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div
-                    aria-label={`${memberAttendanceCounts[0]} vieram no último domingo; ${memberAttendanceCounts[1]} faltaram 1; ${memberAttendanceCounts[2]} faltaram 2; ${memberAttendanceCounts[3]} faltaram 3; ${memberAttendanceCounts[4]} faltaram 4 ou mais domingos`}
+                    aria-label={`${memberAttendanceCounts[0]} não faltaram; ${memberAttendanceCounts[1]} faltaram 1 domingo; ${memberAttendanceCounts[2]} faltaram 2 domingos; ${memberAttendanceCounts[3]} faltaram 3 domingos; ${memberAttendanceCounts[4]} sem histórico`}
                     className="flex h-4 w-full overflow-hidden rounded-full bg-muted"
                     role="img"
                   >

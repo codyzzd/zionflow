@@ -20,6 +20,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
@@ -49,6 +50,7 @@ type LegacyLunchSchedule = LunchSchedule & {
 };
 
 type LunchListScope = "complete" | "missing";
+type MemberNameFormat = "full" | "first_last" | "first";
 
 type CompanionshipSelectProps = {
   companionships: LunchCompanionshipSnapshot[];
@@ -95,6 +97,7 @@ const weekdayOptions: Array<{ value: Weekday; label: string }> = [
 ];
 
 const weekdaysByIndex: Weekday[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const abbreviatedWeekdaysByIndex = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 function parseDate(date: string) {
   return new Date(`${date}T12:00:00`);
@@ -153,6 +156,15 @@ function isCompanionship(value: LunchCompanionshipSnapshot | undefined): value i
 
 function isHostFilled(host: HybridField) {
   return host.mode === "manual" ? Boolean(host.manualValue?.trim()) : Boolean(host.linkedId);
+}
+
+function formatMemberName(name: string, format: MemberNameFormat) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+
+  if (format === "full" || parts.length <= 1) return parts.join(" ");
+  if (format === "first") return parts[0];
+
+  return `${parts[0]} ${parts.at(-1)}`;
 }
 
 function CompanionshipIcon({ type, className }: { type: MissionaryCompanionship["type"]; className?: string }) {
@@ -260,7 +272,9 @@ export default function LunchCalendarPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const [lunchListScope, setLunchListScope] = useState<LunchListScope>("complete");
+  const [memberNameFormat, setMemberNameFormat] = useState<MemberNameFormat>("full");
   const [omitCompanionships, setOmitCompanionships] = useState(false);
+  const [showWeekdays, setShowWeekdays] = useState(false);
   const [lunchForm, setLunchForm] = useState<LunchForm>({ ...emptyLunchForm, date: todayDate() });
   const [error, setError] = useState("");
 
@@ -400,18 +414,19 @@ export default function LunchCalendarPage() {
     };
   }
 
-  function getHostMemberLabel(hostMemberId: string) {
-    return membersByWard.find((member) => member.id === hostMemberId)?.name ?? "Anfitrião não definido";
+  function getHostMemberLabel(hostMemberId: string, nameFormat: MemberNameFormat = "full") {
+    const memberName = membersByWard.find((member) => member.id === hostMemberId)?.name;
+    return memberName ? formatMemberName(memberName, nameFormat) : "Anfitrião não definido";
   }
 
-  function getLunchHostLabel(lunch: LegacyLunchSchedule) {
+  function getLunchHostLabel(lunch: LegacyLunchSchedule, nameFormat: MemberNameFormat = "full") {
     const host = getLunchHostField(lunch);
 
     if (host.mode === "manual") {
       return host.manualValue?.trim() || "Anfitrião não definido";
     }
 
-    return host.linkedId ? getHostMemberLabel(host.linkedId) : "Anfitrião não definido";
+    return host.linkedId ? getHostMemberLabel(host.linkedId, nameFormat) : "Anfitrião não definido";
   }
 
   function getLunchCompanionships(lunch: LunchSchedule) {
@@ -522,45 +537,53 @@ export default function LunchCalendarPage() {
   }
 
   function buildMonthLunchList() {
-    const lines = [`Calendário de almoços missionários - ${monthLabel(monthDate)}`, ""];
+    const formattedMonthLabel = monthLabel(monthDate);
+    const lines = [
+      "Calendário de almoços missionários",
+      formattedMonthLabel.charAt(0).toUpperCase() + formattedMonthLabel.slice(1),
+      "",
+    ];
 
     for (const item of visibleMonthDates) {
       const lunches = lunchesByDate.get(item.key) ?? [];
       const missingCompanionships = getMissingCompanionshipsForDate(item.key);
+      const dayPrefix = showWeekdays ? `${item.day}. ${abbreviatedWeekdaysByIndex[item.date.getDay()]} -` : `${item.day}.`;
 
       if (isPDayDate(item.date)) {
-        if (lunchListScope === "complete") lines.push(`${item.day}. P-DAY`);
+        if (lunchListScope === "complete") lines.push(`${dayPrefix} P-DAY`);
         continue;
       }
 
       if (lunchListScope === "missing" && activeCompanionships.length && !missingCompanionships.length) continue;
 
       if (!activeCompanionships.length) {
-        lines.push(`${item.day}. Nenhuma dupla ativa cadastrada`);
+        lines.push(`${dayPrefix} Nenhuma dupla ativa cadastrada`);
         continue;
       }
 
       const scheduledText = lunches.map((lunch) => {
-        if (omitCompanionships) return getLunchHostLabel(lunch);
+        const hostLabel = getLunchHostLabel(lunch, memberNameFormat);
+
+        if (omitCompanionships) return hostLabel;
 
         const companionshipNames = getLunchCompanionships(lunch)
           .map((companionship) => companionship.name)
           .join(", ");
 
-        return `${getLunchHostLabel(lunch)} - ${companionshipNames || "Dupla não definida"}`;
+        return `${hostLabel} - ${companionshipNames || "Dupla não definida"}`;
       });
       const missingNames = missingCompanionships.map((companionship) => companionship.name);
 
       if (!scheduledText.length) {
-        lines.push(omitCompanionships ? `${item.day}. Sem almoço ainda` : `${item.day}. Sem almoço ainda - faltam: ${missingNames.join(", ")}`);
+        lines.push(omitCompanionships ? `${dayPrefix} Sem almoço ainda` : `${dayPrefix} Sem almoço ainda - faltam: ${missingNames.join(", ")}`);
       } else if (missingNames.length) {
         lines.push(
           omitCompanionships
-            ? `${item.day}. ${scheduledText.join(" / ")} / Ainda faltam almoços`
-            : `${item.day}. ${scheduledText.join(" / ")} / Faltam: ${missingNames.join(", ")}`,
+            ? `${dayPrefix} ${scheduledText.join(" / ")} / Ainda faltam almoços`
+            : `${dayPrefix} ${scheduledText.join(" / ")} / Faltam: ${missingNames.join(", ")}`,
         );
       } else {
-        lines.push(`${item.day}. ${scheduledText.join(" / ")}`);
+        lines.push(`${dayPrefix} ${scheduledText.join(" / ")}`);
       }
     }
 
@@ -592,42 +615,110 @@ export default function LunchCalendarPage() {
                   Copiar lista
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg">
                 <DialogHeader>
                   <DialogTitle>Copiar lista de almoços</DialogTitle>
                   <DialogDescription>Configure o conteúdo que será copiado para compartilhar.</DialogDescription>
                 </DialogHeader>
 
                 <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="lunch-list-scope">Conteúdo da lista</Label>
-                    <Select value={lunchListScope} onValueChange={(value) => setLunchListScope(value as LunchListScope)}>
-                      <SelectTrigger className="w-full" id="lunch-list-scope">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="complete">Lista completa</SelectItem>
-                        <SelectItem value="missing">Somente dias que faltam</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <fieldset className="grid gap-2">
+                    <legend className="mb-2 font-medium">Conteúdo da lista</legend>
+                    <RadioGroup
+                      className="grid gap-2 sm:grid-cols-2"
+                      name="lunch-list-scope"
+                      onValueChange={(value) => setLunchListScope(value as LunchListScope)}
+                      value={lunchListScope}
+                    >
+                      {[
+                        { value: "complete" as const, label: "Lista completa" },
+                        { value: "missing" as const, label: "Somente dias que faltam" },
+                      ].map((option) => (
+                        <label
+                          className={cn(
+                            "flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-colors",
+                            lunchListScope === option.value ? "border-primary bg-primary/5" : "hover:bg-muted/50",
+                          )}
+                          key={option.value}
+                        >
+                          <RadioGroupItem value={option.value} />
+                          <span>{option.label}</span>
+                        </label>
+                      ))}
+                    </RadioGroup>
+                  </fieldset>
 
-                  <div className="flex items-start gap-3 rounded-lg border p-3">
-                    <Checkbox
-                      checked={omitCompanionships}
-                      id="omit-lunch-companionships"
-                      onCheckedChange={(checked) => setOmitCompanionships(checked === true)}
-                    />
-                    <div className="grid gap-1">
-                      <Label htmlFor="omit-lunch-companionships">Omitir nomes das duplas</Label>
-                      <p className="text-xs text-muted-foreground">Mostra somente os membros ou famílias anfitriãs em cada dia.</p>
+                  <fieldset className="grid gap-2">
+                    <legend className="mb-2 font-medium">Formato do nome dos membros</legend>
+                    <RadioGroup
+                      className="grid gap-2 sm:grid-cols-3"
+                      name="lunch-member-name-format"
+                      onValueChange={(value) => setMemberNameFormat(value as MemberNameFormat)}
+                      value={memberNameFormat}
+                    >
+                      {[
+                        { value: "full" as const, label: "Nome completo" },
+                        { value: "first_last" as const, label: "Primeiro e último" },
+                        { value: "first" as const, label: "Primeiro nome" },
+                      ].map((option) => (
+                        <label
+                          className={cn(
+                            "flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-colors",
+                            memberNameFormat === option.value ? "border-primary bg-primary/5" : "hover:bg-muted/50",
+                          )}
+                          key={option.value}
+                        >
+                          <RadioGroupItem value={option.value} />
+                          <span className="leading-tight">{option.label}</span>
+                        </label>
+                      ))}
+                    </RadioGroup>
+                  </fieldset>
+
+                  <fieldset className="grid gap-2">
+                    <legend className="mb-2 font-medium">Opções adicionais</legend>
+                    <div
+                      className={cn(
+                        "flex min-h-10 items-start gap-3 rounded-lg border p-3 transition-colors",
+                        omitCompanionships ? "border-primary bg-primary/5" : "hover:bg-muted/50",
+                      )}
+                    >
+                      <Checkbox
+                        checked={omitCompanionships}
+                        id="omit-lunch-companionships"
+                        onCheckedChange={(checked) => setOmitCompanionships(checked === true)}
+                      />
+                      <span className="grid gap-1">
+                        <Label className="cursor-pointer" htmlFor="omit-lunch-companionships">
+                          Omitir nomes das duplas
+                        </Label>
+                        <span className="text-xs text-muted-foreground">Mostra somente os membros ou famílias anfitriãs em cada dia.</span>
+                      </span>
                     </div>
-                  </div>
+                    <div
+                      className={cn(
+                        "flex min-h-10 items-start gap-3 rounded-lg border p-3 transition-colors",
+                        showWeekdays ? "border-primary bg-primary/5" : "hover:bg-muted/50",
+                      )}
+                    >
+                      <Checkbox
+                        checked={showWeekdays}
+                        id="show-lunch-weekdays"
+                        onCheckedChange={(checked) => setShowWeekdays(checked === true)}
+                      />
+                      <span className="grid gap-1">
+                        <Label className="cursor-pointer" htmlFor="show-lunch-weekdays">
+                          Mostrar dias da semana
+                        </Label>
+                        <span className="text-xs text-muted-foreground">Adiciona Seg, Ter, Qua e os demais dias após o número.</span>
+                      </span>
+                    </div>
+                  </fieldset>
 
                   <div className="grid gap-2">
                     <Label htmlFor="lunch-list-preview">Prévia</Label>
                     <Textarea
-                      className="max-h-72 min-h-48 resize-none font-mono text-xs leading-relaxed"
+                      className="max-h-72 min-h-40 resize-none font-mono text-xs leading-relaxed"
                       id="lunch-list-preview"
                       readOnly
                       value={buildMonthLunchList()}

@@ -1,168 +1,45 @@
 "use client";
 
-import { ChevronDown, MapPin, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Search, SlidersHorizontal, Users } from "lucide-react";
+import { MapPin, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Users } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-import { MemberDemographicPresetSelect } from "@/components/features/members/member-demographic-preset-select";
+import { memberActivityStatusLabels } from "@/components/features/members/member-visual-indicators";
 import { useAppContext } from "@/components/providers/app-provider";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGuard } from "@/components/shared/permission-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { buildMemberAttendanceSummaries, filterAttendanceRecordsThroughDate } from "@/lib/member-attendance-summary";
-import { cn, localTodayDate, normalizeDateInput } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { Member } from "@/types/domain";
-import type { MemberMapAttendanceBucket } from "@/components/features/members/member-map-canvas";
 
 const MemberMapCanvas = dynamic(() => import("@/components/features/members/member-map-canvas").then((mod) => mod.MemberMapCanvas), {
   loading: () => <div className="flex min-h-[420px] items-center justify-center rounded-lg border text-sm text-muted-foreground">Carregando mapa...</div>,
   ssr: false,
 });
 
-type AttendanceFilter = "all" | MemberMapAttendanceBucket;
-type MappingFilter = "all" | "mapped" | "unmapped";
-type SexFilter = "all" | Member["sex"];
-type FrequencyMember = Member & { attendanceBucketKey: MemberMapAttendanceBucket };
-type MappedMember = FrequencyMember & { latitude: number; longitude: number };
+type MappedMember = Member & { latitude: number; longitude: number };
 
-const attendanceBadgeMeta: Record<MemberMapAttendanceBucket, { className: string; label: string }> = {
-  present_last_sunday: {
-    className: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-    label: "Último",
-  },
-  missed_1: {
-    className: "border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-900 dark:bg-yellow-950 dark:text-yellow-300",
-    label: "1 falta",
-  },
-  missed_2: {
-    className: "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300",
-    label: "2 faltas",
-  },
-  missed_3: {
-    className: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
-    label: "3 faltas",
-  },
-  missed_4_plus: {
-    className: "border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-300",
-    label: "4+ faltas",
-  },
-  no_history: {
-    className: "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300",
-    label: "Sem histórico",
-  },
+const activityBadgeClassNames: Record<Member["churchActivityStatus"], string> = {
+  away: "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300",
+  attending: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
+  not_attending: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
 };
-const mapSelectContentClassName = "z-[1100]";
-const markerStyle = "circle";
 
-function isMappedMember(member: FrequencyMember): member is MappedMember {
+function isMappedMember(member: Member): member is MappedMember {
   return typeof member.latitude === "number" && Number.isFinite(member.latitude) && typeof member.longitude === "number" && Number.isFinite(member.longitude);
 }
 
-function normalizeSearch(value: string) {
-  return value.trim().toLocaleLowerCase("pt-BR");
-}
-
-function calculateAge(birthDate: string) {
-  const normalizedDate = normalizeDateInput(birthDate);
-  if (!normalizedDate) return null;
-
-  const today = new Date();
-  const birth = new Date(`${normalizedDate}T12:00:00`);
-  let age = today.getFullYear() - birth.getFullYear();
-  const birthdayThisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
-
-  if (today < birthdayThisYear) {
-    age -= 1;
-  }
-
-  return age >= 0 ? age : null;
-}
-
-function parseAgeFilterValue(value: string) {
-  if (!value.trim()) return null;
-
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function matchesAgeRange(age: number | null, minimum: number | null, maximum: number | null) {
-  if (minimum === null && maximum === null) return true;
-  if (age === null) return false;
-  if (minimum !== null && age < minimum) return false;
-  if (maximum !== null && age > maximum) return false;
-
-  return true;
-}
-
 export default function MembersMapPage() {
-  const { currentWard, memberAttendanceRecordsByWard, membersByWard } = useAppContext();
-  const [search, setSearch] = useState("");
-  const [attendanceFilter, setAttendanceFilter] = useState<AttendanceFilter>("all");
-  const [mappingFilter, setMappingFilter] = useState<MappingFilter>("all");
-  const [sexFilter, setSexFilter] = useState<SexFilter>("all");
-  const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
-  const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
-  const [clusterEnabled, setClusterEnabled] = useState(true);
+  const { currentWard, membersByWard } = useAppContext();
   const [selectedMemberId, setSelectedMemberId] = useState<string | undefined>();
   const [selectedMemberFocusKey, setSelectedMemberFocusKey] = useState(0);
   const [fullScreen, setFullScreen] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const [fullScreenFiltersOpen, setFullScreenFiltersOpen] = useState(false);
-
-  const membersWithFrequency = useMemo<FrequencyMember[]>(() => {
-    const activeMemberIds = new Set(membersByWard.map((member) => member.id));
-    const attendanceRecords = filterAttendanceRecordsThroughDate(
-      memberAttendanceRecordsByWard.filter((record) => activeMemberIds.has(record.memberId)),
-      localTodayDate(),
-    );
-    if (!attendanceRecords.length) {
-      return membersByWard.map((member) => ({ ...member, attendanceBucketKey: "no_history" }));
-    }
-
-    const summariesByMemberId = new Map(
-      buildMemberAttendanceSummaries(membersByWard, attendanceRecords).map((summary) => [summary.member.id, summary]),
-    );
-
-    return membersByWard.map((member) => ({
-      ...member,
-      attendanceBucketKey: summariesByMemberId.get(member.id)?.bucketKey ?? "no_history",
-    }));
-  }, [memberAttendanceRecordsByWard, membersByWard]);
-  const mappedMembers = useMemo(() => membersWithFrequency.filter(isMappedMember), [membersWithFrequency]);
-  const unmappedMembers = useMemo(() => membersWithFrequency.filter((member) => !isMappedMember(member)), [membersWithFrequency]);
-  const minimumAge = useMemo(() => parseAgeFilterValue(minimumAgeFilter), [minimumAgeFilter]);
-  const maximumAge = useMemo(() => parseAgeFilterValue(maximumAgeFilter), [maximumAgeFilter]);
-
-  const filteredMembers = useMemo(() => {
-    const normalizedSearch = normalizeSearch(search);
-
-    return membersWithFrequency.filter((member) => {
-      const mapped = isMappedMember(member);
-      const matchesSearch =
-        !normalizedSearch ||
-        member.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
-        member.address.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
-        member.phone.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
-      const age = calculateAge(member.birthDate);
-      const matchesAttendance = attendanceFilter === "all" || member.attendanceBucketKey === attendanceFilter;
-      const matchesMapping = mappingFilter === "all" || (mappingFilter === "mapped" ? mapped : !mapped);
-      const matchesSex = sexFilter === "all" || member.sex === sexFilter;
-      const matchesAge = matchesAgeRange(age, minimumAge, maximumAge);
-
-      return matchesSearch && matchesAttendance && matchesMapping && matchesSex && matchesAge;
-    });
-  }, [attendanceFilter, mappingFilter, maximumAge, membersWithFrequency, minimumAge, search, sexFilter]);
-
-  const filteredMappedMembers = useMemo(() => filteredMembers.filter(isMappedMember), [filteredMembers]);
-  const filteredUnmappedMembers = useMemo(() => filteredMembers.filter((member) => !isMappedMember(member)), [filteredMembers]);
+  const mappedMembers = useMemo(() => membersByWard.filter(isMappedMember), [membersByWard]);
+  const unmappedMembers = useMemo(() => membersByWard.filter((member) => !isMappedMember(member)), [membersByWard]);
 
   function selectMember(member: Member) {
     setSelectedMemberId(member.id);
@@ -170,7 +47,6 @@ export default function MembersMapPage() {
   }
 
   function enterFullScreen() {
-    setFullScreenFiltersOpen(false);
     setFullScreen(true);
   }
 
@@ -192,119 +68,7 @@ export default function MembersMapPage() {
     </div>
   );
 
-  const filters = (
-    <div
-      className={cn(
-        "grid items-end gap-3 rounded-lg border bg-card p-3",
-        fullScreen ? "grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-[minmax(200px,1fr)_180px_130px_150px_105px_105px_140px_minmax(190px,auto)]",
-      )}
-    >
-      <div>
-        <Label className="text-xs">Busca</Label>
-        <div className="relative mt-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Nome, telefone ou endereço" value={search} onChange={(event) => setSearch(event.target.value)} />
-        </div>
-      </div>
-      <MemberDemographicPresetSelect
-        contentClassName={mapSelectContentClassName}
-        filter={{ maximumAge: maximumAgeFilter, minimumAge: minimumAgeFilter, sex: sexFilter }}
-        label="Preset"
-        onApply={(preset) => {
-          setSexFilter(preset.sex);
-          setMinimumAgeFilter(preset.minimumAge);
-          setMaximumAgeFilter(preset.maximumAge);
-        }}
-        triggerClassName="mt-1"
-      />
-      <div>
-        <Label className="text-xs">Sexo</Label>
-        <Select value={sexFilter} onValueChange={(value) => setSexFilter(value as SexFilter)}>
-          <SelectTrigger className="mt-1 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className={mapSelectContentClassName}>
-            <SelectItem value="all">Todos os sexos</SelectItem>
-            <SelectItem value="M">Masculino</SelectItem>
-            <SelectItem value="F">Feminino</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <Label className="text-xs">Situação</Label>
-        <Select value={attendanceFilter} onValueChange={(value) => setAttendanceFilter(value as AttendanceFilter)}>
-          <SelectTrigger className="mt-1 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className={mapSelectContentClassName}>
-            <SelectItem value="all">Todas as situações</SelectItem>
-            <SelectItem value="present_last_sunday">Veio no último domingo</SelectItem>
-            <SelectItem value="missed_1">Faltou 1 domingo</SelectItem>
-            <SelectItem value="missed_2">Faltou 2 domingos</SelectItem>
-            <SelectItem value="missed_3">Faltou 3 domingos</SelectItem>
-            <SelectItem value="missed_4_plus">Não vêm há 4+ domingos</SelectItem>
-            <SelectItem value="no_history">Sem histórico importado</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <Label className="text-xs">Idade mín.</Label>
-        <Input
-          className="mt-1"
-          inputMode="numeric"
-          min={0}
-          placeholder="Idade mín."
-          type="number"
-          value={minimumAgeFilter}
-          onChange={(event) => setMinimumAgeFilter(event.target.value)}
-        />
-      </div>
-      <div>
-        <Label className="text-xs">Idade máx.</Label>
-        <Input
-          className="mt-1"
-          inputMode="numeric"
-          min={0}
-          placeholder="Idade máx."
-          type="number"
-          value={maximumAgeFilter}
-          onChange={(event) => setMaximumAgeFilter(event.target.value)}
-        />
-      </div>
-      <div>
-        <Label className="text-xs">Mapeamento</Label>
-        <Select value={mappingFilter} onValueChange={(value) => setMappingFilter(value as MappingFilter)}>
-          <SelectTrigger className="mt-1 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className={mapSelectContentClassName}>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="mapped">Mapeados</SelectItem>
-            <SelectItem value="unmapped">Não mapeados</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <label className="flex h-10 items-center gap-3 rounded-md border bg-background px-3 text-sm">
-        <Checkbox checked={clusterEnabled} onCheckedChange={(checked) => setClusterEnabled(checked === true)} />
-        <span className="leading-tight">Agrupar pinos sobrepostos</span>
-      </label>
-    </div>
-  );
-
-  const fullScreenFilters = (
-    <Collapsible className="group/map-filters" onOpenChange={setFullScreenFiltersOpen} open={fullScreenFiltersOpen}>
-      <CollapsibleTrigger asChild>
-        <Button className="h-9 w-full justify-between px-3 text-sm" variant="outline">
-          <span className="inline-flex items-center gap-2">
-            <SlidersHorizontal className="size-4" />
-            Filtros
-          </span>
-          <ChevronDown className="size-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]/map-filters:rotate-180" />
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="pt-3">{filters}</CollapsibleContent>
-    </Collapsible>
-  );
+  const legend = <MapLegend />;
 
   const memberList = (
     <aside
@@ -314,23 +78,23 @@ export default function MembersMapPage() {
       )}
     >
       <div className={cn("border-b px-4", fullScreen ? "py-2.5" : "py-3")}>
-        <p className="font-medium">Membros filtrados</p>
+        <p className="font-medium">Membros</p>
         <p className={cn("text-muted-foreground", fullScreen ? "text-[11px]" : "text-xs")}>
-          {filteredMappedMembers.length} mapeados, {filteredUnmappedMembers.length} não mapeados
+          {mappedMembers.length} mapeados, {unmappedMembers.length} não mapeados
         </p>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {filteredMembers.length ? (
+        {membersByWard.length ? (
           <div className="space-y-2">
-            {filteredMappedMembers.map((member) => (
+            {mappedMembers.map((member) => (
               <MemberListButton key={member.id} member={member} onSelect={selectMember} selected={member.id === selectedMemberId} />
             ))}
 
-            {filteredUnmappedMembers.length ? (
+            {unmappedMembers.length ? (
               <div className="pt-2">
                 <div className="mb-2 px-2 text-xs font-medium uppercase text-muted-foreground">Não mapeados</div>
                 <div className="space-y-2">
-                  {filteredUnmappedMembers.map((member) => (
+                  {unmappedMembers.map((member) => (
                     <MemberListButton key={member.id} member={member} onSelect={selectMember} selected={member.id === selectedMemberId} />
                   ))}
                 </div>
@@ -338,7 +102,7 @@ export default function MembersMapPage() {
             ) : null}
           </div>
         ) : (
-          <div className="flex min-h-[240px] items-center justify-center px-4 text-center text-sm text-muted-foreground">Nenhum membro encontrado com os filtros atuais.</div>
+          <div className="flex min-h-[240px] items-center justify-center px-4 text-center text-sm text-muted-foreground">Nenhum membro cadastrado.</div>
         )}
       </div>
     </aside>
@@ -350,9 +114,7 @@ export default function MembersMapPage() {
         <div className="member-map-fullscreen fixed inset-0 z-40 isolate bg-background">
           <div className="absolute inset-0 z-0">
             <MemberMapCanvas
-              clusterEnabled={clusterEnabled}
-              markerStyle={markerStyle}
-              members={filteredMappedMembers}
+              members={mappedMembers}
               onSelectMember={setSelectedMemberId}
               selectedMemberFocusKey={selectedMemberFocusKey}
               selectedMemberId={selectedMemberId}
@@ -389,7 +151,7 @@ export default function MembersMapPage() {
               </div>
               <div className="space-y-3">
                 {subtleStats}
-                {fullScreenFilters}
+                {legend}
               </div>
             </div>
             {memberList}
@@ -416,13 +178,11 @@ export default function MembersMapPage() {
             </Button>
           </div>
           {stats}
-          {filters}
+          {legend}
 
-          <div className="grid gap-4 xl:h-[calc(100dvh-26rem)] xl:min-h-[420px] xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 xl:h-[calc(100dvh-22rem)] xl:min-h-[420px] xl:grid-cols-[minmax(0,1fr)_360px]">
             <MemberMapCanvas
-              clusterEnabled={clusterEnabled}
-              markerStyle={markerStyle}
-              members={filteredMappedMembers}
+              members={mappedMembers}
               onSelectMember={setSelectedMemberId}
               selectedMemberFocusKey={selectedMemberFocusKey}
               selectedMemberId={selectedMemberId}
@@ -447,7 +207,15 @@ function StatTile({ compact, icon, label, value }: { compact?: boolean; icon: Re
   );
 }
 
-function MemberListButton({ member, onSelect, selected }: { member: FrequencyMember; onSelect: (member: Member) => void; selected: boolean }) {
+function MemberListButton({
+  member,
+  onSelect,
+  selected,
+}: {
+  member: Member;
+  onSelect: (member: Member) => void;
+  selected: boolean;
+}) {
   const mapped = isMappedMember(member);
 
   return (
@@ -462,8 +230,11 @@ function MemberListButton({ member, onSelect, selected }: { member: FrequencyMem
             <p className="truncate text-sm font-medium">{member.name}</p>
             <p className="truncate text-xs text-muted-foreground">{member.address || "Sem endereço informado"}</p>
           </div>
-          <Badge className={attendanceBadgeMeta[member.attendanceBucketKey].className} variant="outline">
-            {attendanceBadgeMeta[member.attendanceBucketKey].label}
+          <Badge
+            className={activityBadgeClassNames[member.churchActivityStatus]}
+            variant="outline"
+          >
+            {memberActivityStatusLabels[member.churchActivityStatus]}
           </Badge>
         </div>
       </button>
@@ -476,5 +247,24 @@ function MemberListButton({ member, onSelect, selected }: { member: FrequencyMem
         </Link>
       </div>
     </div>
+  );
+}
+
+function MapLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-3 py-2 text-xs">
+      <LegendItem className="bg-emerald-600" label="Frequentando" />
+      <LegendItem className="bg-red-600" label="Não frequentando" />
+      <LegendItem className="bg-zinc-500" label="Afastado" />
+    </div>
+  );
+}
+
+function LegendItem({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className={cn("size-3 rounded-full border border-white shadow-sm", className)} />
+      {label}
+    </span>
   );
 }

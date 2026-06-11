@@ -423,8 +423,20 @@ html.dark {
   width: 5px;
 }
 
-.member-map-marker-present-last-sunday span {
+.member-map-marker-missed-0 span {
   background: var(--member-map-emerald);
+}
+
+.member-map-marker-attending span {
+  background: var(--member-map-emerald);
+}
+
+.member-map-marker-not-attending span {
+  background: var(--member-map-red);
+}
+
+.member-map-marker-away span {
+  background: var(--member-map-zinc);
 }
 
 .member-map-marker-missed-1 span {
@@ -437,10 +449,6 @@ html.dark {
 
 .member-map-marker-missed-3 span {
   background: var(--member-map-red);
-}
-
-.member-map-marker-missed-4-plus span {
-  background: var(--member-map-purple);
 }
 
 .member-map-marker-no-history span {

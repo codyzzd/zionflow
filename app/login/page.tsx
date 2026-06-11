@@ -139,13 +139,26 @@ export default function LoginPage() {
           return;
         }
 
-        if (data.session) {
+        if (data.session && data.user?.email) {
+          const resolution = resolveAuthenticatedUser({
+            authUserId: data.user.id,
+            email: data.user.email,
+            auditLogin: true,
+          });
+
+          if (resolution.status === "inactive") {
+            await supabase.auth.signOut();
+            logout();
+            toast.error("Este usuário está inativo no sistema.");
+            return;
+          }
+
           toast.success("Conta criada.");
-          router.push("/onboarding");
+          router.push(resolution.status === "found" ? resolution.route : "/onboarding");
           return;
         }
 
-        toast.success("Conta criada. Confira seu email para confirmar o acesso.");
+        toast.info("Conta criada, mas o acesso não foi iniciado. Entre com seu email e senha.");
         setMode("login");
         return;
       }
