@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CheckSquare, ChevronDown, Download, Eye, FileUp, MapPin, Pencil, RotateCcw, SlidersHorizontal, Trash2, UserCheck, X } from "lucide-react";
+import { CheckSquare, ChevronDown, Download, Eye, FileUp, Loader2, MapPin, Pencil, RotateCcw, SlidersHorizontal, Trash2, UserCheck, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -197,6 +197,7 @@ export default function MembersPage() {
   const [actionDialog, setActionDialog] = useState<MemberActionDialog>(null);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("create");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [memberSaving, setMemberSaving] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("data");
   const [progressOccurredAt, setProgressOccurredAt] = useState(() => toDateTimeLocalValue());
   const [progressText, setProgressText] = useState("");
@@ -314,7 +315,9 @@ export default function MembersPage() {
     [activityStatusFilter, allMembersByWard, coordinatesFilter, getMemberFrequencyResolution, maximumAge, memberStatusFilter, minimumAge, search, sexFilter, talkDurationFilter],
   );
 
-  function handleDrawerOpenChange(open: boolean) {
+  function handleDrawerOpenChange(open: boolean, force = false) {
+    if (!open && memberSaving && !force) return;
+
     setDrawerOpen(open);
 
     if (!open) {
@@ -465,22 +468,35 @@ export default function MembersPage() {
     handleDrawerOpenChange(false);
   }
 
-  function saveCurrentMember() {
-    if (!currentWard || !form.name.trim() || coordinatesInputInvalid) return;
+  async function saveCurrentMember() {
+    if (!currentWard || !form.name.trim() || coordinatesInputInvalid || memberSaving) return;
 
-    saveMember({
-      id: selectedMember?.id,
-      wardId: currentWard.id,
-      ...form,
-      address: form.address.trim(),
-      birthDate: form.birthDate.trim(),
-      name: form.name.trim(),
-      observation: form.observation.trim(),
-      organization: form.organization.trim(),
-      phone: form.phone.trim(),
-    });
+    setMemberSaving(true);
+    const exists = Boolean(selectedMember);
+    const result = saveMember(
+      {
+        id: selectedMember?.id,
+        wardId: currentWard.id,
+        ...form,
+        address: form.address.trim(),
+        birthDate: form.birthDate.trim(),
+        name: form.name.trim(),
+        observation: form.observation.trim(),
+        organization: form.organization.trim(),
+        phone: form.phone.trim(),
+      },
+      { persistImmediately: true, silent: true },
+    );
+    const persisted = await result.persisted;
+    setMemberSaving(false);
 
-    closeDrawer();
+    if (!persisted) {
+      toast.error("Não foi possível salvar o membro no Supabase. Revise os dados e tente novamente.");
+      return;
+    }
+
+    toast.success(exists ? "Membro atualizado." : "Membro cadastrado.");
+    handleDrawerOpenChange(false, true);
   }
 
   function updateCoordinatesInput(value: string) {
@@ -1493,7 +1509,7 @@ export default function MembersPage() {
 
               <DrawerFooter className="border-t bg-background">
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                  <Button onClick={closeDrawer} variant="ghost">
+                  <Button disabled={memberSaving} onClick={closeDrawer} variant="ghost">
                     {isReadOnly ? "Fechar" : "Cancelar"}
                   </Button>
                   {drawerTab !== "progress" && canManageMembers && selectedMember?.archivedAt ? (
@@ -1515,7 +1531,8 @@ export default function MembersPage() {
                     <Button onClick={() => openEditDrawer(selectedMember)}>Editar membro</Button>
                   ) : null}
                   {!isReadOnly ? (
-                    <Button disabled={!currentWard || !form.name.trim() || coordinatesInputInvalid} onClick={saveCurrentMember}>
+                    <Button disabled={!currentWard || !form.name.trim() || coordinatesInputInvalid || memberSaving} onClick={saveCurrentMember}>
+                      {memberSaving ? <Loader2 className="animate-spin" /> : null}
                       {drawerMode === "edit" ? "Salvar alterações" : "Cadastrar membro"}
                     </Button>
                   ) : null}

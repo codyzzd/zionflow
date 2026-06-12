@@ -1740,7 +1740,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             .then(() => true)
             .catch((error) => {
               console.error("Failed to save member directly.", error);
-              if (!saveErrorShownRef.current) {
+              if (!options.silent && !saveErrorShownRef.current) {
                 toast.error("Nao foi possivel salvar o membro no Supabase.");
                 saveErrorShownRef.current = true;
               }
