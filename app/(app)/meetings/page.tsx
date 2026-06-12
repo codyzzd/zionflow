@@ -1047,25 +1047,27 @@ export default function MinutesPage() {
                   <ExternalLink />
                 </Link>
               </TableActionButton>
-              <TableActionButton
-                label="Duplicar ata"
-                onClick={() => {
-                  if (!currentWard) return;
-                  const nextDate = new Date(`${minute.date}T12:00:00`);
-                  nextDate.setDate(nextDate.getDate() + 7);
-                  saveMinute({
-                    wardId: currentWard.id,
-                    title: buildMinuteTitle(nextDate.toISOString().slice(0, 10)),
-                    date: nextDate.toISOString().slice(0, 10),
-                    status: "draft",
-                    presidency: minute.presidency,
-                    responsibleUserId: minute.responsibleUserId,
-                    form: { ...minute.form, weather: undefined },
-                  });
-                }}
-              >
-                <Copy />
-              </TableActionButton>
+              {canManageMinutes ? (
+                <TableActionButton
+                  label="Duplicar ata"
+                  onClick={() => {
+                    if (!canManageMinutes || !currentWard) return;
+                    const nextDate = new Date(`${minute.date}T12:00:00`);
+                    nextDate.setDate(nextDate.getDate() + 7);
+                    saveMinute({
+                      wardId: currentWard.id,
+                      title: buildMinuteTitle(nextDate.toISOString().slice(0, 10)),
+                      date: nextDate.toISOString().slice(0, 10),
+                      status: "draft",
+                      presidency: minute.presidency,
+                      responsibleUserId: minute.responsibleUserId,
+                      form: { ...minute.form, weather: undefined },
+                    });
+                  }}
+                >
+                  <Copy />
+                </TableActionButton>
+              ) : null}
               {canManageMinutes ? (
                 <DeleteTableActionButton
                   disabled={isMinuteLockedByOther(minute)}
