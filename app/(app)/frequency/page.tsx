@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Gauge, Minus, TrendingDown, TrendingUp, UsersRound, ExternalLink, Pencil } from "lucide-react";
+import { Minus, TrendingDown, TrendingUp, UsersRound, ExternalLink, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -19,6 +19,17 @@ import { Label } from "@/components/ui/label";
 import { TableActionButton } from "@/components/ui/table-action-button";
 import { TablePrimaryAction } from "@/components/ui/table-primary-action";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
+import {
+  averageFrequency,
+  compactFrequencyTrendLabel,
+  historicalPredictionReliability,
+  predictedFrequencyTrend,
+  projectedFrequencyScenarios,
+  recentFrequencyValues,
+  registeredAttendingSharePercent,
+  reliabilityLevel,
+  retrospectiveFrequencyComparisons,
+} from "@/lib/frequency-forecast";
 import { fetchMinuteWeather, WARD_WEATHER_REQUIRED_MESSAGE } from "@/lib/minute-weather";
 import { cn, todayDate } from "@/lib/utils";
 import type { SacramentMinute } from "@/types/domain";
@@ -77,13 +88,13 @@ function attendanceChangeToneClass(percent: number | null) {
 }
 
 function attendanceShareLabel(attendance: number, activeMemberCount: number) {
-  if (!activeMemberCount || attendance <= 0) return null;
+  if (!activeMemberCount || attendance <= 0 || attendance > activeMemberCount) return null;
   return `${attendanceSharePercentLabel(attendance, activeMemberCount)} dos frequentando`;
 }
 
 function attendanceSharePercentLabel(attendance: number, activeMemberCount: number) {
-  if (!activeMemberCount || attendance <= 0) return null;
-  return `${Math.round((attendance / activeMemberCount) * 100)}%`;
+  const percent = registeredAttendingSharePercent(attendance, activeMemberCount);
+  return percent === null ? null : `${percent}%`;
 }
 
 function toDateInputValue(date: Date) {
@@ -102,67 +113,12 @@ function nextSundayDates(afterDate: string, count: number) {
   });
 }
 
-function linearRegression(minutes: SacramentMinute[]) {
-  if (!minutes.length) return { intercept: 0, residualStdDev: 0, slope: 0 };
-  if (minutes.length === 1) return { intercept: minutes[0].form.attendance, residualStdDev: 0, slope: 0 };
-
-  const points = minutes.map((minute, index) => ({ x: index, y: minute.form.attendance }));
-  const xAverage = points.reduce((total, point) => total + point.x, 0) / points.length;
-  const yAverage = points.reduce((total, point) => total + point.y, 0) / points.length;
-  const numerator = points.reduce((total, point) => total + (point.x - xAverage) * (point.y - yAverage), 0);
-  const denominator = points.reduce((total, point) => total + (point.x - xAverage) ** 2, 0);
-  const slope = denominator === 0 ? 0 : numerator / denominator;
-  const intercept = yAverage - slope * xAverage;
-  const residuals = points.map((point) => point.y - (intercept + slope * point.x));
-  const residualVariance = residuals.reduce((total, residual) => total + residual ** 2, 0) / Math.max(1, residuals.length - 1);
-
-  return { intercept, residualStdDev: Math.sqrt(residualVariance), slope };
-}
-
-function projectedAttendanceScenarios(minutes: SacramentMinute[], count: number) {
-  if (!minutes.length) return [];
-
-  const { intercept, residualStdDev, slope } = linearRegression(minutes);
-  const average = averageAttendance(minutes);
-  const minimumScenarioGap = Math.max(3, Math.round(average * 0.08));
-
-  return Array.from({ length: count }, (_, index) => {
-    const step = index + 1;
-    const normal = Math.max(0, Math.round(intercept + slope * (minutes.length + index)));
-    const uncertainty = Math.max(minimumScenarioGap, Math.round(residualStdDev * Math.sqrt(step) * 0.85));
-
-    return {
-      normal,
-      lower: Math.max(0, normal - uncertainty),
-      upper: Math.max(0, normal + uncertainty),
-    };
-  });
-}
-
-function predictedAttendanceFromPrevious(minutes: SacramentMinute[]) {
-  if (minutes.length < 2) return null;
-
-  const { intercept, slope } = linearRegression(minutes);
-  return Math.max(0, Math.round(intercept + slope * minutes.length));
-}
-
 function retrospectiveAttendanceComparisons(minutes: SacramentMinute[]) {
-  const comparisons = new Map<string, { delta: number; predicted: number }>();
   const filled = [...minutes]
     .filter((minute) => minute.form.attendance > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  filled.forEach((minute, index) => {
-    const predicted = predictedAttendanceFromPrevious(filled.slice(0, index));
-    if (predicted === null) return;
-
-    comparisons.set(minute.id, {
-      delta: minute.form.attendance - predicted,
-      predicted,
-    });
-  });
-
-  return comparisons;
+  return retrospectiveFrequencyComparisons(filled.map((minute) => ({ id: minute.id, attendance: minute.form.attendance })));
 }
 
 function predictionDeltaLabel(delta: number) {
@@ -175,6 +131,34 @@ function predictionDeltaToneClass(delta: number) {
   if (delta > 0) return "text-emerald-600 dark:text-emerald-400";
   if (delta < 0) return "text-red-600 dark:text-red-400";
   return "text-muted-foreground";
+}
+
+function frequencyGoalValue(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.round(value) : null;
+}
+
+function frequencyGoalPercentLabel(attendance: number | undefined, goal: number | null) {
+  if (!goal || typeof attendance !== "number" || attendance <= 0) return null;
+  return `${Math.round((attendance / goal) * 100)}% da meta`;
+}
+
+function frequencyGoalGapLabel(attendance: number | undefined, goal: number | null) {
+  if (!goal || typeof attendance !== "number" || attendance <= 0) return "-";
+
+  const gap = goal - attendance;
+  if (gap > 0) return `${gap} abaixo da meta`;
+  if (gap < 0) return `${Math.abs(gap)} acima da meta`;
+  return "Na meta";
+}
+
+function frequencyGoalGapSummary(attendance: number | undefined, goal: number | null) {
+  if (!goal) return { value: "-", description: "Defina uma meta" };
+  if (typeof attendance !== "number" || attendance <= 0) return { value: "-", description: "Sem frequência atual" };
+
+  const gap = goal - attendance;
+  if (gap > 0) return { value: `${gap} pessoas`, description: "para atingir a meta" };
+  if (gap < 0) return { value: `${Math.abs(gap)} acima`, description: "meta ultrapassada" };
+  return { value: "Na meta", description: "objetivo atingido" };
 }
 
 function buildLinePath(points: Array<{ x: number; y: number }>) {
@@ -218,28 +202,6 @@ function chartTooltip(point: ChartPoint, dateLabel: string) {
   }
 
   return details.join("\n");
-}
-
-function predictedTrendSummary(projections: ChartPoint[]) {
-  const projectedPoints = projections.filter((point) => point.type === "projection");
-  if (projectedPoints.length < 2) return "Tendência prevista: sem base suficiente";
-
-  const first = projectedPoints[0].attendance;
-  const last = projectedPoints.at(-1)?.attendance ?? first;
-  const delta = last - first;
-
-  if (delta >= 4) return "Tendência prevista: alta provável";
-  if (delta <= -4) return "Tendência prevista: queda provável";
-  if (delta > 0) return "Tendência prevista: estabilidade com leve chance de alta";
-  if (delta < 0) return "Tendência prevista: estabilidade com leve chance de queda";
-  return "Tendência prevista: estabilidade";
-}
-
-function projectionConfidenceLabel(realCount: number, residualStdDev: number, average: number) {
-  if (realCount < 3) return "baixa";
-  if (!average || residualStdDev / average > 0.18) return "baixa";
-  if (residualStdDev / average > 0.1) return "média";
-  return "alta";
 }
 
 function predictedTrendTone(label: string) {
@@ -292,7 +254,7 @@ function sentenceCase(value: string) {
 }
 
 export default function FrequencyPage() {
-  const { currentWard, hasPermission, membersByWard, minutesByWard, saveMinute } = useAppContext();
+  const { currentWard, hasPermission, membersByWard, minutesByWard, saveMinute, saveWard } = useAppContext();
   const { formatDate } = useDateFormatter();
   const canManageFrequency = hasPermission("frequency.manage");
 
@@ -309,6 +271,9 @@ export default function FrequencyPage() {
   const [search, setSearch] = useState("");
   const [selectedMinuteId, setSelectedMinuteId] = useState<string | null>(null);
   const [attendanceDraft, setAttendanceDraft] = useState("");
+  const [goalDrawerOpen, setGoalDrawerOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
+  const [goalError, setGoalError] = useState("");
 
   const sortedMinutes = useMemo(
     () => [...minutesByWard].sort((a, b) => b.date.localeCompare(a.date)),
@@ -333,13 +298,15 @@ export default function FrequencyPage() {
   const pendingMinutes = sortedMinutes.filter((minute) => minute.form.attendance === 0 && minute.date <= todayDate());
   const lastFilledMinute = filledMinutes[0];
   const attendanceChangePercentValue = attendanceChangePercent(filledMinutes);
+  const frequencyGoal = frequencyGoalValue(currentWard?.frequencyGoal);
+  const currentGoalGap = frequencyGoalGapSummary(lastFilledMinute?.form.attendance, frequencyGoal);
   const realTrendMinutes = [...filledMinutes].reverse();
+  const realTrendValues = realTrendMinutes.map((minute) => minute.form.attendance);
+  const recentTrendValues = recentFrequencyValues(realTrendValues);
   const visibleRealTrendMinutes = realTrendMinutes.slice(-8);
   const projectionDates = lastFilledMinute ? nextSundayDates(lastFilledMinute.date, 4) : [];
-  const projectionValues = projectedAttendanceScenarios(realTrendMinutes, 4);
-  const nextProjectionShareLabel = projectionValues[0] ? attendanceShareLabel(projectionValues[0].normal, activeMemberCount) : null;
-  const expectedAttendance = averageAttendance(realTrendMinutes);
-  const { residualStdDev } = linearRegression(realTrendMinutes);
+  const projectionValues = projectedFrequencyScenarios(realTrendValues, 4);
+  const expectedAttendance = averageFrequency(recentTrendValues);
   const attendanceComparisons = useMemo(() => retrospectiveAttendanceComparisons(sortedMinutes), [sortedMinutes]);
   const trendData: ChartPoint[] = [
     ...visibleRealTrendMinutes.map((minute) => ({
@@ -360,7 +327,10 @@ export default function FrequencyPage() {
       type: "projection" as const,
     })),
   ];
-  const chartValues = trendData.flatMap((point) => [point.attendance, point.expected, point.upper, point.lower].filter((value): value is number => typeof value === "number"));
+  const chartValues = [
+    ...trendData.flatMap((point) => [point.attendance, point.expected, point.upper, point.lower].filter((value): value is number => typeof value === "number")),
+    ...(frequencyGoal ? [frequencyGoal] : []),
+  ];
   const chartMinValue = Math.max(0, Math.min(...chartValues, 0) - 8);
   const chartMaxValue = Math.max(...chartValues, 1) + 8;
   const chartRange = Math.max(1, chartMaxValue - chartMinValue);
@@ -389,13 +359,19 @@ export default function FrequencyPage() {
   const uncertaintyAreaPath = buildAreaPath(projectionCoordinates);
   const expectedLinePath = buildLinePath(chartCoordinates.filter((point) => typeof point.expectedY === "number").map((point) => ({ x: point.x, y: point.expectedY! })));
   const projectedRangeValues = projectionCoordinates.flatMap((point) => [point.lower, point.upper].filter((value): value is number => typeof value === "number"));
-  const projectedRangeLabel = projectedRangeValues.length ? `${Math.min(...projectedRangeValues)} a ${Math.max(...projectedRangeValues)} pessoas` : "-";
-  const confidenceLabel = projectionConfidenceLabel(realTrendMinutes.length, residualStdDev, expectedAttendance);
-  const predictedTrendLabel = predictedTrendSummary(trendData);
-  const predictedTrendDisplay = predictedTrendLabel.replace("Tendência prevista: ", "");
+  const projectedRangeLabel = projectedRangeValues.length ? `${Math.min(...projectedRangeValues)}–${Math.max(...projectedRangeValues)}` : "-";
+  const reliabilityLabel = historicalPredictionReliability(attendanceComparisons.values(), expectedAttendance, projectionValues, realTrendValues.length);
+  const reliabilityBars = reliabilityLevel(reliabilityLabel);
+  const predictedTrendLabel = predictedFrequencyTrend(lastFilledMinute?.form.attendance, projectionValues[0]?.normal, realTrendValues);
+  const predictedTrendDisplay = compactFrequencyTrendLabel(predictedTrendLabel);
   const predictedTrendStyle = predictedTrendTone(predictedTrendLabel);
   const PredictedTrendIcon = predictedTrendStyle.icon;
-  const confidenceStyle = confidenceTone(confidenceLabel);
+  const reliabilityStyle = confidenceTone(reliabilityLabel);
+  const nextProjectionAttendance = projectionValues[0]?.normal;
+  const goalY =
+    frequencyGoal && chartValues.length
+      ? CHART_PADDING_TOP + ((chartMaxValue - frequencyGoal) / chartRange) * chartInnerHeight
+      : null;
 
   function openAttendanceDrawer(minute: SacramentMinute) {
     setSelectedMinuteId(minute.id);
@@ -405,6 +381,37 @@ export default function FrequencyPage() {
   function closeAttendanceDrawer() {
     setSelectedMinuteId(null);
     setAttendanceDraft("");
+  }
+
+  function openGoalDrawer() {
+    setGoalDraft(frequencyGoal ? frequencyGoal.toString() : "");
+    setGoalError("");
+    setGoalDrawerOpen(true);
+  }
+
+  function closeGoalDrawer() {
+    setGoalDrawerOpen(false);
+    setGoalDraft("");
+    setGoalError("");
+  }
+
+  function saveFrequencyGoal() {
+    if (!currentWard) return;
+
+    const parsedGoal = Number(goalDraft);
+    const goal = Math.round(parsedGoal);
+
+    if (!goalDraft.trim() || !Number.isFinite(parsedGoal) || !Number.isInteger(parsedGoal) || goal < 1 || goal > 999) {
+      setGoalError("Informe um número inteiro entre 1 e 999.");
+      return;
+    }
+
+    saveWard({
+      ...currentWard,
+      frequencyGoal: goal,
+    });
+    toast.success("Meta de frequência atualizada.");
+    closeGoalDrawer();
   }
 
   async function saveAttendance() {
@@ -481,7 +488,8 @@ export default function FrequencyPage() {
 
           return (
             <div className="text-right">
-              <p className="font-medium tabular-nums">{attendance}</p>
+              <p className="font-medium tabular-nums">{frequencyGoal ? `${attendance} de ${frequencyGoal}` : attendance}</p>
+              {frequencyGoal ? <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">{frequencyGoalGapLabel(attendance, frequencyGoal)}</p> : null}
               {comparison ? (
                 <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">
                   Previsto {comparison.predicted} · <span className={predictionDeltaToneClass(comparison.delta)}>{predictionDeltaLabel(comparison.delta)}</span>
@@ -511,7 +519,7 @@ export default function FrequencyPage() {
         ),
       },
     ],
-    [activeMemberCount, attendanceComparisons, canManageFrequency, formatDate],
+    [activeMemberCount, attendanceComparisons, canManageFrequency, formatDate, frequencyGoal],
   );
 
   return (
@@ -524,7 +532,7 @@ export default function FrequencyPage() {
         />
 
         <div className="space-y-6">
-          <div className="grid min-w-0 gap-3 md:grid-cols-3">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
               <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Média</p>
               <p className="mt-2 text-3xl font-semibold tabular-nums">{averageAttendance(sortedMinutes) || "-"}</p>
@@ -539,6 +547,28 @@ export default function FrequencyPage() {
                   ? attendanceChangeLabel(attendanceChangePercentValue)
                   : `${attendanceChangeValue(attendanceChangePercentValue)} ${attendanceChangeLabel(attendanceChangePercentValue)}`}
               </p>
+            </div>
+            <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Meta</p>
+                  <p className="mt-2 text-3xl font-semibold tabular-nums">{frequencyGoal ?? "-"}</p>
+                </div>
+                {canManageFrequency ? (
+                  <Button className="h-8 shrink-0 px-2" onClick={openGoalDrawer} size="sm" variant="ghost">
+                    <Pencil className="size-3.5" />
+                    <span className="sr-only">Editar meta</span>
+                  </Button>
+                ) : null}
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {frequencyGoalPercentLabel(lastFilledMinute?.form.attendance, frequencyGoal) ?? (frequencyGoal ? "Objetivo atual da ala" : "Sem meta definida")}
+              </p>
+            </div>
+            <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Faltam</p>
+              <p className="mt-2 text-3xl font-semibold tabular-nums">{currentGoalGap.value}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{currentGoalGap.description}</p>
             </div>
             <div className="min-w-0 rounded-lg bg-card p-4 ring-1 ring-border">
               <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Pendentes</p>
@@ -570,6 +600,12 @@ export default function FrequencyPage() {
                   <span className="h-0 w-5 border-t-2 border-dotted border-muted-foreground" />
                   Frequência esperada
                 </span>
+                {frequencyGoal ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-0 w-5 border-t-2 border-amber-500" />
+                    Meta da ala
+                  </span>
+                ) : null}
               </div>
             </div>
 
@@ -626,6 +662,18 @@ export default function FrequencyPage() {
                         vectorEffect="non-scaling-stroke"
                       />
                     ) : null}
+                    {frequencyGoal && goalY !== null ? (
+                      <line
+                        className="stroke-amber-500"
+                        strokeLinecap="round"
+                        strokeWidth={2}
+                        vectorEffect="non-scaling-stroke"
+                        x1={CHART_PADDING_LEFT}
+                        x2={CHART_WIDTH - CHART_PADDING_RIGHT}
+                        y1={goalY}
+                        y2={goalY}
+                      />
+                    ) : null}
                     {projectionLinePath ? (
                       <path
                         className="fill-none stroke-primary"
@@ -656,6 +704,15 @@ export default function FrequencyPage() {
                       </span>
                     );
                   })}
+
+                  {frequencyGoal && goalY !== null ? (
+                    <span
+                      className="pointer-events-none absolute right-0 -translate-y-1/2 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/25"
+                      style={{ top: `${(goalY / CHART_HEIGHT) * 100}%` }}
+                    >
+                      Meta {frequencyGoal}
+                    </span>
+                  ) : null}
 
                   {chartCoordinates.map((point) => {
                     const isProjection = point.type === "projection";
@@ -740,48 +797,65 @@ export default function FrequencyPage() {
             </div>
 
             {projectionCoordinates.length ? (
-              <div className="mt-4 grid gap-2 border-t border-border pt-4 text-sm md:grid-cols-2 xl:grid-cols-4">
-                <div className={cn("flex items-center gap-3 rounded-md border px-3 py-2.5", predictedTrendStyle.card)}>
-                  <span className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-md ring-1", predictedTrendStyle.iconWrap)}>
-                    <PredictedTrendIcon className="size-4" />
+              <div className="mt-3 grid gap-2 border-t border-border pt-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                <div
+                  aria-label={predictedTrendLabel}
+                  className={cn("flex min-h-16 items-center gap-2.5 rounded-md border px-3 py-2", predictedTrendStyle.card)}
+                >
+                  <span className={cn("inline-flex size-7 shrink-0 items-center justify-center rounded-md ring-1", predictedTrendStyle.iconWrap)}>
+                    <PredictedTrendIcon className="size-3.5" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-current/75">Tendência prevista</p>
-                    <p className="mt-1 text-pretty text-base font-semibold leading-snug">{sentenceCase(predictedTrendDisplay)}</p>
+                    <p className="text-xs font-medium text-current/70">Tendência</p>
+                    <p className="mt-0.5 truncate font-semibold leading-tight">{predictedTrendDisplay}</p>
                   </div>
                 </div>
-                <div className={cn("flex items-center gap-3 rounded-md border px-3 py-2.5", confidenceStyle.card)}>
-                  <span className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-md ring-1", confidenceStyle.iconWrap)}>
-                    <Gauge className="size-4" />
+                <div
+                  aria-label={`Confiabilidade ${reliabilityLabel}: ${reliabilityBars} de 3 barras`}
+                  className={cn("flex min-h-16 items-center gap-2.5 rounded-md border px-3 py-2", reliabilityStyle.card)}
+                >
+                  <span className="flex h-7 shrink-0 items-end gap-1" aria-hidden="true">
+                    {[1, 2, 3].map((bar) => (
+                      <span
+                        className={cn(
+                          "w-1.5 rounded-sm bg-current transition-opacity",
+                          bar <= reliabilityBars ? "opacity-100" : "opacity-20",
+                          bar === 1 ? "h-2.5" : bar === 2 ? "h-4" : "h-5.5",
+                        )}
+                        key={bar}
+                      />
+                    ))}
                   </span>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-current/75">Confiança</p>
-                    <p className="mt-1 text-base font-semibold">{sentenceCase(confidenceLabel)}</p>
+                    <p className="text-xs font-medium text-current/70">Confiabilidade</p>
+                    <p className="mt-0.5 font-semibold leading-tight">{sentenceCase(reliabilityLabel)}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-md border border-sky-300 bg-sky-50 px-3 py-2.5 text-sky-800 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300">
-                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 ring-1 ring-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-500/25">
-                    <UsersRound className="size-4" />
+                <div className="flex min-h-16 items-center gap-2.5 rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-sky-800 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300">
+                  <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 ring-1 ring-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-500/25">
+                    <UsersRound className="size-3.5" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-current/75">Membros frequentando</p>
-                    <p className="mt-1 text-base font-semibold tabular-nums">{activeMemberCount || "-"}</p>
-                    <p className="mt-0.5 truncate text-sm text-current/75">
-                      {lastFilledMinute && activeMemberCount
-                        ? `Última: ${lastFilledMinute.form.attendance} de ${activeMemberCount} · ${attendanceSharePercentLabel(lastFilledMinute.form.attendance, activeMemberCount)}`
-                        : "Sem base de membros"}
+                    <p className="text-xs font-medium text-current/70">Última frequência</p>
+                    <p className="mt-0.5 font-semibold leading-tight tabular-nums">
+                      {lastFilledMinute?.form.attendance ? `${lastFilledMinute.form.attendance}${frequencyGoal ? ` de ${frequencyGoal}` : ""}` : "-"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-current/70">
+                      {frequencyGoal ? frequencyGoalGapLabel(lastFilledMinute?.form.attendance, frequencyGoal) : activeMemberCount ? `${activeMemberCount} frequentando` : "Sem meta definida"}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2.5 text-cyan-800 dark:border-cyan-500/25 dark:bg-cyan-500/10 dark:text-cyan-300">
-                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 ring-1 ring-cyan-300 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-500/25">
-                    <UsersRound className="size-4" />
+                <div className="flex min-h-16 items-center gap-2.5 rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2 text-cyan-800 dark:border-cyan-500/25 dark:bg-cyan-500/10 dark:text-cyan-300">
+                  <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 ring-1 ring-cyan-300 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-500/25">
+                    <UsersRound className="size-3.5" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-current/75">Faixa provável</p>
-                    <p className="mt-1 text-base font-semibold tabular-nums">{projectedRangeLabel}</p>
-                    <p className="mt-0.5 truncate text-sm text-current/75">
-                      {projectionValues[0] ? `Próxima: ${projectionValues[0].normal}${nextProjectionShareLabel ? ` · ${attendanceSharePercentLabel(projectionValues[0].normal, activeMemberCount)}` : ""}` : "Sem próxima previsão"}
+                    <p className="text-xs font-medium text-current/70">Previsão próxima</p>
+                    <p className="mt-0.5 font-semibold leading-tight tabular-nums">
+                      {typeof nextProjectionAttendance === "number" ? `${nextProjectionAttendance}${frequencyGoal ? ` de ${frequencyGoal}` : ""}` : "-"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-current/70">
+                      {frequencyGoal ? frequencyGoalGapLabel(nextProjectionAttendance, frequencyGoal) : `Faixa provável: ${projectedRangeLabel}`}
                     </p>
                   </div>
                 </div>
@@ -807,42 +881,87 @@ export default function FrequencyPage() {
         </div>
 
         {canManageFrequency ? (
-          <Drawer direction="right" open={Boolean(selectedMinute)} onOpenChange={(open) => !open && closeAttendanceDrawer()}>
-            <DrawerContent className="sm:max-w-md" direction="right">
-              <DrawerHeader className="border-b">
-                <DrawerTitle>Editar frequência</DrawerTitle>
-                <DrawerDescription>
-                  {selectedMinute ? `${formatDate(selectedMinute.date)} - ${selectedMinute.title}` : "Atualize a frequência da ata selecionada."}
-                </DrawerDescription>
-              </DrawerHeader>
+          <>
+            <Drawer direction="right" open={goalDrawerOpen} onOpenChange={(open) => !open && closeGoalDrawer()}>
+              <DrawerContent className="sm:max-w-md" direction="right">
+                <DrawerHeader className="border-b">
+                  <DrawerTitle>Editar meta de frequência</DrawerTitle>
+                  <DrawerDescription>Defina o objetivo atual da ala para a frequência sacramental.</DrawerDescription>
+                </DrawerHeader>
 
-              <div className="flex-1 px-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="attendance">Frequência</Label>
-                  <Input
-                    id="attendance"
-                    inputMode="numeric"
-                    min={0}
-                    placeholder="Ex.: 164"
-                    type="number"
-                    value={attendanceDraft}
-                    onChange={(event) => setAttendanceDraft(event.target.value)}
-                  />
+                <div className="flex-1 px-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="frequency-goal">Meta de frequência</Label>
+                    <Input
+                      id="frequency-goal"
+                      inputMode="numeric"
+                      max={999}
+                      min={1}
+                      placeholder="Ex.: 100"
+                      type="number"
+                      value={goalDraft}
+                      onChange={(event) => {
+                        setGoalDraft(event.target.value);
+                        setGoalError("");
+                      }}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      A meta ajuda os líderes a acompanhar se a frequência está evoluindo em direção ao objetivo da ala.
+                    </p>
+                    {goalError ? <p className="text-sm font-medium text-destructive">{goalError}</p> : null}
+                  </div>
                 </div>
-              </div>
 
-              <DrawerFooter className="border-t bg-background">
-                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                  <Button onClick={closeAttendanceDrawer} variant="ghost">
-                    Cancelar
-                  </Button>
-                  <Button disabled={!selectedMinute || !attendanceDraft.trim()} onClick={saveAttendance}>
-                    Salvar frequência
-                  </Button>
+                <DrawerFooter className="border-t bg-background">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <Button onClick={closeGoalDrawer} variant="ghost">
+                      Cancelar
+                    </Button>
+                    <Button disabled={!currentWard || !goalDraft.trim()} onClick={saveFrequencyGoal}>
+                      Salvar meta
+                    </Button>
+                  </div>
+                </DrawerFooter>
+              </DrawerContent>
+            </Drawer>
+
+            <Drawer direction="right" open={Boolean(selectedMinute)} onOpenChange={(open) => !open && closeAttendanceDrawer()}>
+              <DrawerContent className="sm:max-w-md" direction="right">
+                <DrawerHeader className="border-b">
+                  <DrawerTitle>Editar frequência</DrawerTitle>
+                  <DrawerDescription>
+                    {selectedMinute ? `${formatDate(selectedMinute.date)} - ${selectedMinute.title}` : "Atualize a frequência da ata selecionada."}
+                  </DrawerDescription>
+                </DrawerHeader>
+
+                <div className="flex-1 px-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="attendance">Frequência</Label>
+                    <Input
+                      id="attendance"
+                      inputMode="numeric"
+                      min={0}
+                      placeholder="Ex.: 164"
+                      type="number"
+                      value={attendanceDraft}
+                      onChange={(event) => setAttendanceDraft(event.target.value)}
+                    />
+                  </div>
                 </div>
-              </DrawerFooter>
-            </DrawerContent>
-          </Drawer>
+
+                <DrawerFooter className="border-t bg-background">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <Button onClick={closeAttendanceDrawer} variant="ghost">
+                      Cancelar
+                    </Button>
+                    <Button disabled={!selectedMinute || !attendanceDraft.trim()} onClick={saveAttendance}>
+                      Salvar frequência
+                    </Button>
+                  </div>
+                </DrawerFooter>
+              </DrawerContent>
+            </Drawer>
+          </>
         ) : null}
       </div>
     </PermissionGuard>

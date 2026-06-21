@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, ChevronsUpDown, Copy, Home, Mars, Pencil, Plus, Trash2, Venus, X } from "lucide-react";
-import { type KeyboardEvent, useMemo, useState } from "react";
+import { CalendarDays, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, Home, List, Mars, Pencil, Plus, Trash2, Venus, X } from "lucide-react";
+import { type KeyboardEvent, useMemo, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { useAppContext } from "@/components/providers/app-provider";
@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useDateFormatter } from "@/hooks/use-date-formatter";
 import { cn, todayDate } from "@/lib/utils";
@@ -51,6 +52,7 @@ type LegacyLunchSchedule = LunchSchedule & {
 
 type LunchListScope = "complete" | "missing";
 type MemberNameFormat = "full" | "first_last" | "first";
+type MobileLunchView = "calendar" | "list";
 
 type CompanionshipSelectProps = {
   companionships: LunchCompanionshipSnapshot[];
@@ -98,6 +100,29 @@ const weekdayOptions: Array<{ value: Weekday; label: string }> = [
 
 const weekdaysByIndex: Weekday[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const abbreviatedWeekdaysByIndex = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const MOBILE_LUNCH_VIEW_STORAGE_KEY = "superala:lunch-calendar:mobile-view";
+const MOBILE_LUNCH_VIEW_CHANGE_EVENT = "superala:lunch-calendar:mobile-view-change";
+
+function getStoredMobileLunchView(): MobileLunchView {
+  const storedView = window.localStorage.getItem(MOBILE_LUNCH_VIEW_STORAGE_KEY);
+  return storedView === "list" ? "list" : "calendar";
+}
+
+function subscribeToMobileLunchView(onStoreChange: () => void) {
+  function handleStorageChange(event: StorageEvent) {
+    if (event.key === MOBILE_LUNCH_VIEW_STORAGE_KEY) {
+      onStoreChange();
+    }
+  }
+
+  window.addEventListener("storage", handleStorageChange);
+  window.addEventListener(MOBILE_LUNCH_VIEW_CHANGE_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener("storage", handleStorageChange);
+    window.removeEventListener(MOBILE_LUNCH_VIEW_CHANGE_EVENT, onStoreChange);
+  };
+}
 
 function parseDate(date: string) {
   return new Date(`${date}T12:00:00`);
@@ -146,6 +171,30 @@ function buildMonthCells(monthDate: Date, weekStartsOn: CalendarWeekStartsOn) {
       key: toDateKey(date),
       day: date.getDate(),
       isCurrentMonth: date.getMonth() === month,
+    };
+  });
+}
+
+function startOfCalendarWeek(date: Date, weekStartsOn: CalendarWeekStartsOn) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const firstDayIndex = weekStartsOn === "monday" ? 1 : 0;
+  const dayOffset = (start.getDay() - firstDayIndex + 7) % 7;
+
+  start.setDate(start.getDate() - dayOffset);
+  return start;
+}
+
+function calendarWeekDates(date: Date, weekStartsOn: CalendarWeekStartsOn) {
+  const weekStart = startOfCalendarWeek(date, weekStartsOn);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const itemDate = new Date(weekStart);
+    itemDate.setDate(weekStart.getDate() + index);
+
+    return {
+      date: itemDate,
+      key: toDateKey(itemDate),
+      day: itemDate.getDate(),
     };
   });
 }
@@ -269,12 +318,14 @@ export default function LunchCalendarPage() {
   const canManageLunches = hasPermission("lunch.manage");
   const [monthDate, setMonthDate] = useState(() => parseDate(todayDate()));
   const [selectedDate, setSelectedDate] = useState(todayDate());
+  const [selectedWeekDate, setSelectedWeekDate] = useState(todayDate());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const [lunchListScope, setLunchListScope] = useState<LunchListScope>("complete");
   const [memberNameFormat, setMemberNameFormat] = useState<MemberNameFormat>("full");
   const [omitCompanionships, setOmitCompanionships] = useState(false);
   const [showWeekdays, setShowWeekdays] = useState(false);
+  const mobileView = useSyncExternalStore(subscribeToMobileLunchView, getStoredMobileLunchView, () => "calendar");
   const [lunchForm, setLunchForm] = useState<LunchForm>({ ...emptyLunchForm, date: todayDate() });
   const [error, setError] = useState("");
 
@@ -291,6 +342,14 @@ export default function LunchCalendarPage() {
   const weekdays = weekdaysByStart[appPreferences.calendarWeekStartsOn];
   const monthCells = useMemo(() => buildMonthCells(monthDate, appPreferences.calendarWeekStartsOn), [appPreferences.calendarWeekStartsOn, monthDate]);
   const visibleMonthDates = useMemo(() => monthDates(monthDate), [monthDate]);
+  const selectedWeekStartKey = toDateKey(startOfCalendarWeek(parseDate(selectedWeekDate), appPreferences.calendarWeekStartsOn));
+  const selectedWeekDates = useMemo(
+    () =>
+      calendarWeekDates(parseDate(selectedWeekDate), appPreferences.calendarWeekStartsOn).filter(
+        (item) => item.date.getFullYear() === monthDate.getFullYear() && item.date.getMonth() === monthDate.getMonth(),
+      ),
+    [appPreferences.calendarWeekStartsOn, monthDate, selectedWeekDate],
+  );
   const activeCompanionships = useMemo(() => companionshipsByWard.filter((companionship) => companionship.status === "active"), [companionshipsByWard]);
   const activeCompanionshipIds = useMemo(() => new Set(activeCompanionships.map((companionship) => companionship.id)), [activeCompanionships]);
   const allCompanionshipsById = useMemo(
@@ -387,7 +446,15 @@ export default function LunchCalendarPage() {
   }, [activeCompanionshipIds, activeCompanionships, lunchPDayWeekday, lunchesByDate, visibleMonthDates]);
 
   function moveMonth(offset: number) {
-    setMonthDate((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+    const nextMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + offset, 1);
+
+    setMonthDate(nextMonth);
+    setSelectedWeekDate(toDateKey(nextMonth));
+  }
+
+  function selectMobileView(view: MobileLunchView) {
+    window.localStorage.setItem(MOBILE_LUNCH_VIEW_STORAGE_KEY, view);
+    window.dispatchEvent(new Event(MOBILE_LUNCH_VIEW_CHANGE_EVENT));
   }
 
   function handleDateCellKeyDown(event: KeyboardEvent<HTMLDivElement>, date: string) {
@@ -468,6 +535,7 @@ export default function LunchCalendarPage() {
   function openCreateDrawer(date = selectedDate) {
     setLunchForm({ ...emptyLunchForm, date });
     setSelectedDate(date);
+    setSelectedWeekDate(date);
     setMonthDate(parseDate(date));
     setError("");
     setDrawerOpen(true);
@@ -484,6 +552,7 @@ export default function LunchCalendarPage() {
       confirmationStatus: lunch.confirmationStatus,
     });
     setSelectedDate(lunch.date);
+    setSelectedWeekDate(lunch.date);
     setMonthDate(parseDate(lunch.date));
     setError("");
     setDrawerOpen(true);
@@ -748,9 +817,9 @@ export default function LunchCalendarPage() {
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Card className="min-w-0">
+        <Card className="order-2 min-w-0 md:order-1">
           <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <CardTitle className="capitalize">{monthLabel(monthDate)}</CardTitle>
                 <CardDescription>{coverageSummary.headerText}</CardDescription>
@@ -785,8 +854,29 @@ export default function LunchCalendarPage() {
                 </Button>
               </div>
             </div>
+
+            <div aria-label="Visualização dos almoços" className="mt-3 grid grid-cols-2 rounded-lg border bg-muted/50 p-0.5 md:hidden" role="group">
+              <Button
+                aria-pressed={mobileView === "calendar"}
+                className="min-h-10"
+                onClick={() => selectMobileView("calendar")}
+                variant={mobileView === "calendar" ? "secondary" : "ghost"}
+              >
+                <CalendarDays />
+                Calendário
+              </Button>
+              <Button
+                aria-pressed={mobileView === "list"}
+                className="min-h-10"
+                onClick={() => selectMobileView("list")}
+                variant={mobileView === "list" ? "secondary" : "ghost"}
+              >
+                <List />
+                Lista
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent className="px-2 sm:px-4">
+          <CardContent className={cn("px-2 sm:px-4", mobileView === "list" && "hidden md:block")}>
             <div className="w-full overflow-hidden">
               <div className="w-full">
                 <div className="grid grid-cols-7 border-b text-center text-[10px] font-medium text-muted-foreground sm:text-left sm:text-xs">
@@ -913,10 +1003,218 @@ export default function LunchCalendarPage() {
               </div>
             </div>
           </CardContent>
+
+          <CardContent className={cn("px-3 md:hidden", mobileView === "calendar" && "hidden")}>
+            <div className="space-y-4">
+              <div className="overflow-hidden rounded-xl border bg-background">
+                <div className="grid grid-cols-7 border-b bg-muted/35 px-1 py-2 text-center text-[10px] font-medium text-muted-foreground">
+                  {weekdays.map((weekday) => (
+                    <span key={weekday}>{weekday}</span>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7 p-1">
+                  {monthCells.map((cell) => {
+                    const cellWeekStartKey = toDateKey(startOfCalendarWeek(cell.date, appPreferences.calendarWeekStartsOn));
+                    const isSelectedWeek = cellWeekStartKey === selectedWeekStartKey;
+                    const isToday = cell.key === todayDate();
+                    const isPDay = isPDayDate(cell.date);
+                    const missingCompanionships = cell.isCurrentMonth && !isPDay ? getMissingCompanionshipsForDate(cell.key) : [];
+                    const hasMissingLunches = Boolean(activeCompanionships.length && missingCompanionships.length);
+
+                    return (
+                      <button
+                        aria-label={
+                          cell.isCurrentMonth
+                            ? `Mostrar semana de ${formatDate(cell.key)}${
+                                hasMissingLunches
+                                  ? `, faltam almoços para ${missingCompanionships.length} ${
+                                      missingCompanionships.length === 1 ? "dupla" : "duplas"
+                                    }`
+                                  : ""
+                              }`
+                            : `${formatDate(cell.key)} está fora do mês atual`
+                        }
+                        aria-pressed={cell.isCurrentMonth ? isSelectedWeek : undefined}
+                        className={cn(
+                          "relative flex min-h-10 items-center justify-center rounded-md text-xs font-medium tabular-nums transition-[color,background-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96]",
+                          !cell.isCurrentMonth && "cursor-default text-muted-foreground/35",
+                          cell.isCurrentMonth && "hover:bg-muted",
+                          cell.isCurrentMonth && isSelectedWeek && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/20",
+                          cell.isCurrentMonth && isToday && "font-semibold",
+                        )}
+                        disabled={!cell.isCurrentMonth}
+                        key={cell.key}
+                        onClick={() => setSelectedWeekDate(cell.key)}
+                        type="button"
+                      >
+                        <span className={cn("flex size-7 items-center justify-center rounded-full", cell.isCurrentMonth && isToday && "bg-primary text-primary-foreground")}>
+                          {cell.day}
+                        </span>
+                        {hasMissingLunches ? (
+                          <span
+                            aria-hidden="true"
+                            className="absolute bottom-1 left-1/2 size-1.5 -translate-x-1/2 rounded-full bg-amber-400 ring-2 ring-background"
+                          />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-end justify-between gap-3 px-1">
+                  <div>
+                    <p className="text-sm font-medium">Almoços da semana</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(selectedWeekDates[0]?.key ?? selectedWeekDate)} a{" "}
+                      {formatDate(selectedWeekDates.at(-1)?.key ?? selectedWeekDate)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border">
+                  <Table className="table-fixed">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[72px] px-2">Dia</TableHead>
+                        <TableHead className="px-2">Almoços</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedWeekDates.map((item) => {
+                        const lunches = lunchesByDate.get(item.key) ?? [];
+                        const isPDay = isPDayDate(item.date);
+                        const missingCompanionships = isPDay ? [] : getMissingCompanionshipsForDate(item.key);
+                        const isComplete = Boolean(activeCompanionships.length) && !isPDay && !missingCompanionships.length;
+
+                        return (
+                          <TableRow className={cn(isPDay && "bg-amber-50/60 dark:bg-amber-950/20")} key={item.key}>
+                            <TableCell className="px-2 py-3 align-top">
+                              <p className="text-xs font-medium text-muted-foreground">{abbreviatedWeekdaysByIndex[item.date.getDay()]}</p>
+                              <p className="text-lg font-semibold leading-tight tabular-nums">{item.day}</p>
+                              {isPDay ? (
+                                <Badge className="mt-1 px-1.5 py-0 text-[9px]" variant="outline">
+                                  P-DAY
+                                </Badge>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="px-2 py-2 align-top">
+                              {isPDay ? (
+                                <p className="py-2 text-xs text-muted-foreground">Dia reservado para P-DAY.</p>
+                              ) : (
+                                <div className="min-w-0">
+                                  <div className="divide-y">
+                                    {lunches.map((lunch) => {
+                                      const companionships = getLunchCompanionships(lunch);
+
+                                      return (
+                                        <div className="py-2 first:pt-0 last:pb-0" key={lunch.id}>
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                              <p className="flex min-w-0 items-center gap-1.5 font-medium">
+                                                <span className="shrink-0 tabular-nums">{lunch.time}</span>
+                                                <span aria-hidden="true" className="text-muted-foreground">
+                                                  ·
+                                                </span>
+                                                <Home className="size-3.5 shrink-0 text-muted-foreground" />
+                                                <span className="truncate">{getLunchHostLabel(lunch)}</span>
+                                              </p>
+                                              <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                                                {companionships.length ? (
+                                                  companionships.map((companionship) => (
+                                                    <span className="inline-flex min-w-0 items-center gap-1" key={companionship.id}>
+                                                      <CompanionshipIcon className="size-3 shrink-0" type={companionship.type} />
+                                                      <span>{companionship.name}</span>
+                                                    </span>
+                                                  ))
+                                                ) : (
+                                                  <span>Dupla não definida</span>
+                                                )}
+                                              </div>
+                                              <Badge className="mt-1.5 px-1.5 py-0 text-[9px]" variant={confirmationBadgeVariants[lunch.confirmationStatus]}>
+                                                {confirmationLabels[lunch.confirmationStatus]}
+                                              </Badge>
+                                            </div>
+
+                                            {canManageLunches ? (
+                                              <div className="flex shrink-0 gap-1">
+                                                <Button
+                                                  aria-label={`Editar almoço das ${lunch.time}`}
+                                                  className="size-10"
+                                                  onClick={() => openEditDrawer(lunch)}
+                                                  size="icon"
+                                                  variant="ghost"
+                                                >
+                                                  <Pencil />
+                                                </Button>
+                                                <DeleteConfirmationDialog
+                                                  confirmLabel="Remover"
+                                                  description={`Remover o almoço de ${formatDate(lunch.date)} às ${lunch.time}? Essa ação remove o agendamento.`}
+                                                  onConfirm={() => removeLunch(lunch)}
+                                                >
+                                                  <Button
+                                                    aria-label={`Remover almoço das ${lunch.time}`}
+                                                    className="size-10"
+                                                    size="icon"
+                                                    variant="destructive"
+                                                  >
+                                                    <Trash2 />
+                                                  </Button>
+                                                </DeleteConfirmationDialog>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+
+                                  {!lunches.length ? <p className="py-1 text-xs text-muted-foreground">Nenhum almoço agendado.</p> : null}
+
+                                  <div className={cn("mt-2 flex items-start justify-between gap-2 border-t pt-2", !lunches.length && "mt-1")}>
+                                    <div className="min-w-0 text-xs">
+                                      {!activeCompanionships.length ? (
+                                        <p className="text-muted-foreground">Nenhuma dupla ativa cadastrada.</p>
+                                      ) : isComplete ? (
+                                        <p className="font-medium text-primary">Dia completo</p>
+                                      ) : (
+                                        <>
+                                          <p className="font-medium text-amber-700 dark:text-amber-300">
+                                            Faltam {missingCompanionships.length} {missingCompanionships.length === 1 ? "dupla" : "duplas"}
+                                          </p>
+                                          <p className="mt-0.5 text-muted-foreground">{missingCompanionships.map((companionship) => companionship.name).join(", ")}</p>
+                                        </>
+                                      )}
+                                    </div>
+                                    {canManageLunches ? (
+                                      <Button
+                                        aria-label={`Adicionar almoço em ${formatDate(item.key)}`}
+                                        className="size-10"
+                                        onClick={() => openCreateDrawer(item.key)}
+                                        size="icon"
+                                        variant="outline"
+                                      >
+                                        <Plus />
+                                      </Button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          </CardContent>
         </Card>
 
-        <div className="space-y-4">
-          <Card>
+        <div className="contents xl:order-2 xl:block xl:space-y-4">
+          <Card className="order-1 md:order-2">
             <CardHeader>
               <CardTitle>Cobertura do mês</CardTitle>
               <CardDescription>{coverageSummary.helperText}</CardDescription>
@@ -954,7 +1252,7 @@ export default function LunchCalendarPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className={cn("order-3", mobileView === "list" && "hidden md:flex")}>
             <CardHeader>
               <div className="flex items-start justify-between gap-3">
                 <div>

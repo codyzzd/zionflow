@@ -71,6 +71,7 @@ export interface Ward extends RecordMetadata {
   name: string;
   address: string;
   meetingTime: string;
+  frequencyGoal?: number;
   city: string;
   state: string;
   country: string;

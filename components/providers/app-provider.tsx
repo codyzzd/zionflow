@@ -1555,6 +1555,7 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             country: input.country.trim(),
             latitude: input.latitude,
             longitude: input.longitude,
+            frequencyGoal: input.frequencyGoal,
             lunchPDayWeekday: input.lunchPDayWeekday,
           },
           existing,

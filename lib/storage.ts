@@ -108,6 +108,7 @@ type RemoteColumnValue = boolean | number | string | string[] | unknown[] | Reco
 type RemoteColumns = Record<string, RemoteColumnValue>;
 type RemoteSchemaOptions = {
   includeWardCoordinates?: boolean;
+  includeWardFrequencyGoal?: boolean;
   includeWardLunchPDay?: boolean;
   includeWardMeetingTime?: boolean;
   includeUserAccessLevel?: boolean;
@@ -384,6 +385,7 @@ function normalizeStake(stake: Stake): Stake {
 function normalizeWard(ward: Ward): Ward {
   const latitude = asOptionalNumber(ward.latitude);
   const longitude = asOptionalNumber(ward.longitude);
+  const frequencyGoal = asOptionalNumber(ward.frequencyGoal);
 
   return {
     id: ward.id,
@@ -396,6 +398,7 @@ function normalizeWard(ward: Ward): Ward {
     country: String(ward.country ?? "Brasil"),
     latitude,
     longitude,
+    frequencyGoal: frequencyGoal && frequencyGoal > 0 ? Math.round(frequencyGoal) : undefined,
     lunchPDayWeekday: normalizeWeekday(ward.lunchPDayWeekday),
     ...normalizeRecordMetadata(ward),
   };
@@ -833,6 +836,7 @@ function relationColumns(key: RemoteCollectionKey, record: { id: string } & Reco
         stake_id: optionalUuid(record.stakeId),
         name: asOptionalString(record.name),
         ...(options.includeWardMeetingTime === false ? {} : { meeting_time: optionalText(record.meetingTime) }),
+        ...(options.includeWardFrequencyGoal === false ? {} : { frequency_goal: asOptionalNumber(record.frequencyGoal) ?? null }),
         ...(options.includeWardCoordinates === false
           ? {}
           : {
@@ -987,6 +991,7 @@ function remoteSelectColumns(key: RemoteCollectionKey, options: RemoteSchemaOpti
         "stake_id",
         "name",
         ...(options.includeWardMeetingTime === false ? [] : ["meeting_time"]),
+        ...(options.includeWardFrequencyGoal === false ? [] : ["frequency_goal"]),
         ...(options.includeWardCoordinates === false ? [] : ["address", "latitude", "longitude"]),
         "city",
         "state",
@@ -1161,6 +1166,7 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         name: rowString(row, "name", "name"),
         address: rowString(row, "address", "address"),
         meetingTime: rowString(row, "meeting_time", "meetingTime"),
+        frequencyGoal: asOptionalNumber(row.frequency_goal ?? asDataObject(row).frequencyGoal),
         city: rowString(row, "city", "city"),
         state: rowString(row, "state", "state"),
         country: rowString(row, "country", "country", "Brasil"),
@@ -1328,15 +1334,17 @@ export async function loadDatabase(): Promise<Database> {
     if (key === "wards") {
       const missingWardLunchPDay = isMissingRemoteColumn(error, "lunch_p_day_weekday");
       const missingWardMeetingTime = isMissingRemoteColumn(error, "meeting_time");
+      const missingWardFrequencyGoal = isMissingRemoteColumn(error, "frequency_goal");
       const missingWardCoordinates =
         isMissingRemoteColumn(error, "address") || isMissingRemoteColumn(error, "latitude") || isMissingRemoteColumn(error, "longitude");
 
-      if (missingWardLunchPDay || missingWardMeetingTime || missingWardCoordinates) {
+      if (missingWardLunchPDay || missingWardMeetingTime || missingWardFrequencyGoal || missingWardCoordinates) {
         const fallback = await selectRemoteRows(
           supabase,
           table,
           remoteSelectColumns(key, {
             includeWardCoordinates: !missingWardCoordinates,
+            includeWardFrequencyGoal: !missingWardFrequencyGoal,
             includeWardLunchPDay: !missingWardLunchPDay,
             includeWardMeetingTime: !missingWardMeetingTime,
           }),
@@ -1347,6 +1355,7 @@ export async function loadDatabase(): Promise<Database> {
         if (
           isMissingRemoteColumn(error, "lunch_p_day_weekday") ||
           isMissingRemoteColumn(error, "meeting_time") ||
+          isMissingRemoteColumn(error, "frequency_goal") ||
           isMissingRemoteColumn(error, "address") ||
           isMissingRemoteColumn(error, "latitude") ||
           isMissingRemoteColumn(error, "longitude")
@@ -1354,7 +1363,7 @@ export async function loadDatabase(): Promise<Database> {
           const broadFallback = await selectRemoteRows(
             supabase,
             table,
-            remoteSelectColumns(key, { includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }),
+            remoteSelectColumns(key, { includeWardCoordinates: false, includeWardFrequencyGoal: false, includeWardLunchPDay: false, includeWardMeetingTime: false }),
           );
           data = broadFallback.data;
           error = broadFallback.error;
@@ -1445,15 +1454,17 @@ export async function saveDatabase(db: Database): Promise<void> {
     if (key === "wards") {
       const missingWardLunchPDay = isMissingRemoteColumn(upsertError, "lunch_p_day_weekday");
       const missingWardMeetingTime = isMissingRemoteColumn(upsertError, "meeting_time");
+      const missingWardFrequencyGoal = isMissingRemoteColumn(upsertError, "frequency_goal");
       const missingWardCoordinates =
         isMissingRemoteColumn(upsertError, "address") || isMissingRemoteColumn(upsertError, "latitude") || isMissingRemoteColumn(upsertError, "longitude");
 
-      if (missingWardLunchPDay || missingWardMeetingTime || missingWardCoordinates) {
+      if (missingWardLunchPDay || missingWardMeetingTime || missingWardFrequencyGoal || missingWardCoordinates) {
         const fallback = await supabase
           .from(table)
           .upsert(
             buildUpsertPayload(recordsForUpsert, {
               includeWardCoordinates: !missingWardCoordinates,
+              includeWardFrequencyGoal: !missingWardFrequencyGoal,
               includeWardLunchPDay: !missingWardLunchPDay,
               includeWardMeetingTime: !missingWardMeetingTime,
             }),
@@ -1464,13 +1475,14 @@ export async function saveDatabase(db: Database): Promise<void> {
         if (
           isMissingRemoteColumn(upsertError, "lunch_p_day_weekday") ||
           isMissingRemoteColumn(upsertError, "meeting_time") ||
+          isMissingRemoteColumn(upsertError, "frequency_goal") ||
           isMissingRemoteColumn(upsertError, "address") ||
           isMissingRemoteColumn(upsertError, "latitude") ||
           isMissingRemoteColumn(upsertError, "longitude")
         ) {
           const broadFallback = await supabase
             .from(table)
-            .upsert(buildUpsertPayload(recordsForUpsert, { includeWardCoordinates: false, includeWardLunchPDay: false, includeWardMeetingTime: false }), { onConflict: "id" });
+            .upsert(buildUpsertPayload(recordsForUpsert, { includeWardCoordinates: false, includeWardFrequencyGoal: false, includeWardLunchPDay: false, includeWardMeetingTime: false }), { onConflict: "id" });
           upsertError = broadFallback.error;
         }
       }
