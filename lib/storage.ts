@@ -317,14 +317,19 @@ function normalizeMember(member: Member): Member {
 }
 
 function normalizeMemberAttendanceRecord(record: MemberAttendanceRecord): MemberAttendanceRecord {
+  const confidence = typeof record.confidence === "number" && Number.isFinite(record.confidence) ? record.confidence : undefined;
+
   return {
     id: record.id,
     wardId: record.wardId,
     memberId: record.memberId,
     date: normalizeDateInput(record.date ?? ""),
     present: record.present === true,
-    source: "csv",
+    source: record.source === "photo" ? "photo" : "csv",
     importedName: asString(record.importedName),
+    confirmedByUserId: asString(record.confirmedByUserId),
+    confirmedAt: asString(record.confirmedAt),
+    confidence,
     ...normalizeRecordMetadata(record),
   };
 }
@@ -1238,8 +1243,11 @@ function remoteRowToRecord(key: RemoteCollectionKey, row: RemoteRecord) {
         memberId: rowString(row, "member_id", "memberId"),
         date: normalizeDateInput(rowString(row, "date", "date")),
         present: rowBoolean(row, "present", "present", false),
-        source: "csv",
+        source: data.source === "photo" ? "photo" : "csv",
         importedName: asString(data.importedName),
+        confirmedByUserId: asString(data.confirmedByUserId),
+        confirmedAt: asString(data.confirmedAt),
+        confidence: typeof data.confidence === "number" && Number.isFinite(data.confidence) ? data.confidence : undefined,
         createdAt: asString(row.created_at) ?? asString(data.createdAt) ?? UNKNOWN_TIMESTAMP,
         createdByUserId: asString(data.createdByUserId),
         updatedAt: asString(row.updated_at) ?? asString(data.updatedAt) ?? UNKNOWN_TIMESTAMP,

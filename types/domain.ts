@@ -152,8 +152,11 @@ export interface MemberAttendanceRecord extends RecordMetadata {
   memberId: string;
   date: string;
   present: boolean;
-  source: "csv";
+  source: "csv" | "photo";
   importedName?: string;
+  confirmedByUserId?: string;
+  confirmedAt?: string;
+  confidence?: number;
 }
 
 export interface Member extends RecordMetadata {
@@ -214,6 +217,30 @@ export interface MinuteFormData {
   closingPrayer: HybridField;
   notes: string;
   weather?: MinuteWeatherSnapshot;
+  attendancePhotoEstimate?: AttendancePhotoEstimate;
+}
+
+export interface AttendancePhotoEstimate {
+  meetingDate: string;
+  detectedTotal: number;
+  adjustedTotal: number;
+  finalTotal: number;
+  model?: string;
+  photoResults: Array<{
+    fileName: string;
+    imageHeight?: number;
+    imageWidth?: number;
+    detectedFaces: number;
+    boxes?: Array<{
+      height: number;
+      source?: "model" | "face" | "manual";
+      width: number;
+      x: number;
+      y: number;
+    }>;
+  }>;
+  registeredAt: string;
+  registeredByUserId?: string;
 }
 
 export interface MinuteWeatherSnapshot {

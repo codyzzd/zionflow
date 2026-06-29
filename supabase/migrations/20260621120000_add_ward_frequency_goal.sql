@@ -1,13 +1,24 @@
 alter table public.wards
 add column if not exists frequency_goal integer;
 
-update public.wards
-set frequency_goal = nullif(data->>'frequencyGoal', '')::integer
-where frequency_goal is null
-  and data ? 'frequencyGoal'
-  and nullif(data->>'frequencyGoal', '') is not null
-  and data->>'frequencyGoal' ~ '^[0-9]+$'
-  and (data->>'frequencyGoal')::integer between 1 and 999;
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'wards'
+      and column_name = 'data'
+  ) then
+    update public.wards
+    set frequency_goal = nullif(data->>'frequencyGoal', '')::integer
+    where frequency_goal is null
+      and data ? 'frequencyGoal'
+      and nullif(data->>'frequencyGoal', '') is not null
+      and data->>'frequencyGoal' ~ '^[0-9]+$'
+      and (data->>'frequencyGoal')::integer between 1 and 999;
+  end if;
+end $$;
 
 do $$
 begin

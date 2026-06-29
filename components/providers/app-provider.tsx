@@ -2085,8 +2085,11 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             memberId: record.memberId,
             date: record.date,
             present: record.present === true,
-            source: "csv",
+            source: record.source === "photo" ? "photo" : "csv",
             importedName: record.importedName,
+            confirmedByUserId: record.confirmedByUserId,
+            confirmedAt: record.confirmedAt,
+            confidence: record.confidence,
           };
 
           importedRecordsByKey.set(
@@ -2139,7 +2142,10 @@ function AppProviderContent({ children, initialDb, ready }: { children: ReactNod
             action: "IMPORT_MEMBER_ATTENDANCE",
             module: "frequência",
             itemLabel: `${importedRecordsByKey.size} registros`,
-            summary: `Importou ${importedRecordsByKey.size} registros históricos de frequência.`,
+            summary:
+              validRecords.some((record) => record.source === "photo")
+                ? `Confirmou ${importedRecordsByKey.size} presenças por foto.`
+                : `Importou ${importedRecordsByKey.size} registros históricos de frequência.`,
           },
         );
       });

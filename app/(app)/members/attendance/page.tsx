@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CalendarDays, SlidersHorizontal, Users } from "lucide-react";
+import { CalendarDays, FileUp, SlidersHorizontal, Users } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -162,6 +162,7 @@ export default function MemberAttendancePage() {
   const [minimumAgeFilter, setMinimumAgeFilter] = useState("");
   const [maximumAgeFilter, setMaximumAgeFilter] = useState("");
   const [summaryMode, setSummaryMode] = useState<SummaryMode>("sundays");
+  const [manualImportOpen, setManualImportOpen] = useState(false);
 
   const activeMemberIds = useMemo(() => new Set(membersByWard.map((member) => member.id)), [membersByWard]);
   const attendanceReferenceDate = localTodayDate();
@@ -335,7 +336,17 @@ export default function MemberAttendancePage() {
   return (
     <PermissionGuard permission="members.view">
       <PageHeader
-        actions={canManageMembers ? <MemberActivityStatusImportDialog /> : null}
+        actions={
+          canManageMembers ? (
+            <>
+              <MemberActivityStatusImportDialog onOpenChange={setManualImportOpen} open={manualImportOpen} trigger={null} />
+              <Button onClick={() => setManualImportOpen(true)} size="lg" variant="outline">
+                <FileUp />
+                Atualizar frequência
+              </Button>
+            </>
+          ) : null
+        }
         eyebrow="Membros"
         title="Frequência dos membros"
         description="Distribuição dos membros cadastrados por presença nos últimos domingos importados."
