@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsUpDown, Clock3 } from "lucide-react";
+import { ChevronsUpDown, Clock3, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,14 @@ function getOptionRank(option: Option, normalizedQuery: string) {
   if (searchText.includes(normalizedQuery)) return 4;
 
   return Number.POSITIVE_INFINITY;
+}
+
+function emptyHybridField(): HybridField {
+  return {
+    mode: "linked",
+    linkedId: "",
+    manualValue: "",
+  };
 }
 
 export function HybridSelector({
@@ -130,8 +138,19 @@ export function HybridSelector({
     });
   }
 
+  function clearSelection() {
+    setDraftQuery("");
+    setIsOpen(false);
+    onChange(emptyHybridField());
+  }
+
   function handleInputChange(nextValue: string) {
     setDraftQuery(nextValue);
+
+    if (!nextValue.trim()) {
+      onChange(emptyHybridField());
+      return;
+    }
 
     if (value.mode === "manual") {
       onChange({
@@ -149,6 +168,9 @@ export function HybridSelector({
         open={isOpen}
         onOpenChange={(open) => {
           setIsOpen(open);
+          if (!open && !draftQuery.trim() && displayValue) {
+            onChange(emptyHybridField());
+          }
           if (open) {
             setDraftQuery(displayValue);
           }
@@ -164,6 +186,17 @@ export function HybridSelector({
           <Command shouldFilter={false}>
             <CommandInput placeholder={manualPlaceholder} value={draftQuery} onValueChange={handleInputChange} />
             <CommandList>
+              {!trimmedQuery && displayValue ? (
+                <CommandGroup heading="Campo">
+                  <CommandItem value="clear" onSelect={clearSelection}>
+                    <X className="size-4 shrink-0" />
+                    <span className="flex-1">Limpar seleção</span>
+                  </CommandItem>
+                </CommandGroup>
+              ) : null}
+
+              {!trimmedQuery && displayValue && filteredOptions.length > 0 ? <CommandSeparator /> : null}
+
               {filteredOptions.length === 0 ? <CommandEmpty>Nenhum cadastro encontrado.</CommandEmpty> : null}
 
               {filteredOptions.length > 0 ? (
